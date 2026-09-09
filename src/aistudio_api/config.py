@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 # 加载 .env 文件（如果存在）
 load_dotenv()
 
-DEFAULT_TEXT_MODEL = os.getenv("AISTUDIO_DEFAULT_TEXT_MODEL", "gemma-4-31b-it")
+DEFAULT_TEXT_MODEL = os.getenv("AISTUDIO_DEFAULT_TEXT_MODEL", "gemini-3.7-flash")
 DEFAULT_IMAGE_MODEL = os.getenv("AISTUDIO_DEFAULT_IMAGE_MODEL", "gemini-3.1-flash-image-preview")
 DEFAULT_BROWSER_PORT = 9222
 

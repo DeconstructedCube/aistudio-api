@@ -161,7 +161,7 @@ class AistudioWireCodec:
         else:
             if request.tools:
                 self._ensure_len(body, self.TIMEZONE_INDEX + 1)
-                body[self.TIMEZONE_INDEX] = request.location or [[None, None, "Asia/Shanghai"]]
+                body[self.TIMEZONE_INDEX] = request.location or [[None, None, os.getenv("AISTUDIO_TIMEZONE", "Asia/Tokyo")]]
             else:
                 body = body[:11]
 

@@ -46,7 +46,32 @@ def _build_cloakbrowser_args(
         if stable_fingerprint_key
         else None
     )
-    args: list[str] = []
+    args: list[str] = [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--disable-gpu-compositing",
+        "--in-process-gpu",
+        "--disable-software-rasterizer",
+        "--renderer-process-limit=1",
+        "--no-zygote",
+        "--disable-breakpad",
+        "--mute-audio",
+        "--disable-audio",
+        "--disable-site-isolation-trials",
+        "--js-flags=--max-old-space-size=128",
+        "--disk-cache-size=16777216",
+        "--media-cache-size=1",
+        "--disable-background-networking",
+        "--disable-sync",
+        "--disable-speech-api",
+        "--disable-component-update",
+        "--disable-default-apps",
+        "--no-first-run",
+        "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+        "--disable-features=Translate,OptimizationHints,MediaRouter,DialLocalDiscovery,PreloadMediaEngagementData,CertificateTransparencyComponentUpdater,SitePerProcess,AudioServiceOutOfProcess",
+    ]
     if not headless:
         args.append("--start-maximized")
         args.append("--ignore-gpu-blocklist")

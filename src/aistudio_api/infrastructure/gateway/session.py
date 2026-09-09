@@ -29,7 +29,7 @@ from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
 
 log = logging.getLogger("aistudio.session")
 
-AI_STUDIO_URL = "https://aistudio.google.com/prompts/new_chat?model=gemma-4-31b-it"
+AI_STUDIO_URL = "https://aistudio.google.com/prompts/new_chat?model=gemini-3.7-flash"
 AI_STUDIO_URL_FALLBACK = "https://aistudio.google.com/app/prompts/new_chat"
 GOOGLE_LOGIN_BOOTSTRAP_URL = (
     "https://accounts.google.com/ServiceLogin?continue=https://aistudio.google.com"
@@ -598,19 +598,6 @@ class BrowserSession:
         self._hook_page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
         sync_maximize_page_window(self._hook_page)
 
-        # First, see whether the persistent profile / current context is already alive.
-        try:
-            self._hook_page.goto("https://aistudio.google.com/", wait_until="domcontentloaded", timeout=15000)
-            if "accounts.google.com" not in (self._hook_page.url or ""):
-                profile_label = "profile" if profile_dir else "auth.json cache"
-                log.info("[chromium-auth] %s hit", profile_label)
-                self._goto_aistudio_sync(self._hook_page)
-                self._install_hooks_sync(self._hook_page)
-                log.debug(f"[timing] page loaded (cached) in {_t.time()-_t0:.1f}s")
-                return self._ctx
-        except Exception as e:
-            log.debug("[chromium-auth] initial profile check failed: %s", e)
-
         # Only seed a fresh profile from auth.json once. After a profile exists,
         # auth.json must not be re-injected or it can corrupt the browser state.
         if should_seed_from_auth and self._auth_file and Path(self._auth_file).exists():
@@ -625,7 +612,7 @@ class BrowserSession:
                         self._save_cookies_sync()
                         self._goto_aistudio_sync(self._hook_page)
                         self._install_hooks_sync(self._hook_page)
-                        log.debug(f"[timing] page loaded (cached) in {_t.time()-_t0:.1f}s")
+                        log.debug(f"[timing] page loaded (seeded) in {_t.time()-_t0:.1f}s")
                         return self._ctx
                     log.info("[chromium-auth] auth.json appears expired")
             except Exception as e:
@@ -1141,32 +1128,44 @@ mw:((hash) => {
         for url in (AI_STUDIO_URL, AI_STUDIO_URL_FALLBACK):
             try:
                 _t0 = _t.time()
-                page.goto(url, wait_until="networkidle", timeout=30000)
+                page.goto(url, wait_until="domcontentloaded", timeout=20000)
                 log.debug(f"[timing] goto {url} took {_t.time()-_t0:.1f}s")
                 # 检查是否被重定向到登录页
                 current_url = page.url or ""
+                if "available-regions" in current_url:
+                    raise RuntimeError(f"Google AI Studio 地区限制 (IP 漏了/不支持): {current_url}")
                 if "accounts.google.com" in current_url and "signin" in current_url:
                     raise RuntimeError(
                         f"Cookie 认证失败，已被重定向到 Google 登录页。"
                         f" (url={current_url})"
                     )
-                # Wait for SPA framework and chat UI to render
-                for _ in range(60):
-                    page.wait_for_timeout(1000)
-                    has_dms = page.evaluate("mw:!!window.default_MakerSuite")
-                    has_textarea = page.query_selector("textarea") is not None
-                    if has_dms and has_textarea:
-                        log.debug(f"[timing] UI ready (dms+textarea) after {_t.time()-_t0:.1f}s")
-                        self._verify_account_identity_sync(page)
-                        self._save_cookies_sync()
-                        return
-                    if has_dms and _ > 20:
-                        page.evaluate(DIALOG_CLEANUP_JS)
-                log.debug(f"[timing] UI partially ready after {_t.time()-_t0:.1f}s (dms={has_dms}, textarea={has_textarea})")
+                # 等待 textarea 出现（自动跨越 Angular SPA 路由重定向）
+                try:
+                    page.wait_for_selector("textarea", timeout=12000)
+                except Exception as wait_err:
+                    now_url = page.url or ""
+                    if "available-regions" in now_url:
+                        raise RuntimeError(f"Google AI Studio 地区限制 (代理IP漏了/地区不支持): {now_url}") from None
+                    raise wait_err
+                try:
+                    page.evaluate(DIALOG_CLEANUP_JS)
+                except Exception:
+                    pass
+                # 等待 default_MakerSuite 对象初始化
+                for _ in range(15):
+                    try:
+                        if page.evaluate("mw:!!window.default_MakerSuite"):
+                            break
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(500)
+                log.debug(f"[timing] UI ready after {_t.time()-_t0:.1f}s")
                 self._verify_account_identity_sync(page)
                 self._save_cookies_sync()
                 return
             except Exception as exc:
+                if "地区限制" in str(exc) or "Cookie 认证失败" in str(exc):
+                    raise exc
                 log.debug(f"[timing] goto {url} failed after {_t.time()-_t0:.1f}s: {exc}")
                 last_exc = exc
         if last_exc is not None:
