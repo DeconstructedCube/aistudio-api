@@ -69,6 +69,11 @@ class AIStudioClient:
         """清除 snapshot 缓存。"""
         _snapshot_cache.clear()
 
+    async def close(self) -> None:
+        """关闭浏览器后端。"""
+        if self._session is not None:
+            await self._session.close()
+
     def _dump_raw_exchange(
         self,
         *,

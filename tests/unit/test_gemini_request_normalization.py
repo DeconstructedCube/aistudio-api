@@ -129,7 +129,8 @@ def test_normalize_gemini_request_encodes_function_declarations_to_wire_tools():
                     [6, None, None, None, None, None, [["city", [1]]], None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, ["city"]],
                 ]
             ],
-        ]
+        ],
+        [None, None, None, [None, [[]]]],
     ]
 
 

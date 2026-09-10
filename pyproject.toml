@@ -18,6 +18,7 @@ dependencies = [
   "python-dotenv>=1.0.0",
   "PyYAML>=6.0.0",
   "cloakbrowser",
+  "websockets>=13.0.0",
   "python-multipart>=0.0.9"
 ]
 

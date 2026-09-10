@@ -83,6 +83,11 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down")
     if warmup_task and not warmup_task.done():
         warmup_task.cancel()
+    if client:
+        try:
+            await client.close()
+        except Exception as e:
+            logger.debug("Error closing client: %s", e)
     runtime_state.client = None
     runtime_state.busy_lock = None
     runtime_state.account_service = None

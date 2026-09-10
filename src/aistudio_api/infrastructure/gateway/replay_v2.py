@@ -54,13 +54,15 @@ class RequestReplayService:
         timeout: int,
     ) -> tuple[int, bytes]:
         """Replay via browser proxy (handles TLS session binding)."""
-        ctx = await self._session.ensure_context()
+        target = await self._session.ensure_context()
         headers = {k: v for k, v in captured.headers.items() if k.lower() not in ("host", "content-length")}
 
         try:
-            # Use existing page or create new one
-            pages = ctx.pages
-            page = pages[0] if pages else await ctx.new_page()
+            if hasattr(target, "pages"):
+                pages = target.pages
+                page = pages[0] if pages else await target.new_page()
+            else:
+                page = target
 
             # Make request via page.evaluate XHR (browser handles cookies)
             result = await page.evaluate("""(args) => {

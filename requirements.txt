@@ -8,4 +8,5 @@ python-dotenv>=1.0.0
 PyYAML>=6.0.0
 python-multipart>=0.0.9
 cloakbrowser
+websockets>=13.0.0
 # camoufox  # 可选：AISTUDIO_BROWSER=camoufox 时需要

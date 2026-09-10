@@ -85,21 +85,48 @@ def normalize_chat_request(messages, requested_model: str, tmp_dir: str = "/tmp"
         text_parts: list[str] = []
         image_paths: list[str] = []
 
-        # tool result → user role with marker
+        # tool result → function_response or user role with marker
         if role == "tool":
             raw = _message_text_content(msg.content) or ""
-            fname = tool_call_names.get(msg.tool_call_id or "", "")
-            tagged = f"<tool_result name=\"{fname}\">\n{raw}\n</tool_result>" if fname else f"<tool_result>\n{raw}\n</tool_result>"
-            parts.append(AistudioPart(text=tagged))
-            text_parts.append(tagged)
+            fname = getattr(msg, "name", None) or tool_call_names.get(getattr(msg, "tool_call_id", "") or "", "")
+            tool_call_id = getattr(msg, "tool_call_id", None)
+            parsed_content = None
+            if raw:
+                try:
+                    parsed_content = json.loads(raw)
+                except Exception:
+                    parsed_content = raw
+            if fname and parsed_content is not None:
+                call_tuple = (fname, parsed_content, tool_call_id) if tool_call_id else (fname, parsed_content)
+                parts.append(AistudioPart(function_response=call_tuple))
+            else:
+                tagged = f"<tool_result name=\"{fname}\">\n{raw}\n</tool_result>" if fname else f"<tool_result>\n{raw}\n</tool_result>"
+                parts.append(AistudioPart(text=tagged))
+                text_parts.append(tagged)
             contents.append(AistudioContent(role="user", parts=parts))
             capture_texts.append(raw)
             continue
 
         # OpenAI 兼容格式的 reasoning_content：思考内容作为首个 thought Part 传入
-        if role == "assistant" and msg.reasoning_content:
+        if role == "assistant" and getattr(msg, "reasoning_content", None):
             parts.append(AistudioPart(text=msg.reasoning_content, thought=True))
 
+        # Assistant 消息中的 tool_calls
+        if role == "assistant" and getattr(msg, "tool_calls", None):
+            for tc in msg.tool_calls:
+                tc_id = getattr(tc, "id", None) or (tc.get("id") if isinstance(tc, dict) else None)
+                tc_fn = getattr(tc, "function", None) or (tc.get("function") if isinstance(tc, dict) else None)
+                if tc_fn:
+                    fn_name = getattr(tc_fn, "name", None) or (tc_fn.get("name") if isinstance(tc_fn, dict) else None)
+                    fn_args = getattr(tc_fn, "arguments", None) or (tc_fn.get("arguments") if isinstance(tc_fn, dict) else None)
+                    if isinstance(fn_args, str):
+                        try:
+                            fn_args = json.loads(fn_args)
+                        except Exception:
+                            pass
+                    if fn_name:
+                        call_tuple = (fn_name, fn_args, tc_id) if tc_id else (fn_name, fn_args)
+                        parts.append(AistudioPart(function_call=call_tuple))
         if isinstance(msg.content, str):
             if msg.content:
                 parts.append(AistudioPart(text=msg.content))

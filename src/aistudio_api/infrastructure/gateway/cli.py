@@ -35,6 +35,8 @@ async def _run_cli(args):
         print(f"错误: {exc}")
     except AistudioError as exc:
         print(f"错误: {exc}")
+    finally:
+        await client.close()
 
 
 def cli_main():
