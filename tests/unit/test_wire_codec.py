@@ -1,6 +1,6 @@
 import json
 
-from aistudio_api.infrastructure.gateway.request_rewriter import (
+from aistudio_api.infrastructure.gateway.wire_codec import (
     AistudioWireCodec,
     build_image_generation_search_tool,
     build_tools_from_names,

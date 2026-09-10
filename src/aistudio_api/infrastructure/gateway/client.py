@@ -13,7 +13,7 @@ from aistudio_api.domain.models import ModelOutput, parse_image_output, parse_te
 from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
 from aistudio_api.infrastructure.gateway.capture import CapturedRequest, RequestCaptureService
 from aistudio_api.infrastructure.gateway.model_defaults import resolve_model_defaults
-from aistudio_api.infrastructure.gateway.request_rewriter import TOOLS_TEMPLATES, build_image_generation_search_tool, modify_body
+from aistudio_api.infrastructure.gateway.wire_codec import TOOLS_TEMPLATES, build_image_generation_search_tool, modify_body
 from aistudio_api.infrastructure.gateway.replay import RequestReplayService
 from aistudio_api.infrastructure.gateway.session import BrowserSession
 from aistudio_api.infrastructure.gateway.streaming import StreamingGateway
@@ -321,7 +321,7 @@ class AIStudioClient:
                 )
             ]
         elif use_default_tools and model_defaults.default_tools:
-            from aistudio_api.infrastructure.gateway.request_rewriter import build_tools_from_names
+            from aistudio_api.infrastructure.gateway.wire_codec import build_tools_from_names
 
             resolved_tools = build_tools_from_names(
                 model_defaults.default_tools,

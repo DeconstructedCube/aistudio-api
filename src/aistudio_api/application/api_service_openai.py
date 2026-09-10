@@ -57,7 +57,7 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient):
                 tools = None if req.tools is None else (normalize_openai_tools(req.tools) or [])
 
                 if req.tools is None:
-                    from aistudio_api.infrastructure.gateway.request_rewriter import build_tools_from_names
+                    from aistudio_api.infrastructure.gateway.wire_codec import build_tools_from_names
 
                     model_defaults = resolve_model_defaults(model)
                     if model_defaults.default_tools:

@@ -14,7 +14,6 @@ import httpx
 from aistudio_api.config import DEFAULT_IMAGE_MODEL
 from aistudio_api.domain.errors import RequestError
 from aistudio_api.infrastructure.gateway.model_defaults import resolve_model_defaults
-from aistudio_api.infrastructure.gateway.request_rewriter import build_tools_from_names
 from aistudio_api.infrastructure.gateway.wire_types import (
     AistudioContent,
     AistudioImageOutputMode,
@@ -22,7 +21,7 @@ from aistudio_api.infrastructure.gateway.wire_types import (
     AistudioThinkingConfig,
     ThinkingLevel,
 )
-from aistudio_api.infrastructure.gateway.wire_codec import TOOLS_TEMPLATES
+from aistudio_api.infrastructure.gateway.wire_codec import TOOLS_TEMPLATES, build_tools_from_names
 
 
 SCHEMA_TYPE_CODES = {

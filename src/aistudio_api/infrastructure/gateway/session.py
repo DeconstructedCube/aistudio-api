@@ -20,7 +20,6 @@ from aistudio_api.config import settings
 from aistudio_api.infrastructure.account.account_store import AccountStore
 from aistudio_api.infrastructure.browser.browser_engine import (
     ChromiumProcess,
-    is_camoufox_engine,
     launch_chromium_process,
 )
 from aistudio_api.infrastructure.browser.cdp_client import CDPClient, CDPPage
@@ -833,17 +832,20 @@ class BrowserSession:
         if await page.send_control_enter("textarea"):
             return True
 
-        clicked = await page.click("button.ctrl-enter-submits")
-        if clicked:
+        if await page.click("button.ctrl-enter-submits"):
             return True
-        return await page.click("button:has(keyboard_return)")
+        if await page.click("button:has-text('Run')"):
+            return True
+        return await page.click("button:has(mat-icon)")
 
     async def _has_run_button(self, page: CDPPage) -> bool:
         try:
             has_stop = await page.query_selector("button:has-text('Stop')")
             if has_stop:
                 return False
-            return await page.query_selector("button.ctrl-enter-submits")
+            if await page.query_selector("button.ctrl-enter-submits"):
+                return True
+            return await page.query_selector("button:has-text('Run')")
         except Exception:
             return False
 

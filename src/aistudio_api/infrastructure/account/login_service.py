@@ -151,7 +151,7 @@ class LoginService:
             return None
 
     def _supports_switch_login_method(self, step: TerminalLoginStep) -> bool:
-        return step.phase in {"totp", "ootp", "dp"} or step.kind == "phone"
+        return step.phase in {"totp", "ootp", "dp", "wa", "ipp", "bc", "kpe", "pwd", "challenge"} or step.kind in {"phone", "otp", "manual"}
 
     def _build_input_prompt(self, step: TerminalLoginStep) -> str:
         if self._supports_switch_login_method(step):
@@ -161,18 +161,28 @@ class LoginService:
     def _classify_google_login_phase(self, url: str) -> str | None:
         if not url or "accounts.google.com" not in url:
             return None
-        if "/v3/signin/identifier" in url:
+        if "/identifier" in url:
             return "identifier"
-        if "/v3/signin/challenge/pwd" in url:
-            return "pwd"
-        if "/v3/signin/challenge/dp" in url:
-            return "dp"
-        if "/v3/signin/challenge/selection" in url:
-            return "selection"
-        if "/v3/signin/challenge/totp" in url:
-            return "totp"
-        if "/v3/signin/challenge/ootp" in url:
-            return "ootp"
+        if "/challenge/" in url or "/selectchallenge" in url:
+            if "selection" in url or "selectchallenge" in url:
+                return "selection"
+            if "/pwd" in url or "/password" in url:
+                return "pwd"
+            if "/dp" in url:
+                return "dp"
+            if "/totp" in url:
+                return "totp"
+            if "/ootp" in url:
+                return "ootp"
+            if "/wa" in url or "/sk" in url:
+                return "wa"
+            if "/ipp" in url:
+                return "ipp"
+            if "/bc" in url:
+                return "bc"
+            if "/kpe" in url:
+                return "kpe"
+            return "challenge"
         return None
 
     def _step_from_phase(self, phase: str) -> TerminalLoginStep | None:
@@ -183,6 +193,11 @@ class LoginService:
             "selection": TerminalLoginStep(kind="selection", prompt="请选择登录方式", phase=phase),
             "totp": TerminalLoginStep(kind="otp", prompt="请输入验证器验证码", phase=phase),
             "ootp": TerminalLoginStep(kind="otp", prompt="请输入安全码", phase=phase),
+            "wa": TerminalLoginStep(kind="manual", prompt="请在设备上确认通行密钥（Passkey）或安全密钥", phase=phase),
+            "ipp": TerminalLoginStep(kind="manual", prompt="请在设备上确认身份", phase=phase),
+            "bc": TerminalLoginStep(kind="otp", prompt="请输入8位备用验证码", phase=phase),
+            "kpe": TerminalLoginStep(kind="phone", prompt="请输入短信验证码", phase=phase),
+            "challenge": TerminalLoginStep(kind="manual", prompt="请在浏览器中完成安全验证", phase=phase),
         }
         return mapping.get(phase)
 
@@ -211,6 +226,12 @@ class LoginService:
                 const text = (el) => (el?.innerText || el?.textContent || "")
                     .replace(/\\s+/g, " ")
                     .trim();
+                const cleanOptionText = (el) => {
+                    return (el?.innerText || el?.textContent || "")
+                        .replace(/[\\u203a\\u2192\\u276f>»›]/g, " ")
+                        .replace(/\\s+/g, " ")
+                        .trim();
+                };
                 const withTitle = (base, title) => {
                     const normalized = (title || "").trim().toLowerCase();
                     if (!normalized || genericTitles.has(normalized)) {
@@ -218,26 +239,68 @@ class LoginService:
                     }
                     return `${base}（${title.trim()}）`;
                 };
-                const buildSelectionOptions = () => {
-                    const ignored = new Set(["back", "next", "try another way", "帮助", "隐私权", "条款"]);
-                    return Array.from(document.querySelectorAll("button, div[role='button']"))
-                        .filter(visible)
-                        .map((el) => text(el))
-                        .map((value) => value.replace(/\\s+/g, " ").trim())
-                        .filter(Boolean)
-                        .filter((value) => value.length <= 80)
-                        .filter((value) => !ignored.has(value.toLowerCase()))
-                        .filter((item, index, arr) => arr.indexOf(item) === index)
-                        .slice(0, 8);
+                const getCandidateElements = () => {
+                    const candidateSelectors = [
+                        "[data-challengetype]",
+                        "[data-challengeindex]",
+                        "[data-challenge-id]",
+                        "li[role='link']",
+                        "div[role='link']",
+                        "li[role='button']",
+                        "div[role='button']",
+                        "ul > li",
+                        "button",
+                    ];
+                    const ignored = new Set([
+                        "back", "next", "try another way", "帮助", "隐私权", "条款",
+                        "help", "privacy", "terms", "cancel", "取消", "返回", "下一步"
+                    ]);
+                    const seen = new Set();
+                    const rawList = [];
+                    for (const sel of candidateSelectors) {
+                        const found = document.querySelectorAll(sel);
+                        for (const el of found) {
+                            if (visible(el) && !seen.has(el)) {
+                                if (el.tagName.toLowerCase() === "ul") continue;
+                                seen.add(el);
+                                rawList.push(el);
+                            }
+                        }
+                    }
+                    const filtered = rawList.filter((el) => {
+                        const val = cleanOptionText(el);
+                        if (!val || val.length > 100 || ignored.has(val.toLowerCase())) {
+                            return false;
+                        }
+                        const containsChild = rawList.some((other) => other !== el && el.contains(other));
+                        if (containsChild) {
+                            if (!el.hasAttribute("data-challengetype") && !el.getAttribute("role")) {
+                                return false;
+                            }
+                        }
+                        return true;
+                    });
+                    const unique = [];
+                    const seenTexts = new Set();
+                    for (const el of filtered) {
+                        const val = cleanOptionText(el);
+                        if (!seenTexts.has(val)) {
+                            seenTexts.add(val);
+                            unique.push(el);
+                        }
+                    }
+                    return unique;
                 };
+
                 const bodyText = text(document.body).toLowerCase();
                 const title = text(document.querySelector("h1, [role='heading']")) || document.title || "";
+                const selectionOptions = getCandidateElements().map(cleanOptionText).slice(0, 8);
 
-                if (phase === "selection") {
+                if (phase === "selection" || (selectionOptions.length > 1 && (bodyText.includes("choose how you want to sign in") || bodyText.includes("选择登录方式") || bodyText.includes("verify it's you") || bodyText.includes("验证您的身份")))) {
                     return {
                         kind: "selection",
                         prompt: withTitle("请选择登录方式", title),
-                        options: buildSelectionOptions(),
+                        options: selectionOptions,
                     };
                 }
 
@@ -269,7 +332,7 @@ class LoginService:
                 }
 
                 const otp = document.querySelector(
-                    "input[autocomplete='one-time-code'], input[name='totpPin'], input[inputmode='numeric'], input[type='tel']"
+                    "input[autocomplete='one-time-code'], input[name='totpPin'], input[name='backupCode'], input[inputmode='numeric'], input[type='tel']"
                 );
                 if (visible(otp)) {
                     return {
@@ -452,24 +515,77 @@ class LoginService:
                             && rect.width > 0
                             && rect.height > 0;
                     };
-                    const text = (el) => (el?.innerText || el?.textContent || "")
-                        .replace(/\\s+/g, " ")
-                        .trim();
-                    const ignored = new Set(["back", "next", "try another way", "帮助", "隐私权", "条款"]);
-                    const candidates = Array.from(document.querySelectorAll("button, div[role='button']"))
-                        .filter(visible)
-                        .filter((el) => {
-                            const value = text(el);
-                            return value && value.length <= 80 && !ignored.has(value.toLowerCase());
-                        })
-                        .filter((el, index, arr) => {
-                            const value = text(el);
-                            return arr.findIndex((item) => text(item) === value) === index;
-                        });
-                    if (targetIndex < 0 || targetIndex >= candidates.length) {
+                    const cleanOptionText = (el) => {
+                        return (el?.innerText || el?.textContent || "")
+                            .replace(/[\\u203a\\u2192\\u276f>»›]/g, " ")
+                            .replace(/\\s+/g, " ")
+                            .trim();
+                    };
+                    const candidateSelectors = [
+                        "[data-challengetype]",
+                        "[data-challengeindex]",
+                        "[data-challenge-id]",
+                        "li[role='link']",
+                        "div[role='link']",
+                        "li[role='button']",
+                        "div[role='button']",
+                        "ul > li",
+                        "button",
+                    ];
+                    const ignored = new Set([
+                        "back", "next", "try another way", "帮助", "隐私权", "条款",
+                        "help", "privacy", "terms", "cancel", "取消", "返回", "下一步"
+                    ]);
+                    const seen = new Set();
+                    const rawList = [];
+                    for (const sel of candidateSelectors) {
+                        const found = document.querySelectorAll(sel);
+                        for (const el of found) {
+                            if (visible(el) && !seen.has(el)) {
+                                if (el.tagName.toLowerCase() === "ul") continue;
+                                seen.add(el);
+                                rawList.push(el);
+                            }
+                        }
+                    }
+                    const filtered = rawList.filter((el) => {
+                        const val = cleanOptionText(el);
+                        if (!val || val.length > 100 || ignored.has(val.toLowerCase())) {
+                            return false;
+                        }
+                        const containsChild = rawList.some((other) => other !== el && el.contains(other));
+                        if (containsChild) {
+                            if (!el.hasAttribute("data-challengetype") && !el.getAttribute("role")) {
+                                return false;
+                            }
+                        }
+                        return true;
+                    });
+                    const unique = [];
+                    const seenTexts = new Set();
+                    for (const el of filtered) {
+                        const val = cleanOptionText(el);
+                        if (!seenTexts.has(val)) {
+                            seenTexts.add(val);
+                            unique.push(el);
+                        }
+                    }
+                    if (targetIndex < 0 || targetIndex >= unique.length) {
                         return false;
                     }
-                    candidates[targetIndex].click();
+                    const el = unique[targetIndex];
+                    el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+                    try {
+                        el.click();
+                    } catch (e) {}
+                    try {
+                        const evt = new MouseEvent("click", {
+                            bubbles: true,
+                            cancelable: true,
+                            view: window,
+                        });
+                        el.dispatchEvent(evt);
+                    } catch (e) {}
                     return true;
                 }
                 """,

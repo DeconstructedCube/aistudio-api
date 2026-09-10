@@ -343,7 +343,22 @@ class CDPPage:
     ) -> bool:
         """Wait until element matching selector is present in DOM."""
         deadline = asyncio.get_running_loop().time() + timeout_s
-        check_expr = f"() => document.querySelector({json.dumps(selector)}) !== null"
+        check_expr = f"""() => {{
+            const sel = {json.dumps(selector)};
+            if (sel.includes(':has-text(')) {{
+                const m = sel.match(/^(.*?):has-text\\(['"](.*?)['"]\\)(.*)$/);
+                if (m) {{
+                    const tag = m[1].trim() || '*';
+                    const text = m[2];
+                    return Array.from(document.querySelectorAll(tag)).some(e => (e.textContent || '').includes(text));
+                }}
+            }}
+            if (sel.startsWith('text=')) {{
+                const text = sel.slice(5).trim();
+                return Array.from(document.querySelectorAll('*')).some(e => (e.textContent || '').includes(text));
+            }}
+            return document.querySelector(sel) !== null;
+        }}"""
         while asyncio.get_running_loop().time() < deadline:
             try:
                 found = await self.evaluate(check_expr, timeout_s=5.0)
@@ -356,15 +371,45 @@ class CDPPage:
 
     async def query_selector(self, selector: str) -> bool:
         """Check if an element exists."""
+        check_expr = f"""() => {{
+            const sel = {json.dumps(selector)};
+            if (sel.includes(':has-text(')) {{
+                const m = sel.match(/^(.*?):has-text\\(['"](.*?)['"]\\)(.*)$/);
+                if (m) {{
+                    const tag = m[1].trim() || '*';
+                    const text = m[2];
+                    return Array.from(document.querySelectorAll(tag)).some(e => (e.textContent || '').includes(text));
+                }}
+            }}
+            if (sel.startsWith('text=')) {{
+                const text = sel.slice(5).trim();
+                return Array.from(document.querySelectorAll('*')).some(e => (e.textContent || '').includes(text));
+            }}
+            return document.querySelector(sel) !== null;
+        }}"""
         try:
-            return bool(await self.evaluate(f"() => document.querySelector({json.dumps(selector)}) !== null"))
+            return bool(await self.evaluate(check_expr))
         except Exception:
             return False
 
     async def click(self, selector: str, timeout_s: float = 5.0) -> bool:
         """Click an element matching selector."""
         expr = f"""() => {{
-            const el = document.querySelector({json.dumps(selector)});
+            const sel = {json.dumps(selector)};
+            let el = null;
+            if (sel.includes(':has-text(')) {{
+                const m = sel.match(/^(.*?):has-text\\(['"](.*?)['"]\\)(.*)$/);
+                if (m) {{
+                    const tag = m[1].trim() || '*';
+                    const text = m[2];
+                    el = Array.from(document.querySelectorAll(tag)).find(e => (e.textContent || '').includes(text)) || null;
+                }}
+            }} else if (sel.startsWith('text=')) {{
+                const text = sel.slice(5).trim();
+                el = Array.from(document.querySelectorAll('*')).find(e => (e.textContent || '').includes(text)) || null;
+            }} else {{
+                el = document.querySelector(sel);
+            }}
             if (!el) return false;
             el.click();
             return true;
@@ -373,8 +418,19 @@ class CDPPage:
 
     async def fill(self, selector: str, value: str) -> bool:
         """Fill an input or textarea element with value."""
-        expr = """(args) => {
-            const el = document.querySelector(args.selector);
+        expr = r"""(args) => {
+            const sel = args.selector;
+            let el = null;
+            if (sel.includes(':has-text(')) {
+                const m = sel.match(/^(.*?):has-text\(['"](.*?)['"]\)(.*)$/);
+                if (m) {
+                    const tag = m[1].trim() || '*';
+                    const text = m[2];
+                    el = Array.from(document.querySelectorAll(tag)).find(e => (e.textContent || '').includes(text)) || null;
+                }
+            } else {
+                el = document.querySelector(sel);
+            }
             if (!el) return false;
             el.focus();
             el.value = args.value;

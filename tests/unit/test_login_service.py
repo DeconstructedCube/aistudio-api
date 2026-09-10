@@ -146,3 +146,52 @@ def test_login_session_fails_immediately_when_browser_window_is_closed(monkeypat
     assert session.status == LoginStatus.FAILED
     assert session.error == "登录窗口已关闭"
     assert store.saved is False
+
+def test_classify_google_login_phase():
+    service = LoginService()
+
+    assert service._classify_google_login_phase("https://accounts.google.com/v3/signin/identifier?continue=...") == "identifier"
+    assert service._classify_google_login_phase("https://accounts.google.com/v3/signin/challenge/pwd?TL=...") == "pwd"
+    assert service._classify_google_login_phase("https://accounts.google.com/v3/signin/challenge/selection?TL=...") == "selection"
+    assert service._classify_google_login_phase("https://accounts.google.com/signin/challenge/selectchallenge?TL=...") == "selection"
+    assert service._classify_google_login_phase("https://accounts.google.com/v2/challenge/dp?TL=...") == "dp"
+    assert service._classify_google_login_phase("https://accounts.google.com/v3/signin/challenge/totp?TL=...") == "totp"
+    assert service._classify_google_login_phase("https://accounts.google.com/v3/signin/challenge/ootp?TL=...") == "ootp"
+    assert service._classify_google_login_phase("https://accounts.google.com/v3/signin/challenge/wa?TL=...") == "wa"
+    assert service._classify_google_login_phase("https://accounts.google.com/v3/signin/challenge/ipp?TL=...") == "ipp"
+    assert service._classify_google_login_phase("https://accounts.google.com/v3/signin/challenge/bc?TL=...") == "bc"
+    assert service._classify_google_login_phase("https://accounts.google.com/v3/signin/challenge/kpe?TL=...") == "kpe"
+    assert service._classify_google_login_phase("https://accounts.google.com/v3/signin/challenge/unknown?TL=...") == "challenge"
+    assert service._classify_google_login_phase("https://example.com/login") is None
+    assert service._classify_google_login_phase("") is None
+
+
+def test_step_from_phase():
+    service = LoginService()
+
+    ident = service._step_from_phase("identifier")
+    assert ident.kind == "email"
+    assert ident.phase == "identifier"
+
+    pwd = service._step_from_phase("pwd")
+    assert pwd.kind == "password"
+    assert pwd.sensitive is True
+
+    selection = service._step_from_phase("selection")
+    assert selection.kind == "selection"
+
+    wa = service._step_from_phase("wa")
+    assert wa.kind == "manual"
+
+    bc = service._step_from_phase("bc")
+    assert bc.kind == "otp"
+
+
+def test_supports_switch_login_method():
+    service = LoginService()
+
+    assert service._supports_switch_login_method(service._step_from_phase("totp")) is True
+    assert service._supports_switch_login_method(service._step_from_phase("dp")) is True
+    assert service._supports_switch_login_method(service._step_from_phase("pwd")) is True
+    assert service._supports_switch_login_method(service._step_from_phase("bc")) is True
+    assert service._supports_switch_login_method(service._step_from_phase("identifier")) is False

@@ -12,7 +12,7 @@ from aistudio_api.config import settings
 from aistudio_api.domain.errors import RequestError, classify_error
 from aistudio_api.domain.models import parse_chunk_usage, parse_response_chunk
 from aistudio_api.infrastructure.gateway.capture import CapturedRequest
-from aistudio_api.infrastructure.gateway.request_rewriter import modify_body
+from aistudio_api.infrastructure.gateway.wire_codec import modify_body
 from aistudio_api.infrastructure.gateway.session import BrowserSession
 from aistudio_api.infrastructure.gateway.stream_parser import IncrementalJSONStreamParser
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
