@@ -35,12 +35,7 @@ GOOGLE_LOGIN_BOOTSTRAP_URL = (
 
 INSTALL_HOOKS_JS = r"""
 ((() => {
-    // Verify hooks are actually present on XHR prototype, not just a stale flag
-    const xhrHookAlive = XMLHttpRequest.prototype.open.__api_hooked === true;
-    const fetchHookAlive = window.fetch.__api_hooked === true;
-    if (window.__bg_hooked && xhrHookAlive && fetchHookAlive) return 'already_hooked';
-    // Reset stale flag if hooks are missing
-    if (window.__bg_hooked && (!xhrHookAlive || !fetchHookAlive)) window.__bg_hooked = false;
+    if (window.__bg_hooked && window.__snap_key) return 'already_hooked';
 
     const dms = window.default_MakerSuite;
     if (!dms) return 'no_default_MakerSuite';
@@ -59,7 +54,7 @@ INSTALL_HOOKS_JS = r"""
     }
     if (!snapKey) return 'no_snapshot_fn';
 
-    // Hook snapshot function to capture service (only if not already hooked)
+    // Hook snapshot function to capture service
     if (!dms[snapKey].__api_hooked) {
         const origSnap = dms[snapKey];
         dms[snapKey] = function(...args) {
@@ -71,49 +66,6 @@ INSTALL_HOOKS_JS = r"""
         };
         dms[snapKey].__api_hooked = true;
     }
-
-    // XHR hook for body replacement (always re-install if missing)
-    const origOpen = XMLHttpRequest.prototype.open;
-    const origSend = XMLHttpRequest.prototype.send;
-    const hookedOpen = function(method, url, ...args) {
-        this.__url = url;
-        this.__is_gen = url.includes('GenerateContent') && !url.includes('CountTokens');
-        window.__last_hook_url = url;
-        return origOpen.call(this, method, url, ...args);
-    };
-    hookedOpen.__api_hooked = true;
-    XMLHttpRequest.prototype.open = hookedOpen;
-    XMLHttpRequest.prototype.send = function(body) {
-        if (this.__is_gen && window.__pending_body) {
-            const captured = window.__pending_body;
-            window.__pending_body = null;
-            window.__hooked = true;
-            window.__last_hook_url = this.__url || '';
-            return origSend.call(this, captured);
-        }
-        return origSend.call(this, body);
-    };
-
-    // fetch hook for body replacement (streaming uses fetch)
-    const origFetch = window.fetch;
-    const hookedFetch = function(input, init) {
-        let url = typeof input === 'string' ? input : (input instanceof Request ? input.url : String(input));
-        if (url.includes('GenerateContent') && !url.includes('CountTokens') && window.__pending_body) {
-            const captured = window.__pending_body;
-            window.__pending_body = null;
-            window.__hooked = true;
-            window.__last_hook_url = url;
-            if (init) {
-                init.body = captured;
-            } else {
-                init = { body: captured };
-            }
-            return origFetch.call(this, input, init);
-        }
-        return origFetch.call(this, input, init);
-    };
-    hookedFetch.__api_hooked = true;
-    window.fetch = hookedFetch;
 
     window.__bg_hooked = true;
     window.__snap_key = snapKey;
@@ -311,16 +263,16 @@ class BrowserSession:
         await page.evaluate(DIALOG_CLEANUP_JS)
 
         try:
-            # Check textarea presence
-            has_textarea = await page.query_selector("textarea")
-            if not has_textarea:
+            # Wait for textarea presence during Angular SPA bootstrapping
+            try:
+                await page.wait_for_selector("textarea", timeout_s=20.0)
+            except Exception:
                 dbg_url = page.url
                 dbg_title = await page.title()
                 dbg_body = (await page.evaluate("() => document.body?.innerText?.substring(0, 300) || ''")) or ""
                 raise RuntimeError(
                     f"textarea not found while capturing BotGuardService; url={dbg_url}, title={dbg_title}, body={dbg_body[:200]}"
                 )
-
             original_text = (await page.evaluate("() => document.querySelector('textarea')?.value || ''")) or ""
             await page.fill("textarea", BOTGUARD_BOOTSTRAP_PROMPT)
             await page.wait_for_timeout(800)
@@ -472,6 +424,29 @@ class BrowserSession:
                     hash_parts.append(str(part.text))
         content_hash = sha256(" ".join(hash_parts).encode("utf-8")).hexdigest()
 
+        # Fast path: 直接以 Promise 形式求值，避免 20 次轮询的 500ms~1000ms 额外等待
+        try:
+            snapshot = await page.evaluate(
+                """
+                async (hash) => {
+                    const dms = window.default_MakerSuite;
+                    const service = window.__bg_service;
+                    const snapKey = window.__snap_key;
+                    if (!dms || !service || !snapKey || typeof dms[snapKey] !== 'function') {
+                        return null;
+                    }
+                    return await Promise.resolve(dms[snapKey](service, hash));
+                }
+                """,
+                args=content_hash,
+                timeout_s=10.0,
+            )
+            if snapshot and isinstance(snapshot, str) and len(snapshot) > 0:
+                return snapshot
+        except Exception as e:
+            log.debug("Direct async evaluate snapshot failed: %s, falling back to polling", e)
+
+        # Fallback path
         await page.evaluate(
             """
             ((hash) => {
@@ -508,14 +483,13 @@ class BrowserSession:
             length = await page.evaluate("() => (window.__sl || 0)")
             if length and length > 0:
                 break
-            await page.wait_for_timeout(500)
+            await page.wait_for_timeout(200)
 
         snapshot = await page.evaluate("() => window.__sr")
         if snapshot:
             return snapshot
         error = await page.evaluate("() => window.__snap_error || ''")
         raise RuntimeError(f"Snapshot generation failed: {error or 'unknown'}")
-
     async def upload_images(self, image_paths: list[str]) -> list[str]:
         """Upload images via Google Drive API using page session credentials."""
         if not image_paths:
@@ -765,9 +739,30 @@ class BrowserSession:
                 continue
         raise RuntimeError(f"bootstrap stayed on login flow: url={page.url}")
 
+    def _get_aistudio_url(self, model: str = "gemini-3.7-flash") -> list[str]:
+        """根据当前活跃账号的 auth_user 生成访问 URL。"""
+        auth_user = "0"
+        if self._auth_file:
+            try:
+                meta_path = Path(self._auth_file).parent / "meta.json"
+                if meta_path.exists():
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    auth_user = str(meta.get("auth_user") or "0")
+            except Exception:
+                pass
+
+        if auth_user and auth_user != "0":
+            return [
+                f"https://aistudio.google.com/u/{auth_user}/prompts/new_chat?model={model}",
+                f"https://aistudio.google.com/u/{auth_user}/app/prompts/new_chat",
+                AI_STUDIO_URL,
+            ]
+        return [AI_STUDIO_URL, AI_STUDIO_URL_FALLBACK]
+
     async def _goto_aistudio(self, page: CDPPage) -> None:
         last_exc = None
-        for url in (AI_STUDIO_URL, AI_STUDIO_URL_FALLBACK):
+        target_urls = self._get_aistudio_url()
+        for url in target_urls:
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout_s=20.0)
                 current_url = page.url or ""
@@ -777,14 +772,6 @@ class BrowserSession:
                     raise RuntimeError(
                         f"Cookie 认证失败，已被重定向到 Google 登录页。 (url={current_url})"
                     )
-
-                try:
-                    await page.wait_for_selector("textarea", timeout_s=15.0)
-                except Exception as wait_err:
-                    now_url = page.url or ""
-                    if "available-regions" in now_url:
-                        raise RuntimeError(f"Google AI Studio 地区限制 (代理IP漏了/地区不支持): {now_url}") from None
-                    raise wait_err
                 try:
                     await page.evaluate(DIALOG_CLEANUP_JS)
                 except Exception:

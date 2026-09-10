@@ -53,14 +53,15 @@ class AccountMeta:
     email: str | None
     created_at: str
     last_used: str | None = None
+    auth_user: str = "0"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AccountMeta:
-        return cls(**data)
-
+        fields = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
+        return cls(**fields)
 
 @dataclass
 class Registry:
@@ -191,6 +192,7 @@ class AccountStore:
         email: str | None,
         storage_state: dict[str, Any],
         account_id: str | None = None,
+        auth_user: str = "0",
     ) -> AccountMeta:
         """保存新账号。"""
         registry = self._load_registry()
@@ -198,7 +200,7 @@ class AccountStore:
         created_at = now
         if account_id is None and email:
             for acc in registry.accounts.values():
-                if acc.email == email:
+                if acc.email == email and acc.auth_user == auth_user:
                     account_id = acc.id
                     created_at = acc.created_at
                     break
@@ -212,6 +214,7 @@ class AccountStore:
             email=email,
             created_at=created_at,
             last_used=now,
+            auth_user=auth_user,
         )
         account_dir = self._accounts_dir / account_id
         account_dir.mkdir(parents=True, exist_ok=True)

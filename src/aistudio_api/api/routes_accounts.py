@@ -28,7 +28,7 @@ class AccountResponse(BaseModel):
     email: str | None
     created_at: str
     last_used: str | None
-
+    auth_user: str = "0"
 
 class LoginStatusResponse(BaseModel):
     session_id: str
@@ -43,18 +43,29 @@ class UpdateAccountRequest(BaseModel):
 
 
 class ImportCookiesRequest(BaseModel):
-    cookies: str  # "key=value; key=value; ..." 格式
-    name: str | None = None  # 可选的账号名称
-    email: str | None = None  # 可选的邮箱
-    account_id: str | None = None  # 可选的账号 ID（覆盖已有账号）
+    cookies: str
+    name: str | None = None
+    email: str | None = None
+    account_id: str | None = None
+    auth_user: str = "0"
 
 
 class ImportCookiesResponse(BaseModel):
     account_id: str
     name: str
     cookie_count: int
-    domain_summary: dict[str, int]  # domain -> cookie 数量
+    domain_summary: dict[str, int]
+    auth_user: str = "0"
 
+
+class ProbeAndImportRequest(BaseModel):
+    cookies: str
+    name_prefix: str | None = None
+
+
+class ProbeAndImportResponse(BaseModel):
+    imported_count: int
+    accounts: list[AccountResponse]
 
 @router.post("/login/start", response_model=LoginStartResponse)
 async def login_start(
@@ -97,6 +108,7 @@ async def list_accounts(
             email=a.email,
             created_at=a.created_at,
             last_used=a.last_used,
+            auth_user=getattr(a, "auth_user", "0"),
         )
         for a in accounts
     ]
@@ -116,6 +128,7 @@ async def get_active_account(
         email=account.email,
         created_at=account.created_at,
         last_used=account.last_used,
+        auth_user=getattr(account, "auth_user", "0"),
     )
 
 
@@ -126,7 +139,6 @@ async def activate_account(
     runtime_state=Depends(get_runtime_state),
 ):
     """切换到指定账号。"""
-    # 从 runtime_state 获取 browser_session, snapshot_cache, busy_lock
     browser_session = runtime_state.client._session if runtime_state.client else None
     snapshot_cache = runtime_state.snapshot_cache
     busy_lock = runtime_state.busy_lock
@@ -145,6 +157,7 @@ async def activate_account(
         email=account.email,
         created_at=account.created_at,
         last_used=account.last_used,
+        auth_user=getattr(account, "auth_user", "0"),
     )
 
 
@@ -176,6 +189,7 @@ async def update_account(
         email=account.email,
         created_at=account.created_at,
         last_used=account.last_used,
+        auth_user=getattr(account, "auth_user", "0"),
     )
 
 
@@ -185,13 +199,7 @@ async def import_cookies(
     account_service=Depends(get_account_service),
     runtime_state=Depends(get_runtime_state),
 ):
-    """从 cookie 字符串导入账号。
-
-    支持格式: `key=value; key=value; ...`（浏览器开发者工具或 Cookie 编辑扩展导出格式）
-
-    流程: 解析 → 保存到 store → 注入浏览器 → 访问页面 → 导出 auth.json
-    """
-    # 1. 解析并保存到账号 store
+    """从 cookie 导入账号（支持 JSON 数组、Netscape 或 KV）。"""
     storage_state = parse_cookie_string(req.cookies)
     cookie_count = len(storage_state["cookies"])
 
@@ -200,19 +208,19 @@ async def import_cookies(
 
     domain_summary: dict[str, int] = {}
     for c in storage_state["cookies"]:
-        d = c["domain"]
+        d = c.get("domain", "")
         domain_summary[d] = domain_summary.get(d, 0) + 1
 
-    name = req.name or "导入的账号"
+    name = req.name or (f"Google Account (u/{req.auth_user})" if req.auth_user != "0" else "导入的账号")
 
     account = account_service._store.save_account(
         name=name,
         email=req.email,
         storage_state=storage_state,
         account_id=req.account_id,
+        auth_user=req.auth_user or "0",
     )
 
-    # 2. 注入浏览器 + 访问页面 + 保存 auth.json
     try:
         browser_session = runtime_state.client._session if runtime_state.client else None
         if browser_session:
@@ -230,4 +238,52 @@ async def import_cookies(
         name=account.name,
         cookie_count=cookie_count,
         domain_summary=domain_summary,
+        auth_user=account.auth_user,
+    )
+
+
+@router.post("/probe-import", response_model=ProbeAndImportResponse)
+async def probe_and_import(
+    req: ProbeAndImportRequest,
+    account_service=Depends(get_account_service),
+    runtime_state=Depends(get_runtime_state),
+):
+    """单份 Cookie 无限向下探活多账号并一键批量导入。"""
+    from aistudio_api.infrastructure.account.cookie_parser import probe_google_accounts_infinite, parse_cookie_string
+    probed = await probe_google_accounts_infinite(req.cookies)
+    if not probed:
+        raise HTTPException(status_code=400, detail="未探测到有效已登录 Google 账号")
+
+    storage_state = parse_cookie_string(req.cookies)
+    imported_accounts: list[AccountResponse] = []
+
+    prefix = req.name_prefix.strip() if req.name_prefix else "Google Account"
+
+    for p in probed:
+        u_idx = str(p["auth_user"])
+        acc_name = f"{prefix} (u/{u_idx})" if len(probed) > 1 or u_idx != "0" else prefix
+        account = account_service._store.save_account(
+            name=acc_name,
+            email=None,
+            storage_state=storage_state,
+            auth_user=u_idx,
+        )
+        imported_accounts.append(
+            AccountResponse(
+                id=account.id,
+                name=account.name,
+                email=account.email,
+                created_at=account.created_at,
+                last_used=account.last_used,
+                auth_user=account.auth_user,
+            )
+        )
+
+    # 如果当前没有激活的账号，默认激活第一个
+    if not account_service.get_active_account() and imported_accounts:
+        account_service.set_active_account(imported_accounts[0].id)
+
+    return ProbeAndImportResponse(
+        imported_count=len(imported_accounts),
+        accounts=imported_accounts,
     )

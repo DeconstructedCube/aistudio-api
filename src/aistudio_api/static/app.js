@@ -10,7 +10,7 @@ function app() {
     msgs: [], draft: '', selectedImages: [], busy: false,
     cfg: { thinking: 'off', search: 'off', stream: 'on', temperature: 1.0, topP: 0.95, maxTokens: 32768, safety: 'on' },
     toast: { show: false, msg: '', t: null },
-    cookieModal: { open: false, cookies: '', name: '', email: '', importing: false },
+    cookieModal: { open: false, cookies: '', name: '', email: '', importing: false, autoProbe: true },
     loginInProgress: false,
 
     async init() {
@@ -233,24 +233,46 @@ function app() {
     async importCookies() {
       const raw = this.cookieModal.cookies.trim();
       if (!raw) { this.showToast('请输入 Cookie'); return }
-      // 支持多行：每行一个 cookie 或用分号分隔
-      const cookies = raw.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean).join('; ');
       this.cookieModal.importing = true;
       try {
-        const body = { cookies };
-        if (this.cookieModal.name.trim()) body.name = this.cookieModal.name.trim();
-        if (this.cookieModal.email.trim()) body.email = this.cookieModal.email.trim();
-        const r = await this.apiFetch('/accounts/import-cookies', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        const d = await r.json();
-        if (r.ok) {
-          this.showToast(`导入成功: ${d.cookie_count} 个 cookie`);
-          this.cookieModal.open = false; this.cookieModal.cookies = ''; this.cookieModal.name = ''; this.cookieModal.email = '';
-          this.loadAccounts(); this.loadRotation();
+        if (this.cookieModal.autoProbe) {
+          const body = { cookies: raw, name_prefix: this.cookieModal.name.trim() || undefined };
+          const r = await this.apiFetch('/accounts/probe-import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const d = await r.json();
+          if (r.ok) {
+            this.showToast(`🎉 成功探测并导入 ${d.imported_count} 个多登录账号`);
+            this.cookieModal.open = false; this.cookieModal.cookies = ''; this.cookieModal.name = ''; this.cookieModal.email = '';
+            this.loadAccounts(); this.loadRotation();
+          } else {
+            this.showToast(d.detail || '自动探活导入失败');
+          }
         } else {
-          this.showToast(d.detail || '导入失败');
+          const body = { cookies: raw };
+          if (this.cookieModal.name.trim()) body.name = this.cookieModal.name.trim();
+          if (this.cookieModal.email.trim()) body.email = this.cookieModal.email.trim();
+          const r = await this.apiFetch('/accounts/import-cookies', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          });
+          const d = await r.json();
+          if (r.ok) {
+            this.showToast(`导入成功: ${d.cookie_count} 个 cookie (u/${d.auth_user})`);
+            this.cookieModal.open = false; this.cookieModal.cookies = ''; this.cookieModal.name = ''; this.cookieModal.email = '';
+            this.loadAccounts(); this.loadRotation();
+          } else {
+            this.showToast(d.detail || '导入失败');
+          }
         }
-      } catch (e) { this.showToast('网络错误') }
-      finally { this.cookieModal.importing = false }
+      } catch (e) {
+        this.showToast('网络错误');
+      } finally {
+        this.cookieModal.importing = false;
+      }
     },
 
     resizeTa() { const el = this.$refs.ta; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 200) + 'px' },

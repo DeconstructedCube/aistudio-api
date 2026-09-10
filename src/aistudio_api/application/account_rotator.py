@@ -23,6 +23,19 @@ class RotationMode(str, Enum):
     LEAST_RATE_LIMITED = "least_rl"     # 最少限流
 
 
+def get_pacific_date_key(ts: float | None = None) -> str:
+    """获取美西太平洋时间（America/Los_Angeles）日期键值 YYYY-MM-DD。"""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("America/Los_Angeles")
+        dt = datetime.fromtimestamp(ts or time.time(), tz=tz)
+        return dt.strftime("%Y-%m-%d")
+    except Exception:
+        # 简易保底（UTC-8 / UTC-7）
+        dt = datetime.fromtimestamp((ts or time.time()) - 28800, tz=timezone.utc)
+        return dt.strftime("%Y-%m-%d")
+
+
 @dataclass
 class AccountStats:
     """单账号的运行统计。"""
@@ -34,9 +47,16 @@ class AccountStats:
     last_used: float = 0.0           # timestamp
     last_rate_limited: float = 0.0   # timestamp
     cooldown_until: float = 0.0      # timestamp, 429 后冷却期
+    rate_limited_date_la: str | None = None
 
     def is_available(self) -> bool:
-        """检查账号是否可用（不在冷却期）。"""
+        """检查账号是否可用（不在冷却期，或已过美西午夜自动解封）。"""
+        if self.rate_limited_date_la:
+            current_la = get_pacific_date_key()
+            if self.rate_limited_date_la < current_la:
+                self.rate_limited_date_la = None
+                self.cooldown_until = 0.0
+                return True
         return time.time() >= self.cooldown_until
 
     def record_success(self) -> None:
@@ -48,14 +68,13 @@ class AccountStats:
         self.requests += 1
         self.rate_limited += 1
         self.last_rate_limited = time.time()
+        self.rate_limited_date_la = get_pacific_date_key()
         self.cooldown_until = time.time() + cooldown_seconds
 
     def record_error(self) -> None:
         self.requests += 1
         self.errors += 1
         self.last_used = time.time()
-
-
 class AccountRotator:
     """多账号轮询管理器。
 

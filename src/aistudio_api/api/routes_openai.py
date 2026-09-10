@@ -68,16 +68,41 @@ MODEL_IDS = {m.id for m in MODELS}
 
 
 @router.get("/v1/models", response_model=ModelListResponse)
-async def list_models():
-    return ModelListResponse(data=MODELS)
+async def list_models(
+    runtime_state=Depends(get_runtime_state),
+):
+    session = runtime_state.client._session if runtime_state.client else None
+    from aistudio_api.infrastructure.gateway.model_discovery import model_discovery
+    discovered = await model_discovery.get_models(session=session)
+    cards = [
+        ModelCardResponse(
+            id=m["id"],
+            object="model",
+            created=1700000000,
+            owned_by="google",
+        )
+        for m in discovered
+    ]
+    return ModelListResponse(data=cards)
 
 
 @router.get("/v1/models/{model_id:path}", response_model=ModelCardResponse)
-async def get_model(model_id: str):
-    for m in MODELS:
-        if m.id == model_id:
-            return m
-    raise HTTPException(status_code=404, detail={"message": f"Model '{model_id}' not found", "type": "invalid_request_error"})
+async def get_model(
+    model_id: str,
+    runtime_state=Depends(get_runtime_state),
+):
+    session = runtime_state.client._session if runtime_state.client else None
+    from aistudio_api.infrastructure.gateway.model_discovery import model_discovery
+    discovered = await model_discovery.get_models(session=session)
+    for m in discovered:
+        if m["id"] == model_id or m.get("name") == model_id:
+            return ModelCardResponse(
+                id=m["id"],
+                object="model",
+                created=1700000000,
+                owned_by="google",
+            )
+    return ModelCardResponse(id=model_id, object="model", created=1700000000, owned_by="google")
 
 
 @router.post("/v1/chat/completions", response_model=OpenAIChatCompletionResponse)

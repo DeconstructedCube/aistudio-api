@@ -1,13 +1,25 @@
-"""解析浏览器 cookie 字符串，转换为 Playwright cookie / storage state 格式。"""
+"""解析浏览器 cookie（支持 JSON 数组、Netscape 格式与 Header KV），并提供 Google 多账号探活。"""
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
+import logging
+import re
 import time
+import uuid
 from collections.abc import Iterable
 from typing import Any
 
+logger = logging.getLogger("aistudio.cookie_parser")
+
+DEFAULT_API_KEY = "AIzaSyDdP816MREB3SkjZO04QXbjsigfcI0GWOs"
+DEFAULT_EXT_BIN = "CAESAUwwATgEQABQBGICSlBwAHgBkAEAmAEB"
+DEFAULT_ORIGIN = "https://aistudio.google.com"
+DEFAULT_USER_AGENT = "grpc-web-javascript/0.1"
+
 # Cookies that need httpOnly=False so JS can read them for SAPISIDHASH.
-# Keep this list narrow: most auth cookies should remain httpOnly.
 _AUTH_COOKIE_NAMES = {
     "SID", "APISID", "SAPISID",
     "__Secure-1PAPISID", "__Secure-3PAPISID",
@@ -25,12 +37,10 @@ _DOMAIN_OVERRIDES: dict[str, list[str]] = {
     "SMSV": ["accounts.google.com"],
     "LSOLH": ["accounts.google.com"],
     "ACCOUNT_CHOOSER": ["accounts.google.com"],
-    # SIDTS 系列只在 .youtube.com 域名下
     "__Secure-1PSIDTS": [".youtube.com"],
     "__Secure-3PSIDTS": [".youtube.com"],
 }
 
-# 需要复制到多个 Google 域名的核心认证 cookie
 _MULTI_DOMAIN_COOKIES = {
     "SID", "__Secure-1PSID", "__Secure-3PSID",
     "HSID", "SSID",
@@ -38,45 +48,116 @@ _MULTI_DOMAIN_COOKIES = {
     "NID",
 }
 
-# YouTube 域名列表（用于复制核心 cookie）
-_GOOGLE_DOMAINS = [
-    ".google.com",
-    ".youtube.com",
-    ".google.com.tw",
-    ".google.com.hk",
-    ".google.com.sg",
-    ".aistudio.google.com",
-    ".gemini.google.com",
-    "accounts.google.com",
-    "aistudio.google.com",
-]
 
+def parse_raw_cookies(raw: Any) -> dict[str, str]:
+    """万能 Cookie 解析器，支持：
+    1. JSON 数组（EditThisCookie / Cookie-Editor 导出：`[{"name": "...", "value": "..."}, ...]`）
+    2. JSON 对象（`{"cookies": [...]}` 或 `{"cookies": {"k": "v"}}`）
+    3. Netscape / curl 格式（7 列 Tab 分隔）
+    4. HTTP 请求头格式（`Cookie: k1=v1; k2=v2` 或带换行的多行键值对）
+    """
+    parsed: dict[str, str] = {}
+    if not raw:
+        return parsed
 
-def _parse_cookie_pairs(raw: str) -> list[tuple[str, str]]:
-    pairs: list[tuple[str, str]] = []
-    for part in raw.split(";"):
-        part = part.strip()
-        if not part or "=" not in part:
+    text = raw.strip() if isinstance(raw, str) else json.dumps(raw)
+
+    if re.match(r"^cookie:\s*", text, re.IGNORECASE):
+        text = re.sub(r"^cookie:\s*", "", text, flags=re.IGNORECASE)
+
+    # 1. 尝试 JSON 格式
+    if text.startswith("{") or text.startswith("["):
+        try:
+            obj = json.loads(text)
+            if isinstance(obj, list):
+                for item in obj:
+                    if isinstance(item, dict) and item.get("name") and item.get("value") is not None:
+                        k = str(item["name"]).strip()
+                        v = str(item["value"]).strip()
+                        if k and v:
+                            parsed[k] = v
+                if parsed:
+                    return parsed
+            elif isinstance(obj, dict):
+                if isinstance(obj.get("cookie"), str):
+                    text = obj["cookie"]
+                elif isinstance(obj.get("cookies"), str):
+                    text = obj["cookies"]
+                elif isinstance(obj.get("cookies"), list):
+                    for item in obj["cookies"]:
+                        if isinstance(item, dict) and item.get("name") and item.get("value") is not None:
+                            k = str(item["name"]).strip()
+                            v = str(item["value"]).strip()
+                            if k and v:
+                                parsed[k] = v
+                    if parsed:
+                        return parsed
+                elif isinstance(obj.get("cookies"), dict):
+                    for k, v in obj["cookies"].items():
+                        if k and v is not None:
+                            parsed[str(k).strip()] = str(v).strip()
+                    return parsed
+        except Exception:
+            pass
+
+    # 2. 按行与分号拆分解析
+    lines = re.split(r"[\r\n;]+", text)
+    ignored_keys = {"domain", "path", "expires", "samesite", "secure", "httponly", "priority", "hostonly"}
+
+    for line in lines:
+        trimmed = line.strip()
+        if not trimmed or trimmed.startswith("#"):
             continue
-        name, _, value = part.partition("=")
-        name = name.strip()
-        value = value.strip()
-        if name:
-            pairs.append((name, value))
-    return pairs
+
+        # Netscape 7 列 Tab 分隔
+        if "\t" in trimmed:
+            cols = trimmed.split("\t")
+            if len(cols) >= 7:
+                k = cols[5].strip() if len(cols) > 5 else ""
+                v = cols[6].strip() if len(cols) > 6 else ""
+                if k and v and k.lower() not in ignored_keys:
+                    parsed[k] = v
+                continue
+
+        # 标准 KV：name=value
+        if "=" in trimmed:
+            k, _, v = trimmed.partition("=")
+            k = k.strip()
+            v = v.strip()
+            k = re.sub(r"^cookie:\s*", "", k, flags=re.IGNORECASE)
+            if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                v = v[1:-1]
+            if k and v and k.lower() not in ignored_keys:
+                parsed[k] = v
+
+    return parsed
+
+
+def calculate_sapisid_hash(cookies: dict[str, str], origin: str = DEFAULT_ORIGIN) -> str:
+    """计算 Google SAPISIDHASH 鉴权头部。"""
+    sapisid = cookies.get("SAPISID") or cookies.get("__Secure-1PAPISID") or ""
+    sapisid1p = cookies.get("__Secure-1PAPISID") or sapisid
+    sapisid3p = cookies.get("__Secure-3PAPISID") or sapisid
+    if not sapisid:
+        return ""
+
+    ts = int(time.time())
+
+    def calc_hash(val: str) -> str:
+        return hashlib.sha1(f"{ts} {val} {origin}".encode("utf-8")).hexdigest()
+
+    h1 = f"SAPISIDHASH {ts}_{calc_hash(sapisid)}"
+    h2 = f"SAPISID1PHASH {ts}_{calc_hash(sapisid1p)}"
+    h3 = f"SAPISID3PHASH {ts}_{calc_hash(sapisid3p)}"
+    return f"{h1} {h2} {h3}"
 
 
 def build_google_cookie_list(
-    pairs: Iterable[tuple[str, str]],
+    pairs: Iterable[tuple[str, str]] | dict[str, str],
     *,
-    allow_url_targets: bool,
+    allow_url_targets: bool = False,
 ) -> list[dict[str, Any]]:
-    """Build Playwright-compatible cookies from raw name/value pairs.
-
-    When ``allow_url_targets`` is enabled, host-only cookies are emitted with a
-    ``url`` field instead of an imprecise ``domain`` so Playwright can inject
-    them without tripping cookie prefix validation.
-    """
+    """Build Playwright/CDP compatible cookies from name/value pairs."""
     now = int(time.time())
     default_expires = now + 86400 * 180  # 180 天后过期
 
@@ -87,7 +168,6 @@ def build_google_cookie_list(
         is_host_target = not target.startswith(".")
 
         if name.startswith("__Host-") and not allow_url_targets:
-            # storage_state 无法精确表达 host-only cookie，交给浏览器补全导出
             return
 
         target_kind = "url" if allow_url_targets and is_host_target else "domain"
@@ -112,7 +192,8 @@ def build_google_cookie_list(
             cookie["path"] = "/"
         cookies.append(cookie)
 
-    for name, value in pairs:
+    items = pairs.items() if isinstance(pairs, dict) else pairs
+    for name, value in items:
         targets = _DOMAIN_OVERRIDES.get(name)
         if not targets:
             targets = [".google.com"]
@@ -122,21 +203,94 @@ def build_google_cookie_list(
     return cookies
 
 
-def parse_cookie_string(raw: str) -> dict[str, Any]:
-    """将 `key=value; key=value` 格式的 cookie 字符串解析为 Playwright storage state。
-
-    Args:
-        raw: 浏览器开发者工具或扩展导出的 cookie 字符串
-
-    Returns:
-        Playwright storage state dict，包含 cookies 和 origins 字段
-    """
+def parse_cookie_string(raw: Any) -> dict[str, Any]:
+    """将任意格式 cookie 解析为 storage state dict，包含 cookies 和 origins 字段。"""
+    cookie_dict = parse_raw_cookies(raw)
     return {
-        "cookies": build_google_cookie_list(_parse_cookie_pairs(raw), allow_url_targets=False),
+        "cookies": build_google_cookie_list(cookie_dict, allow_url_targets=False),
         "origins": [],
     }
 
 
-def parse_and_filter_google_cookies(raw: str) -> list[dict[str, Any]]:
+def parse_and_filter_google_cookies(raw: Any) -> list[dict[str, Any]]:
     state = parse_cookie_string(raw)
     return [c for c in state["cookies"] if "google" in c.get("domain", "")]
+
+
+async def probe_google_accounts_infinite(
+    raw_or_dict: Any,
+    *,
+    max_fails_in_a_row: int = 1,
+) -> list[dict[str, Any]]:
+    """一路向下探测多账号登录索引（u/0, u/1, u/2...），直到探测失败为止。
+    
+    Returns:
+        有效账号列表，例如 [{"auth_user": "0", "status_code": 200, "name": "Google Account (u/0)"}, ...]
+    """
+    cookie_dict = parse_raw_cookies(raw_or_dict)
+    if not cookie_dict:
+        return []
+
+    import httpx
+
+    cookie_header = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
+    valid_accounts: list[dict[str, Any]] = []
+
+    auth_user_idx = 0
+    consecutive_failures = 0
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        while True:
+            u_index = str(auth_user_idx)
+            auth_header = calculate_sapisid_hash(cookie_dict)
+            headers = {
+                "Content-Type": "application/json+protobuf",
+                "X-User-Agent": DEFAULT_USER_AGENT,
+                "X-Goog-Api-Key": DEFAULT_API_KEY,
+                "X-Goog-AuthUser": u_index,
+                "X-Goog-Ext-519733851-bin": DEFAULT_EXT_BIN,
+                "X-AIStudio-Visit-Id": f"v1_{uuid.uuid4()}",
+                "Origin": DEFAULT_ORIGIN,
+                "Referer": f"{DEFAULT_ORIGIN}/",
+                "Cookie": cookie_header,
+            }
+            if auth_header:
+                headers["Authorization"] = auth_header
+
+            url = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/ListModels"
+            try:
+                resp = await client.post(url, headers=headers, content="[]")
+                # 200 (OK), 400 (Bad Request on param but authed), 403 (Forbidden/Permission/Quota) 均表示此账号 Session 存在
+                # 401 表示该 auth_user 未登录或 Session 无效
+                if resp.status_code in (200, 400, 403):
+                    consecutive_failures = 0
+                    valid_accounts.append({
+                        "auth_user": u_index,
+                        "status_code": resp.status_code,
+                        "name": f"Google Account (u/{u_index})",
+                    })
+                    logger.info("Probe u/%s succeeded (HTTP %d)", u_index, resp.status_code)
+                elif resp.status_code == 401:
+                    consecutive_failures += 1
+                    logger.debug("Probe u/%s returned 401 (unauthorized)", u_index)
+                else:
+                    consecutive_failures += 1
+                    logger.debug("Probe u/%s returned HTTP %d", u_index, resp.status_code)
+            except Exception as e:
+                consecutive_failures += 1
+                logger.debug("Probe u/%s failed with error: %s", u_index, e)
+
+            if consecutive_failures >= max_fails_in_a_row:
+                break
+
+            auth_user_idx += 1
+
+    # 如果探活因为网络原因没有返回任何结果，但包含了核心 cookie，保底返回 u/0
+    if not valid_accounts and ("SAPISID" in cookie_dict or "__Secure-1PSID" in cookie_dict or "SID" in cookie_dict):
+        valid_accounts.append({
+            "auth_user": "0",
+            "status_code": 200,
+            "name": "Google Account (u/0)",
+        })
+
+    return valid_accounts
