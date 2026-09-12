@@ -200,8 +200,8 @@
           this.loading = true;
 
           try {
-            // 调用 /health 端点验证 token
-            const res = await fetch('/health', {
+            // 调用 /stats 端点验证 token（该端点受 API Key 保护）
+            const res = await fetch('/stats', {
               headers: {
                 'Authorization': `Bearer ${token}`
               }

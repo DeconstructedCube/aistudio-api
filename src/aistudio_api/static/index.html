@@ -139,7 +139,6 @@
             style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:24px">
             <h1 style="font-size:24px;font-weight:700">账号管理</h1>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <button class="btn" @click="cookieModal.open=true">导入 Cookies</button>
               <button class="btn btn-primary" @click="cookieModal.open=true">+ 导入 Cookies</button>
             </div>
           </div>
@@ -184,6 +183,7 @@
                     <th>状态</th>
                     <th>操作</th>
                   </tr>
+                </thead>
                 <tbody>
                   <template x-for="a in accountRows" :key="a.id">
                     <tr>
@@ -207,6 +207,8 @@
                   <tr x-show="!accountRows.length">
                     <td colspan="7" style="text-align:center;color:var(--muted);padding:24px">暂无账号</td>
                   </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

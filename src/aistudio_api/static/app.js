@@ -31,8 +31,8 @@ function app() {
             window.location.href = '/static/login.html';
             return;
           }
-          // 验证 token 是否有效
-          const verifyRes = await fetch('/health', {
+          // 验证 token 是否有效（/stats 受鉴权保护）
+          const verifyRes = await fetch('/stats', {
             headers: { 'Authorization': `Bearer ${token}` }
           });
           if (!verifyRes.ok) {
@@ -70,7 +70,7 @@ function app() {
       location.reload();
     },
     go(v) { this.view = v; this.sidebarOpen = false; if (v === 'dashboard') this.loadStats(); if (v === 'accounts') { this.loadAccounts(); this.loadRotation() } },
-    newChat() { this.msgs = []; this.saveToCache(); this.showToast('已创建新对话') },
+
     showToast(m) { this.toast.msg = m; this.toast.show = true; if (this.toast.t) clearTimeout(this.toast.t); this.toast.t = setTimeout(() => this.toast.show = false, 3000) },
     toggleSelect(k, e) { e.stopPropagation(); this.openSelect = this.openSelect === k ? null : k },
     selectOpt(k, model, val) { this[model] = val; this.openSelect = null },
