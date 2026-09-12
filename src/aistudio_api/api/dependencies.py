@@ -12,10 +12,22 @@ from .state import runtime_state
 
 
 def _extract_request_token(request: Request) -> str | None:
+    # 1. Google Gemini standard query param: ?key=...
+    query_key = request.query_params.get("key")
+    if query_key and query_key.strip():
+        return query_key.strip()
+
+    # 2. Google Gemini standard header: x-goog-api-key
+    goog_key = (request.headers.get("x-goog-api-key") or "").strip()
+    if goog_key:
+        return goog_key
+
+    # 3. Standard x-api-key header
     api_key = (request.headers.get("x-api-key") or "").strip()
     if api_key:
         return api_key
 
+    # 4. Bearer token in Authorization header
     authorization = (request.headers.get("authorization") or "").strip()
     if not authorization:
         return None
@@ -38,7 +50,10 @@ def require_api_key(request: Request) -> None:
 
     raise HTTPException(
         status_code=401,
-        detail={"message": "Invalid or missing API key", "type": "authentication_error"},
+        detail={
+            "message": "Invalid or missing API key. Pass via 'x-goog-api-key' header, 'key' query parameter, or 'Authorization: Bearer <key>'",
+            "type": "authentication_error",
+        },
         headers={"WWW-Authenticate": "Bearer"},
     )
 

@@ -2,50 +2,20 @@
 
 from __future__ import annotations
 
-import base64
 import logging
-import mimetypes
-import time
-from typing import Any
 
 from fastapi import HTTPException
 
 from aistudio_api.api.response_models import (
     HealthResponse,
-    ImageGenerationResponse,
-    ImageResponseData,
     ModelStatsResponse,
     StatsResponse,
     StatsTotalsResponse,
 )
 from aistudio_api.api.state import runtime_state
-from aistudio_api.infrastructure.gateway.client import AIStudioClient
-from aistudio_api.infrastructure.gateway.wire_types import AistudioPart
-
 logger = logging.getLogger("aistudio.server")
 MAX_RETRIES = 3
 
-
-def validate_image_request_options(*, size: str, n: int) -> None:
-    if n != 1:
-        raise HTTPException(
-            400,
-            detail={"message": "Only n=1 is currently supported", "type": "invalid_request_error"},
-        )
-    if AIStudioClient.resolve_image_size(size) is None:
-        raise HTTPException(
-            400,
-            detail={"message": f"Unsupported image size '{size}'", "type": "invalid_request_error"},
-        )
-
-
-async def build_inline_image_parts(image_files: list) -> list[AistudioPart]:
-    parts: list[AistudioPart] = []
-    for image_file in image_files:
-        mime = image_file.content_type or mimetypes.guess_type(image_file.filename or "")[0] or "image/png"
-        content = await image_file.read()
-        parts.append(AistudioPart(inline_data=(mime, base64.b64encode(content).decode("ascii"))))
-    return parts
 
 
 async def try_switch_account() -> bool:
@@ -103,13 +73,6 @@ def record_rotator_event(event: str) -> None:
     elif event == "error":
         rotator.record_error(account.id)
 
-
-def image_response(output: Any) -> ImageGenerationResponse:
-    data: list[ImageResponseData] = []
-    for img in output.images:
-        b64 = base64.b64encode(img.data).decode("ascii")
-        data.append(ImageResponseData(b64_json=b64, revised_prompt=output.text or ""))
-    return ImageGenerationResponse(created=int(time.time()), data=data)
 
 
 def health_response() -> HealthResponse:

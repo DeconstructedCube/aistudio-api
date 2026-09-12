@@ -67,12 +67,12 @@ RUN chmod +x /app/main.py
 
 # Expose ports
 # 8080: API server
-# 9222: Camoufox debug port
+# 9222: Browser debug port
 EXPOSE 8080 9222
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/v1/models || exit 1
+    CMD curl -f http://localhost:8080/v1beta/models || exit 1
 
 # Default command
-CMD ["python3", "main.py", "server", "--port", "8080", "--camoufox-port", "9222"]
+CMD ["python3", "main.py", "server", "--port", "8080", "--browser-port", "9222"]

@@ -15,10 +15,6 @@
       <div class="logo">AI</div><span>AI Studio Proxy</span>
     </div>
     <div class="nav-section">
-      <button class="nav-item" :class="{active:view==='chat'}" @click="go('chat')">
-        <svg viewBox="0 0 24 24">
-          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-        </svg> Playground </button>
       <button class="nav-item" :class="{active:view==='dashboard'}" @click="go('dashboard')">
         <svg viewBox="0 0 24 24">
           <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -48,31 +44,10 @@
     <div class="topbar">
       <div class="topbar-left">
         <button class="mh-btn" @click="sidebarOpen=true">☰</button>
-        <template x-if="view==='chat'">
-          <div class="cselect cselect-lg" :class="{open:openSelect==='model'}" @click.stop>
-            <div class="cselect-btn" @click="toggleSelect('model',$event)" tabindex="0">
-              <span x-text="model||'选择模型'"></span><span class="arrow"></span>
-            </div>
-            <div class="cselect-menu">
-              <template x-for="m in models" :key="m.id">
-                <div class="cselect-opt" :class="{active:model===m.id}" @click="model=m.id;openSelect=null"
-                  x-text="m.id"></div>
-              </template>
-            </div>
-          </div>
-        </template>
-        <template x-if="view!=='chat'">
-          <span class="topbar-title" x-text="view==='dashboard'?'控制面板':'账号管理'"></span>
-        </template>
+        <span class="topbar-title" x-text="view==='dashboard'?'控制面板':'账号管理'"></span>
       </div>
       <div class="topbar-right" @click.stop>
-        <button class="icon-btn" @click="newChat()" title="新建对话" x-show="view==='chat'">
-          <svg viewBox="0 0 24 24">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-        </button>
-        <button class="icon-btn" :class="{active:configOpen}" @click="configOpen=!configOpen" title="Chat Settings">
+        <button class="icon-btn" :class="{active:configOpen}" @click="configOpen=!configOpen" title="API Token 设置">
           <svg viewBox="0 0 24 24">
             <path
               d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z" />
@@ -80,7 +55,7 @@
           </svg>
         </button>
         <div class="cfg-dropdown" x-show="configOpen" x-cloak @click.stop>
-          <div class="cfg-head">聊天设置</div>
+          <div class="cfg-head">API Token 设置</div>
           <div class="cfg-body">
             <div class="cfg-item">
               <div class="cfg-info">
@@ -91,172 +66,9 @@
                   placeholder="留空则不发送"></div>
             </div>
             <div class="cfg-sep"></div>
-            <div class="cfg-item">
-              <div class="cfg-info">
-                <div class="cfg-name">推理强度 (Thinking)</div>
-                <div class="cfg-desc">启用模型思维链推理</div>
-              </div>
-              <div class="cfg-ctrl">
-                <div class="cselect" :class="{open:openSelect==='thinking'}" @click.stop>
-                  <div class="cselect-btn" @click="toggleSelect('thinking',$event)" tabindex="0"><span
-                      x-text="cfg.thinking==='off'?'关闭':cfg.thinking==='low'?'低':cfg.thinking==='medium'?'中':cfg.thinking==='high'?'高':cfg.thinking"></span><span
-                      class="arrow"></span></div>
-                  <div class="cselect-menu"><template x-for="v in ['off','low','medium','high']">
-                      <div class="cselect-opt" :class="{active:cfg.thinking===v}"
-                        @click="cfg.thinking=v;openSelect=null"
-                        x-text="v==='off'?'关闭':v==='low'?'低':v==='medium'?'中':v==='high'?'高':v"></div>
-                    </template></div>
-                </div>
-              </div>
-            </div>
-            <div class="cfg-item">
-              <div class="cfg-info">
-                <div class="cfg-name">谷歌搜索 (Search)</div>
-                <div class="cfg-desc">启用联网搜索功能</div>
-              </div>
-              <div class="cfg-ctrl">
-                <div class="cselect" :class="{open:openSelect==='search'}" @click.stop>
-                  <div class="cselect-btn" @click="toggleSelect('search',$event)" tabindex="0"><span
-                      x-text="cfg.search==='on'?'开启':'关闭'"></span><span class="arrow"></span></div>
-                  <div class="cselect-menu"><template x-for="v in ['off','on']">
-                      <div class="cselect-opt" :class="{active:cfg.search===v}" @click="cfg.search=v;openSelect=null"
-                        x-text="v==='on'?'开启':'关闭'"></div>
-                    </template></div>
-                </div>
-              </div>
-            </div>
-            <div class="cfg-item">
-              <div class="cfg-info">
-                <div class="cfg-name">流式输出 (Stream)</div>
-                <div class="cfg-desc">逐字生成内容</div>
-              </div>
-              <div class="cfg-ctrl">
-                <div class="cselect" :class="{open:openSelect==='stream'}" @click.stop>
-                  <div class="cselect-btn" @click="toggleSelect('stream',$event)" tabindex="0"><span
-                      x-text="cfg.stream==='on'?'开启':'关闭'"></span><span class="arrow"></span></div>
-                  <div class="cselect-menu"><template x-for="v in ['on','off']">
-                      <div class="cselect-opt" :class="{active:cfg.stream===v}" @click="cfg.stream=v;openSelect=null"
-                        x-text="v==='on'?'开启':'关闭'"></div>
-                    </template></div>
-                </div>
-              </div>
-            </div>
-            <div class="cfg-item">
-              <div class="cfg-info">
-                <div class="cfg-name">温度 (Temperature)</div>
-                <div class="cfg-desc">0 = 稳定, 2 = 创意</div>
-              </div>
-              <div class="cfg-ctrl"><input class="cfg-num" type="number" x-model.number="cfg.temperature" min="0"
-                  max="2" step="0.1"></div>
-            </div>
-            <div class="cfg-item">
-              <div class="cfg-info">
-                <div class="cfg-name">Top P</div>
-                <div class="cfg-desc">核采样阈值</div>
-              </div>
-              <div class="cfg-ctrl"><input class="cfg-num" type="number" x-model.number="cfg.topP" min="0" max="1"
-                  step="0.05"></div>
-            </div>
-            <div class="cfg-item">
-              <div class="cfg-info">
-                <div class="cfg-name">最大 Token</div>
-                <div class="cfg-desc">最大生成长度</div>
-              </div>
-              <div class="cfg-ctrl"><input class="cfg-num" type="number" x-model.number="cfg.maxTokens" min="1"
-                  max="65536" step="256"></div>
-            </div>
-            <div class="cfg-item">
-              <div class="cfg-info">
-                <div class="cfg-name">安全过滤 (Safety)</div>
-                <div class="cfg-desc">内容合规性检查</div>
-              </div>
-              <div class="cfg-ctrl">
-                <div class="cselect" :class="{open:openSelect==='safety'}" @click.stop>
-                  <div class="cselect-btn" @click="toggleSelect('safety',$event)" tabindex="0"><span
-                      x-text="cfg.safety==='on'?'开启':'关闭'"></span><span class="arrow"></span></div>
-                  <div class="cselect-menu"><template x-for="v in ['on','off']">
-                      <div class="cselect-opt" :class="{active:cfg.safety===v}" @click="cfg.safety=v;openSelect=null"
-                        x-text="v==='on'?'开启':'关闭'"></div>
-                    </template></div>
-                </div>
-              </div>
-            </div>
-            <div class="cfg-sep"></div>
             <div class="cfg-item" style="padding-top:4px">
               <button class="btn btn-danger btn-block" @click="clearCache()">清理本地缓存</button>
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
-    <!-- Chat -->
-    <div id="chat-page" :class="{active:view==='chat'}">
-      <div id="chat-scroll">
-        <template x-if="msgs.length===0">
-          <div class="welcome">
-            <h2>今天我能帮您做什么？</h2>
-            <p>发送消息来测试代理服务。</p>
-          </div>
-        </template>
-        <template x-for="(m,i) in msgs" :key="i">
-          <div class="msg" :class="m.role==='user'?'':'msg-ai'">
-            <div class="msg-inner">
-              <div class="avatar" :class="m.role==='user'?'avatar-user':'avatar-ai'" x-text="m.role==='user'?'U':'AI'">
-              </div>
-              <div style="flex:1;min-width:0">
-                <template x-if="m.thinking">
-                  <div class="think-block" @click="m.showThinking=!m.showThinking">
-                    <div class="think-toggle"><span>思考中</span><span class="think-arrow"
-                        :class="{open:m.showThinking}">›</span></div>
-                    <div class="think-body" x-show="m.showThinking" x-text="m.thinking"></div>
-                  </div>
-                </template>
-                <div class="msg-body markdown-body" :class="{error:m.error}"
-                  x-html="renderMarkdown(m.error||m.content)"></div>
-                <template x-if="m.images && m.images.length">
-                  <div class="msg-images">
-                    <template x-for="img in m.images">
-                      <div class="msg-img-item" @click="window.open(img)">
-                        <img :src="img">
-                      </div>
-                    </template>
-                  </div>
-                </template>
-              </div>
-            </div>
-          </div>
-        </template>
-      </div>
-      <div id="input-area">
-        <div class="input-wrap">
-          <template x-if="selectedImages.length > 0">
-            <div class="preview-container">
-              <template x-for="(img, idx) in selectedImages" :key="idx">
-                <div class="preview-item">
-                  <img :src="img">
-                  <button class="preview-remove" @click="removeImage(idx)">×</button>
-                </div>
-              </template>
-            </div>
-          </template>
-          <div id="input-box">
-            <input type="file" x-ref="fileInput" @change="handleImageUpload" accept="image/*" multiple
-              style="display:none">
-            <button class="upload-btn" @click="$refs.fileInput.click()" title="上传图片">
-              <svg viewBox="0 0 24 24">
-                <path
-                  d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
-              </svg>
-            </button>
-            <textarea x-ref="ta" x-model="draft" @keydown.enter.prevent="if(!$event.shiftKey)send()" @input="resizeTa()"
-              placeholder="给 AI Studio 代理发送消息..." rows="1"></textarea>
-            <button class="send" :disabled="busy||(!draft.trim() && selectedImages.length === 0)||!model"
-              @click="send()">
-              <svg viewBox="0 0 24 24">
-                <line x1="12" y1="19" x2="12" y2="5" />
-                <polyline points="5 12 12 5 19 12" />
-              </svg>
-            </button>
           </div>
         </div>
       </div>
@@ -328,8 +140,7 @@
             <h1 style="font-size:24px;font-weight:700">账号管理</h1>
             <div style="display:flex;gap:8px;flex-wrap:wrap">
               <button class="btn" @click="cookieModal.open=true">导入 Cookies</button>
-              <button class="btn btn-primary" :disabled="loginInProgress" @click="addAccount()"
-                x-text="loginInProgress?'登录中...':'+ 登录账号'"></button>
+              <button class="btn btn-primary" @click="cookieModal.open=true">+ 导入 Cookies</button>
             </div>
           </div>
           <div class="card" style="margin-bottom:24px">
@@ -442,12 +253,6 @@
     </div>
   </div>
   <div class="toast" :class="{show:toast.show}" x-text="toast.msg"></div>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/styles/github.min.css">
-  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.10.0/lib/highlight.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
   <script src="/static/app.js"></script>
   <script defer src="/static/alpine.min.js"></script>
 </body>

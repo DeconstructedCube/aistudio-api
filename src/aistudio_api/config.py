@@ -17,18 +17,6 @@ DEFAULT_IMAGE_MODEL = os.getenv("AISTUDIO_DEFAULT_IMAGE_MODEL", "gemini-3.1-flas
 DEFAULT_BROWSER_PORT = 9222
 
 
-def _load_browser_engine() -> str:
-    """Load browser engine name.
-
-    Supported values:
-    - chromium: stealth Chromium via cloakbrowser (default)
-    - camoufox: Camoufox Firefox-based backend
-    """
-    value = (os.getenv("AISTUDIO_BROWSER", "chromium") or "chromium").strip().lower()
-    if value not in {"camoufox", "chromium"}:
-        return "chromium"
-    return value
-
 
 def _load_env(*names: str) -> str | None:
     for name in names:
@@ -73,13 +61,6 @@ def _load_api_keys() -> frozenset[str]:
                 values.append(key)
     return frozenset(values)
 
-
-def _default_chromium_sandbox() -> bool:
-    # On many recent Linux distros (including Ubuntu with AppArmor userns
-    # restrictions), Chromium sandboxing is unavailable unless the host has been
-    # explicitly configured for it. Default to disabled there so the browser can
-    # actually start; keep enabled elsewhere.
-    return os.name != "posix" or os.uname().sysname != "Linux"
 
 _AUTH_SEARCH_ROOTS = [
     Path(__file__).resolve().parents[2] / "data",  # 项目内 data/ 目录
@@ -144,25 +125,13 @@ def build_browser_proxy(proxy_url: str | None) -> dict[str, str] | None:
     return proxy
 
 
-def build_camoufox_proxy(proxy_url: str | None) -> dict[str, str] | None:
-    """Backward-compatible alias for old imports."""
-    return build_browser_proxy(proxy_url)
-
 
 @dataclass(slots=True)
 class Settings:
     port: int = int(os.getenv("AISTUDIO_PORT", "8080"))
-    browser_engine: str = _load_browser_engine()
-    browser_port: int = _load_int_env("AISTUDIO_BROWSER_PORT", "AISTUDIO_CAMOUFOX_PORT", default=DEFAULT_BROWSER_PORT)
-    browser_headless: bool = _load_bool_env("AISTUDIO_BROWSER_HEADLESS", "AISTUDIO_CAMOUFOX_HEADLESS", default=True)
-    browser_channel: str | None = os.getenv("AISTUDIO_BROWSER_CHANNEL")
+    browser_port: int = _load_int_env("AISTUDIO_BROWSER_PORT", default=DEFAULT_BROWSER_PORT)
+    browser_headless: bool = _load_bool_env("AISTUDIO_BROWSER_HEADLESS", default=True)
     browser_executable_path: str | None = os.getenv("AISTUDIO_BROWSER_EXECUTABLE")
-    browser_chromium_sandbox: bool = _load_bool_env(
-        "AISTUDIO_CHROMIUM_SANDBOX",
-        default=_default_chromium_sandbox(),
-    )
-    browser_python: str | None = _load_env("AISTUDIO_BROWSER_PYTHON", "AISTUDIO_CAMOUFOX_PYTHON")
-    login_browser_port: int = _load_int_env("AISTUDIO_LOGIN_BROWSER_PORT", "AISTUDIO_LOGIN_CAMOUFOX_PORT", default=9223)
     auth_file: str | None = discover_auth_file()
     tmp_dir: str = os.getenv("AISTUDIO_TMP_DIR", "/tmp")
     proxy_url: str | None = discover_proxy_url()
@@ -180,22 +149,6 @@ class Settings:
     account_cooldown_seconds: int = int(os.getenv("AISTUDIO_ACCOUNT_COOLDOWN_SECONDS", "60"))
     account_max_retries: int = int(os.getenv("AISTUDIO_ACCOUNT_MAX_RETRIES", "3"))
     max_concurrency: int = int(os.getenv("AISTUDIO_MAX_CONCURRENCY", "3"))
-
-    @property
-    def camoufox_port(self) -> int:
-        return self.browser_port
-
-    @property
-    def camoufox_headless(self) -> bool:
-        return self.browser_headless
-
-    @property
-    def camoufox_python(self) -> str | None:
-        return self.browser_python
-
-    @property
-    def login_camoufox_port(self) -> int:
-        return self.login_browser_port
 
     @property
     def auth_enabled(self) -> bool:

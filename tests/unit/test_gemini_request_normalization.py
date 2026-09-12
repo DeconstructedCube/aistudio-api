@@ -1,8 +1,7 @@
 import pytest
 
 from aistudio_api.api.schemas import GeminiContent, GeminiGenerateContentRequest, GeminiGenerationConfig, GeminiPart
-from aistudio_api.application.chat_service import normalize_gemini_request, normalize_openai_tools
-from aistudio_api.api.schemas import ChatRequest
+from aistudio_api.application.chat_service import normalize_gemini_request
 from aistudio_api.infrastructure.gateway.wire_types import AistudioImageOutputMode
 
 
@@ -265,58 +264,3 @@ def test_normalize_gemini_request_maps_official_text_model_fields():
         [None, None, 10, 2],
     ]
 
-
-def test_normalize_openai_tools_encodes_function_tools_to_wire():
-    req = ChatRequest(
-        messages=[{"role": "user", "content": "hello"}],
-        tools=[
-            {
-                "type": "function",
-                "function": {
-                    "name": "getWeather",
-                    "description": "gets the weather for a requested city",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"city": {"type": "string"}},
-                        "propertyOrdering": ["city"],
-                    },
-                },
-            }
-        ],
-    )
-
-    assert normalize_openai_tools(req.tools) == [
-        [
-            None,
-            [
-                [
-                    "getWeather",
-                    "gets the weather for a requested city",
-                    [6, None, None, None, None, None, [["city", [1]]], None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, ["city"]],
-                ]
-            ],
-        ]
-    ]
-
-
-def test_normalize_openai_tools_omits_required_from_function_schema_wire():
-    req = ChatRequest(
-        messages=[{"role": "user", "content": "hello"}],
-        tools=[
-            {
-                "type": "function",
-                "function": {
-                    "name": "browser_click",
-                    "description": "Click by ref",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"ref": {"type": "string"}},
-                        "required": ["ref"],
-                    },
-                },
-            }
-        ],
-    )
-
-    schema = normalize_openai_tools(req.tools)[0][1][0][2]
-    assert len(schema) <= 7 or schema[7] is None

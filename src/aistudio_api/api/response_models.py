@@ -3,127 +3,16 @@
 from __future__ import annotations
 
 from typing import Any, Literal
-from pydantic import BaseModel, Field
-
-
-class OpenAICompletionTokenDetails(BaseModel):
-    reasoning_tokens: int = 0
-
-
-class OpenAIUsage(BaseModel):
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
-    total_tokens: int = 0
-    completion_tokens_details: OpenAICompletionTokenDetails = Field(
-        default_factory=OpenAICompletionTokenDetails
-    )
-
-
-class OpenAIFunctionCallPayload(BaseModel):
-    name: str
-    arguments: str
-
-
-class OpenAIToolCall(BaseModel):
-    id: str
-    type: Literal["function"] = "function"
-    function: OpenAIFunctionCallPayload
-
-
-class OpenAIChatMessage(BaseModel):
-    role: Literal["assistant"] = "assistant"
-    content: str
-    thinking: str | None = None
-    tool_calls: list[OpenAIToolCall] | None = None
-
-
-class OpenAIChatChoice(BaseModel):
-    index: int
-    message: OpenAIChatMessage
-    finish_reason: str
-
-
-class OpenAIChatCompletionResponse(BaseModel):
-    id: str
-    object: Literal["chat.completion"] = "chat.completion"
-    created: int
-    model: str
-    choices: list[OpenAIChatChoice]
-    usage: OpenAIUsage
-
-
-class OpenAIChatDelta(BaseModel):
-    role: Literal["assistant"] = "assistant"
-    content: str | None = None
-    thinking: str | None = None
-    tool_calls: list[OpenAIToolCall] | None = None
-
-
-class OpenAIChatChunkChoice(BaseModel):
-    index: int
-    delta: OpenAIChatDelta
-    finish_reason: str | None = None
-
-
-class OpenAIChatCompletionChunk(BaseModel):
-    id: str
-    object: Literal["chat.completion.chunk"] = "chat.completion.chunk"
-    created: int
-    model: str
-    choices: list[OpenAIChatChunkChoice]
-    usage: OpenAIUsage | None = None
+from pydantic import BaseModel
 
 
 class ErrorDetail(BaseModel):
     message: str
-    type: str
+    type: str = "server_error"
 
 
 class ErrorResponse(BaseModel):
     error: ErrorDetail
-
-
-class ImageResponseData(BaseModel):
-    b64_json: str
-    revised_prompt: str = ""
-
-
-class ImageGenerationResponse(BaseModel):
-    created: int
-    data: list[ImageResponseData]
-
-
-class AnthropicUsageResponse(BaseModel):
-    input_tokens: int
-    output_tokens: int
-
-
-class AnthropicTextBlockResponse(BaseModel):
-    type: Literal["text"] = "text"
-    text: str
-
-
-class AnthropicToolUseBlockResponse(BaseModel):
-    type: Literal["tool_use"] = "tool_use"
-    id: str
-    name: str
-    input: dict[str, Any]
-
-
-class AnthropicMessageResponse(BaseModel):
-    id: str
-    type: Literal["message"] = "message"
-    role: Literal["assistant"] = "assistant"
-    model: str
-    content: list[AnthropicTextBlockResponse | AnthropicToolUseBlockResponse]
-    stop_reason: str
-    stop_sequence: str | None = None
-    usage: AnthropicUsageResponse
-
-
-class AnthropicCountTokensResponse(BaseModel):
-    input_tokens: int
-
 
 class GeminiUsageMetadata(BaseModel):
     promptTokenCount: int = 0
@@ -202,13 +91,22 @@ class StatsResponse(BaseModel):
     totals: StatsTotalsResponse
 
 
-class ModelCardResponse(BaseModel):
-    id: str
-    object: Literal["model"] = "model"
-    created: int
-    owned_by: str
+class GeminiModelResponse(BaseModel):
+    name: str
+    version: str | None = "001"
+    displayName: str | None = None
+    description: str | None = None
+    inputTokenLimit: int | None = None
+    outputTokenLimit: int | None = None
+    supportedGenerationMethods: list[str] = [
+        "generateContent",
+        "countTokens",
+        "createCachedContent",
+    ]
+    temperature: float | None = None
+    topP: float | None = None
+    topK: int | None = None
 
 
-class ModelListResponse(BaseModel):
-    object: Literal["list"] = "list"
-    data: list[ModelCardResponse]
+class GeminiModelListResponse(BaseModel):
+    models: list[GeminiModelResponse]

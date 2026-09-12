@@ -2,24 +2,16 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Depends
+import logging
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from aistudio_api.api.dependencies import get_account_service, get_runtime_state
 from aistudio_api.infrastructure.account.cookie_parser import parse_cookie_string
-import logging
 
 log = logging.getLogger("aistudio.routes_accounts")
 
 router = APIRouter(prefix="/accounts")
-
-
-class LoginStartRequest(BaseModel):
-    name: str | None = None
-
-
-class LoginStartResponse(BaseModel):
-    session_id: str
 
 
 class AccountResponse(BaseModel):
@@ -29,13 +21,6 @@ class AccountResponse(BaseModel):
     created_at: str
     last_used: str | None
     auth_user: str = "0"
-
-class LoginStatusResponse(BaseModel):
-    session_id: str
-    status: str
-    account_id: str | None = None
-    email: str | None = None
-    error: str | None = None
 
 
 class UpdateAccountRequest(BaseModel):
@@ -66,33 +51,6 @@ class ProbeAndImportRequest(BaseModel):
 class ProbeAndImportResponse(BaseModel):
     imported_count: int
     accounts: list[AccountResponse]
-
-@router.post("/login/start", response_model=LoginStartResponse)
-async def login_start(
-    req: LoginStartRequest,
-    account_service=Depends(get_account_service),
-):
-    """启动 Google 登录流程。"""
-    session_id = await account_service.start_login(req.name)
-    return LoginStartResponse(session_id=session_id)
-
-
-@router.get("/login/status/{session_id}", response_model=LoginStatusResponse)
-async def login_status(
-    session_id: str,
-    account_service=Depends(get_account_service),
-):
-    """查询登录状态。"""
-    session = account_service.get_login_status(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="登录会话不存在")
-    return LoginStatusResponse(
-        session_id=session.session_id,
-        status=session.status.value,
-        account_id=session.account_id,
-        email=session.email,
-        error=session.error,
-    )
 
 
 @router.get("", response_model=list[AccountResponse])
@@ -249,7 +207,7 @@ async def probe_and_import(
     runtime_state=Depends(get_runtime_state),
 ):
     """单份 Cookie 无限向下探活多账号并一键批量导入。"""
-    from aistudio_api.infrastructure.account.cookie_parser import probe_google_accounts_infinite, parse_cookie_string
+    from aistudio_api.infrastructure.account.cookie_parser import parse_cookie_string, probe_google_accounts_infinite
     probed = await probe_google_accounts_infinite(req.cookies)
     if not probed:
         raise HTTPException(status_code=400, detail="未探测到有效已登录 Google 账号")

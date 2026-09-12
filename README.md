@@ -1,6 +1,6 @@
 # AI Studio API
 
-Google AIStudio Playgroud 反代，支持 Google 会员（Pro/Ultra），支持 Gemini 原生协议格式，包含生图、工具调用、Google搜索。
+Google AI Studio Playground 反代服务，支持 Google 会员（Pro/Ultra）账号，兼容 Google Gemini 原生 API 协议格式，支持生图、工具调用与联网搜索。
 
 [English](./README_EN.md)
 
@@ -12,19 +12,16 @@ Google AIStudio Playgroud 反代，支持 Google 会员（Pro/Ultra），支持 
   - [快速开始](#快速开始)
     - [直接启动](#直接启动)
     - [Docker 部署](#docker-部署)
-    - [登录](#登录)
-      - [CLI 模式](#cli-模式)
-      - [有头模式，适合本地](#有头模式适合本地)
-      - [使用 cookies 登录，有效期短](#使用-cookies-登录有效期短)
+    - [账号管理与登录](#账号管理与登录)
   - [使用示例](#使用示例)
-    - [OpenAI 兼容接口](#openai-兼容接口)
-    - [Gemini 原生接口](#gemini-原生接口)
-    - [Python（OpenAI SDK）](#pythonopenai-sdk)
-    - [命令行客户端](#命令行客户端)
+    - [查看模型列表](#查看模型列表)
+    - [Gemini 原生接口 (curl)](#gemini-原生接口-curl)
+    - [Python (Google GenAI SDK)](#python-google-genai-sdk)
   - [支持的模型](#支持的模型)
   - [配置](#配置)
     - [模型配置](#模型配置)
     - [安全设置](#安全设置)
+  - [Docker 镜像 CI](#docker-镜像-ci)
   - [架构](#架构)
   - [BotGuard 原理](#botguard-原理)
   - [TODO](#todo)
@@ -33,20 +30,22 @@ Google AIStudio Playgroud 反代，支持 Google 会员（Pro/Ultra），支持 
 
 ## 功能
 
-- **OpenAI/Anthropic 兼容** — 支持 `/v1/chat/completions`、`/v1/images/generations`、`/v1/messages`
-- **Gemini 原生 API** — 同时支持 `/v1beta/models/{model}:generateContent`
-- **流式输出** — SSE 流式返回
-- **多轮对话** — 正确的 user/model 交替结构
-- **图片输入** — 支持 base64 内联和 HTTP URL，单图/多图
-- **Google 搜索** — 通过 `googleSearchRetrieval` 实时联网搜索
-- **Thinking** — 返回模型思考过程（`thinking` 字段）
-- **图片生成** — 通过 Gemini 图片模型生成图片
-- **反检测** — 支持 Camoufox/CloakBrowser(默认)
-- **BotGuard** — 自动特征匹配定位 snapshot 函数
-- **多账号轮询** — round-robin / LRU / 最少限流
-![alt text](image/chat.png)
+- **Gemini 原生 API 兼容** — 支持 `/v1beta/models`、`/v1beta/models/{model}:generateContent` 与流式接口
+- **灵活的鉴权方式** — 支持 `?key=` Query 参数、`x-goog-api-key` 请求头、`x-api-key` 及 `Authorization: Bearer`
+- **流式输出** — SSE 实时流式响应
+- **多轮对话** — 正确的 `user`/`model` 交替结构与上下文处理
+- **多模态图片输入** — 支持 base64 内联与图片上传，支持单图/多图
+- **Google 搜索** — 通过 `googleSearchRetrieval` 支持联网搜索
+- **Thinking 思考过程** — 返回模型思维链过程（`thinking` Part）
+- **图片生成** — 通过 Gemini 图片生成模型生成图片
+- **Chromium CDP 直连** — 基于原生 Chromium 调试协议，性能强劲、资源占用更低
+- **BotGuard 动态解析** — 自动特征匹配定位 snapshot 函数
+- **多账号智能轮询** — 支持 round-robin / LRU / least_rl（最少限流）
+
 ## 快速开始
+
 ### 直接启动
+
 ```bash
 # 克隆项目
 git clone https://github.com/chrysoljq/aistudio-api.git
@@ -55,14 +54,11 @@ cd aistudio-api
 # 安装依赖
 pip install -r requirements.txt
 
-# 登录 Google 账号
-python3 main.py login
-# 启动服务
+# 启动服务（首次会自动检测并拉起 Chromium 浏览器）
 python3 main.py server --port 8080
 ```
 
 ### Docker 部署
-
 
 ```bash
 docker run -d \
@@ -72,110 +68,82 @@ docker run -d \
   -v aistudio-api-data:/app/data \
   ghcr.io/chrysoljq/aistudio-api:latest
 ```
-### 登录
-#### CLI 模式
-```bash
-# 启动无头浏览器进行交互式登录，支持手机确认/安全码/验证器 3 种方式
-python3 main.py login
 
-# 有头，调试或手动登录
-python3 main.py login --headed
-```
-#### 有头模式，适合本地
-首次启动后，访问 http://localhost:8080 进行 Google 账号登录，支持浏览器登录和手动导入cookies（访问）。
-![alt text](image/login.png)
-#### 使用 cookies 登录，有效期短
-访问 https://myaccount.google.com/ ，复制 cookies 导入。仅测试过 chrome->cloakbrowser，跨内核可能不支持。重启生效。
+### 账号管理与登录
+
+服务启动后，访问 `http://localhost:8080` 进入管理控制面板：
+1. 点击 **“导入 Cookies”** 按钮。
+2. 访问 [Google 账号管理页](https://myaccount.google.com/) 或 AI Studio 页面，复制完整 Cookie 字符串。
+3. 粘贴到控制面板中，支持**单份 Cookie 无限向下探活多账号并一键批量导入**。
+
 ![alt text](image/cookie.png)
+
 ## 使用示例
 
-### OpenAI 兼容接口
+### 查看模型列表
 
 ```bash
-# 对话（流式）
-curl http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemma-4-31b-it",
-    "messages": [{"role": "user", "content": "你好！"}],
-    "stream": true
-  }'
-
-# 图片理解
-curl http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemini-3-flash-preview",
-    "messages": [{
-      "role": "user",
-      "content": [
-        {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBOR..."}},
-        {"type": "text", "text": "这是什么？"}
-      ]
-    }]
-  }'
-
-# 查看模型列表
-curl http://localhost:8080/v1/models \
-  -H "Authorization: Bearer your-secret-token"
+curl http://localhost:8080/v1beta/models \
+  -H "x-goog-api-key: your-secret-token"
 ```
 
-### Gemini 原生接口
+### Gemini 原生接口 (curl)
 
 ```bash
+# 普通对话
+curl http://localhost:8080/v1beta/models/gemini-3.7-flash:generateContent?key=your-secret-token \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [{"role": "user", "parts": [{"text": "你好！请做个自我介绍。"}]}]
+  }'
+
 # 联网搜索
-curl http://localhost:8080/v1beta/models/gemini-3-flash-preview:generateContent \
-  -H "Authorization: Bearer your-secret-token" \
+curl http://localhost:8080/v1beta/models/gemini-3.7-flash:generateContent \
+  -H "x-goog-api-key: your-secret-token" \
   -H "Content-Type: application/json" \
   -d '{
     "contents": [{"role": "user", "parts": [{"text": "今天上海天气怎么样？"}]}],
     "tools": [{"googleSearchRetrieval": {}}]
   }'
+
+# 流式对话 (SSE)
+curl http://localhost:8080/v1beta/models/gemini-3.7-flash:streamGenerateContent?alt=sse \
+  -H "x-goog-api-key: your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [{"role": "user", "parts": [{"text": "用 Python 写一个快速排序。"}]}]
+  }'
 ```
-### Python（OpenAI SDK）
+
+### Python (Google GenAI SDK)
 
 ```python
-from openai import OpenAI
+from google import genai
 
-client = OpenAI(base_url="http://localhost:8080/v1", api_key="your-secret-token")
-
-# 流式对话
-response = client.chat.completions.create(
-    model="gemini-3-flash-preview",
-    messages=[{"role": "user", "content": "你好！"}],
-    stream=True,
+client = genai.Client(
+    api_key="your-secret-token",
+    http_options={"api_version": "v1beta", "base_url": "http://localhost:8080"},
 )
-for chunk in response:
-    print(chunk.choices[0].delta.content or "", end="")
-```
 
-### 命令行客户端
-
-```bash
-# 快速对话
-python3 main.py client "今天天气怎么样？" --search
-
-# 附带图片
-python3 main.py client "这张图是什么？" -a photo.jpg
-
-# 生图
-python3 main.py client "画一只猫" --image --save cat.png
+response = client.models.generate_content(
+    model="gemini-3.7-flash",
+    contents="你好！",
+)
+print(response.text)
 ```
 
 ## 支持的模型
 
 | 模型 | ID | 默认 Google Search | 说明 |
 |------|-----|-------------------|------|
-| Gemma 4 31B | `gemma-4-31b-it` | ✅ | 默认文本模型 |
-| Gemma 4 26B A4B | `gemma-4-26b-a4b-it` | ✅ | MoE，4B 激活 |
-| Gemini 3 Flash | `gemini-3-flash-preview` | ❌ | 快速 |
-| Gemini 3.1 Pro | `gemini-3.1-pro-preview` | ❌ | |
-| Gemini 3.1 Flash Lite | `gemini-3.1-flash-lite` | ❌ | |
-| Gemini 3.1 Flash Image | `gemini-3.1-flash-image-preview` | ❌ | 默认图片模型，仅限 Pro/Ultra |
-| Gemini 3 Pro Image | `gemini-3-pro-image-preview` | ❌ | |
-
+| Gemini 3.7 Flash | `gemini-3.7-flash` | ❌ | 默认文本/多模态模型 |
+| Gemma 4 31B | `gemma-4-31b-it` | ✅ | 开源大模型 |
+| Gemma 4 26B A4B | `gemma-4-26b-a4b-it` | ✅ | MoE 架构 |
+| Gemini 3.5 Flash | `gemini-3.5-flash` | ❌ | 快速高效 |
+| Gemini 3.1 Pro | `gemini-3.1-pro-preview` | ❌ | 强推理能力 |
+| Gemini 3.1 Flash Lite | `gemini-3.1-flash-lite` | ❌ | 轻量快速 |
+| Gemini 3.1 Flash Image | `gemini-3.1-flash-image-preview` | ❌ | 生图模型，仅限 Pro/Ultra |
+| Gemini 3 Pro Image | `gemini-3-pro-image-preview` | ❌ | 高画质生图模型 |
 
 ## 配置
 
@@ -184,18 +152,20 @@ python3 main.py client "画一只猫" --image --save cat.png
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `AISTUDIO_PORT` | `8080` | API 服务端口 |
-| `AISTUDIO_CAMOUFOX_PORT` | `9222` | Camoufox 调试端口 |
-| `AISTUDIO_PROXY` | 空 | 浏览器代理地址 |
-| `AISTUDIO_API_KEY` | 空 | API 鉴权 key，配置后启用 Bearer / X-API-Key 鉴权 |
-| `AISTUDIO_DEFAULT_TEXT_MODEL` | `gemma-4-31b-it` | 默认对话模型 |
-| `AISTUDIO_DEFAULT_IMAGE_MODEL` | `gemini-3.1-flash-image-preview` | 默认图片模型 |
-| `AISTUDIO_CAMOUFOX_HEADLESS` | `1` | 无头模式运行浏览器 |
-| `AISTUDIO_TIMEOUT_REPLAY` | `120` | 请求超时（秒） |
-| `AISTUDIO_TIMEOUT_STREAM` | `120` | 流式超时（秒） |
-| `AISTUDIO_SNAPSHOT_CACHE_TTL` | `3600` | BotGuard snapshot 缓存时间 |
-| `AISTUDIO_ACCOUNT_ROTATION_MODE` | `round_robin` | 轮询模式：`round_robin`、`lru`、`least_rl` |
-| `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | `60` | 限流后冷却时间 |
-| `AISTUDIO_DUMP_RAW_RESPONSE` | `0` | 保存原始响应到磁盘（调试） |
+| `AISTUDIO_BROWSER_PORT` | `9222` | Chromium 浏览器远程调试端口 |
+| `AISTUDIO_BROWSER_HEADLESS` | `1` | 是否以无头模式运行浏览器（1=无头，0=有头） |
+| `AISTUDIO_BROWSER_EXECUTABLE` | 空 | Chromium 可执行文件路径（留空则自动探测系统安装） |
+| `AISTUDIO_PROXY` | 空 | 浏览器网络代理地址 |
+| `AISTUDIO_API_KEY` | 空 | API 鉴权密钥，配置后启用 API 鉴权 |
+| `AISTUDIO_DEFAULT_TEXT_MODEL` | `gemini-3.7-flash` | 默认对话模型 |
+| `AISTUDIO_DEFAULT_IMAGE_MODEL` | `gemini-3.1-flash-image-preview` | 默认生图模型 |
+| `AISTUDIO_TIMEOUT_REPLAY` | `120` | 请求超时时间（秒） |
+| `AISTUDIO_TIMEOUT_STREAM` | `120` | 流式超时时间（秒） |
+| `AISTUDIO_SNAPSHOT_CACHE_TTL` | `3600` | BotGuard snapshot 缓存有效时间（秒） |
+| `AISTUDIO_ACCOUNTS_DIR` | `data/accounts` | 账号数据持久化存储目录 |
+| `AISTUDIO_ACCOUNT_ROTATION_MODE` | `round_robin` | 账号轮询模式：`round_robin`、`lru`、`least_rl` |
+| `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | `60` | 账号遇到限流后的冷却时间（秒） |
+| `AISTUDIO_DUMP_RAW_RESPONSE` | `0` | 是否保存原始响应到磁盘（用于调试） |
 
 ### 模型配置
 
@@ -316,28 +286,38 @@ safety_settings:
 - `safety_off=true` 会直接把这四项都设为 `5`
 - 当前默认的图片模型配置里 `disable_safety_settings: true`，所以生图模型会直接清空安全设置字段
 
+## Docker 镜像 CI
+
+本项目包含 GitHub Actions 工作流（`.github/workflows/docker.yml`）：
+
+- `src/**` 路径下的代码变动将在 `push` 和 `pull_request` 时自动触发 Docker 构建
+- `pull_request` 仅执行构建验证，不推送镜像
+- 推送到 `main` / `master` 分支时会自动打包并发布镜像至 `ghcr.io/chrysoljq/aistudio-api`
+- 支持通过 `workflow_dispatch` 手动触发
+
+工作流使用 GitHub 内置的 `GITHUB_TOKEN` 推送至 GHCR，无需额外配置 Docker Hub 账号。
+
 ## 架构
 
 ```
-客户端（OpenAI SDK / curl）
+客户端（Google GenAI SDK / curl / Web）
     │
     ▼
 ┌─────────────────────┐
-│   FastAPI 服务器      │  ← OpenAI + Gemini API 路由
-│   /v1/chat/...       │
+│   FastAPI 服务器      │  ← /v1beta/models/... 原生 API 路由
 │   /v1beta/...        │
 └─────────┬───────────┘
           │
           ▼
 ┌─────────────────────┐
-│   Wire Codec         │  ← API 格式 → AI Studio gRPC body
+│   Wire Codec         │  ← Gemini API 格式 ⇄ AI Studio gRPC body
 │   + BotGuard         │     自动特征匹配 snapshot 函数
 └─────────┬───────────┘
           │
           ▼
 ┌─────────────────────┐
-│   Camoufox 浏览器    │  ← 反指纹 Firefox，注入 cookies
-│   （无头模式）        │     通过 XHR hook 发送请求
+│   Chromium 浏览器    │  ← 原生 Chromium CDP 调试桥，注入 cookies
+│   （无头模式）        │     执行通信与 session 保持
 └─────────┬───────────┘
           │
           ▼
@@ -347,9 +327,8 @@ safety_settings:
 **工作原理：**
 1. API 请求进入，转换为 AI Studio 的 wire 格式
 2. 生成 BotGuard snapshot（自动检测函数，带缓存）
-3. 构造完整的 gRPC body，通过 XHR hook 注入浏览器
-4. 浏览器带 cookies + BotGuard 发送请求到 Google
-5. 解析响应，按请求的 API 格式返回
+3. 构造完整的 gRPC body，通过 CDP session 经由已登录的页面上下文发送请求到 Google
+4. 解析响应，按标准 Gemini 原生响应格式返回
 
 轮询模式：
 - `round_robin` — 轮流使用
@@ -367,10 +346,8 @@ Google 每次请求都要求一个 BotGuard "snapshot" —— 证明请求来自
 snapshot 函数名随 Google bundle 更新持续变化（Mv → Ov → Sv → ...），但特征模式保持不变。
 
 ## TODO
-- [ ] 完整 webui 支持
-- [ ] 完整真流式支持
-- [ ] 兼容 /v1/messages
-
+- [ ] 完整 webui 控制台增强
+- [ ] 更多多模态音频/视频输入支持
 ## 致谢
 - https://github.com/LuanRT/BgUtils
 - https://github.com/iBUHub/AIStudioToAPI

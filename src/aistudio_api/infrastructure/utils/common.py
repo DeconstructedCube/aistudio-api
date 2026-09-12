@@ -105,23 +105,3 @@ def decode_base64_images(images: list[dict]) -> list[dict]:
             pass
     return decoded
 
-
-def compute_sapisidhash(cookie_str: str) -> str:
-    import hashlib
-    import time
-
-    sapisid = ""
-    for part in cookie_str.split(";"):
-        part = part.strip()
-        if part.startswith("SAPISID="):
-            sapisid = part.split("=", 1)[1]
-            break
-
-    if not sapisid:
-        return ""
-
-    timestamp = str(int(time.time()))
-    origin = "https://aistudio.google.com"
-    hash_input = f"{timestamp} {sapisid} {origin}"
-    sha1 = hashlib.sha1(hash_input.encode()).hexdigest()
-    return f"SAPISIDHASH {timestamp}_{sha1}"

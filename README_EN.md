@@ -1,6 +1,6 @@
 # AI Studio API
 
-Google AI Studio Playground reverse proxy. Supports Google Membership (Pro/Ultra) and the Gemini native protocol format, featuring image generation, tool calling, and Google Search.
+Google AI Studio Playground reverse proxy service supporting Google Membership (Pro/Ultra) accounts and fully compatible with the Google Gemini native API protocol format, featuring image generation, tool calling, and real-time web search.
 
 [中文](./README.md)
 
@@ -12,15 +12,11 @@ Google AI Studio Playground reverse proxy. Supports Google Membership (Pro/Ultra
   - [Quick Start](#quick-start)
     - [Direct Launch](#direct-launch)
     - [Docker Deployment](#docker-deployment)
-    - [Login](#login)
-      - [CLI Mode](#cli-mode)
-      - [Headed Mode (Best for Local)](#headed-mode-best-for-local)
-      - [Cookie Import (Short Validity)](#cookie-import-short-validity)
+    - [Account Management & Login](#account-management--login)
   - [Usage Examples](#usage-examples)
-    - [OpenAI-Compatible API](#openai-compatible-api)
-    - [Gemini-Native API](#gemini-native-api)
-    - [Python (OpenAI SDK)](#python-openai-sdk)
-    - [CLI Client](#cli-client)
+    - [List Models](#list-models)
+    - [Gemini Native API (curl)](#gemini-native-api-curl)
+    - [Python (Google GenAI SDK)](#python-google-genai-sdk)
   - [Supported Models](#supported-models)
   - [Configuration](#configuration)
     - [Model Configuration](#model-configuration)
@@ -33,19 +29,17 @@ Google AI Studio Playground reverse proxy. Supports Google Membership (Pro/Ultra
 
 ## Features
 
-- **OpenAI/Anthropic Compatibility** — Supports `/v1/chat/completions`, `/v1/images/generations`, and `/v1/messages`
-- **Gemini Native API** — Supports `/v1beta/models/{model}:generateContent`
-- **Streaming Output** — Returns real-time results via SSE streaming
+- **Gemini Native API Compatibility** — Supports `/v1beta/models`, `/v1beta/models/{model}:generateContent`, and streaming endpoints
+- **Flexible Authentication** — Supports `?key=` query parameter, `x-goog-api-key` header, `x-api-key`, and `Authorization: Bearer`
+- **Streaming Output** — Real-time server-sent events (SSE) streaming responses
 - **Multi-turn Conversations** — Properly maintains alternating `user`/`model` structure
-- **Image Input** — Supports base64 inline encoding and HTTP URLs, single or multiple images
+- **Multimodal Image Input** — Supports base64 inline encoding and image uploads (single or multiple images)
 - **Google Search** — Real-time web search via `googleSearchRetrieval`
-- **Thinking Process** — Returns the model's thinking process via the `thinking` field
-- **Image Generation** — Generates images using Gemini image models
-- **Anti-detection** — Built-in Camoufox / CloakBrowser (default) fingerprint evasion
-- **BotGuard Bypass** — Automatically matches patterns to locate the `snapshot` function
+- **Thinking Process** — Returns the model's chain-of-thought process via the `thinking` part
+- **Image Generation** — High quality image generation with Gemini image models
+- **Native Chromium CDP Bridge** — High-performance, lightweight Chromium remote debugging bridge
+- **Dynamic BotGuard Resolution** — Automatically matches patterns to locate the `snapshot` function
 - **Multi-account Rotation** — Round-robin / LRU / least rate-limited account selection
-
-![alt text](image/chat.png)
 
 ## Quick Start
 
@@ -59,10 +53,7 @@ cd aistudio-api
 # Install dependencies
 pip install -r requirements.txt
 
-# Login to Google account
-python3 main.py login
-
-# Start the service
+# Start the service (Chromium will be automatically launched)
 python3 main.py server --port 8080
 ```
 
@@ -77,119 +68,81 @@ docker run -d \
   ghcr.io/chrysoljq/aistudio-api:latest
 ```
 
-### Login
+### Account Management & Login
 
-#### CLI Mode
-
-```bash
-# Start headless browser for interactive login. Supports mobile confirmation, security code, or authenticator.
-python3 main.py login
-
-# Run headed browser (for debugging or manual login)
-python3 main.py login --headed
-```
-
-#### Headed Mode (Best for Local)
-
-After launching the server for the first time, visit `http://localhost:8080` to log in to your Google account. Supports direct browser login and manual cookie import.
-
-![alt text](image/login.png)
-
-#### Cookie Import (Short Validity)
-
-Visit `https://myaccount.google.com/`, copy cookies, and import them. Only tested from Chrome to CloakBrowser; cross-kernel compatibility is not guaranteed. Restart the server to apply changes.
+After starting the server, visit `http://localhost:8080` to access the management dashboard:
+1. Click the **"Import Cookies"** button.
+2. Visit [Google My Account](https://myaccount.google.com/) or AI Studio and copy the full Cookie string.
+3. Paste into the modal. The system supports **probing and batch importing multiple Google accounts from a single cookie string**.
 
 ![alt text](image/cookie.png)
 
 ## Usage Examples
 
-### OpenAI-Compatible API
+### List Models
 
 ```bash
-# Chat (Streaming)
-curl http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemma-4-31b-it",
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "stream": true
-  }'
-
-# Image Understanding
-curl http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gemini-3-flash-preview",
-    "messages": [{
-      "role": "user",
-      "content": [
-        {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBOR..."}},
-        {"type": "text", "text": "What is this?"}
-      ]
-    }]
-  }'
-
-# List Models
-curl http://localhost:8080/v1/models \
-  -H "Authorization: Bearer your-secret-token"
+curl http://localhost:8080/v1beta/models \
+  -H "x-goog-api-key: your-secret-token"
 ```
 
-### Gemini-Native API
+### Gemini Native API (curl)
 
 ```bash
+# Standard Generation
+curl http://localhost:8080/v1beta/models/gemini-3.7-flash:generateContent?key=your-secret-token \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [{"role": "user", "parts": [{"text": "Hello! Introduce yourself."}]}]
+  }'
+
 # Web Search
-curl http://localhost:8080/v1beta/models/gemini-3-flash-preview:generateContent \
-  -H "Authorization: Bearer your-secret-token" \
+curl http://localhost:8080/v1beta/models/gemini-3.7-flash:generateContent \
+  -H "x-goog-api-key: your-secret-token" \
   -H "Content-Type: application/json" \
   -d '{
     "contents": [{"role": "user", "parts": [{"text": "How is the weather in Shanghai today?"}]}],
     "tools": [{"googleSearchRetrieval": {}}]
   }'
+
+# Streaming Generation (SSE)
+curl http://localhost:8080/v1beta/models/gemini-3.7-flash:streamGenerateContent?alt=sse \
+  -H "x-goog-api-key: your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [{"role": "user", "parts": [{"text": "Write quicksort in Python."}]}]
+  }'
 ```
 
-### Python (OpenAI SDK)
+### Python (Google GenAI SDK)
 
 ```python
-from openai import OpenAI
+from google import genai
 
-client = OpenAI(base_url="http://localhost:8080/v1", api_key="your-secret-token")
-
-# Streaming conversation
-response = client.chat.completions.create(
-    model="gemini-3-flash-preview",
-    messages=[{"role": "user", "content": "Hello!"}],
-    stream=True,
+client = genai.Client(
+    api_key="your-secret-token",
+    http_options={"api_version": "v1beta", "base_url": "http://localhost:8080"},
 )
-for chunk in response:
-    print(chunk.choices[0].delta.content or "", end="")
-```
 
-### CLI Client
-
-```bash
-# Quick chat
-python3 main.py client "How's the weather today?" --search
-
-# With image attachment
-python3 main.py client "What is in this picture?" -a photo.jpg
-
-# Generate image
-python3 main.py client "Draw a cat" --image --save cat.png
+response = client.models.generate_content(
+    model="gemini-3.7-flash",
+    contents="Hello!",
+)
+print(response.text)
 ```
 
 ## Supported Models
 
 | Model | ID | Default Google Search | Description |
 |-------|----|-----------------------|-------------|
-| Gemma 4 31B | `gemma-4-31b-it` | ✅ | Default text model |
-| Gemma 4 26B A4B | `gemma-4-26b-a4b-it` | ✅ | MoE, 4B active |
-| Gemini 3 Flash | `gemini-3-flash-preview` | ❌ | Fast |
-| Gemini 3.1 Pro | `gemini-3.1-pro-preview` | ❌ | |
-| Gemini 3.1 Flash Lite | `gemini-3.1-flash-lite` | ❌ | |
+| Gemini 3.7 Flash | `gemini-3.7-flash` | ❌ | Default text and multimodal model |
+| Gemma 4 31B | `gemma-4-31b-it` | ✅ | Open weights large model |
+| Gemma 4 26B A4B | `gemma-4-26b-a4b-it` | ✅ | MoE architecture |
+| Gemini 3.5 Flash | `gemini-3.5-flash` | ❌ | Fast and efficient |
+| Gemini 3.1 Pro | `gemini-3.1-pro-preview` | ❌ | Advanced reasoning |
+| Gemini 3.1 Flash Lite | `gemini-3.1-flash-lite` | ❌ | Lightweight and low latency |
 | Gemini 3.1 Flash Image | `gemini-3.1-flash-image-preview` | ❌ | Default image model, Pro/Ultra only |
-| Gemini 3 Pro Image | `gemini-3-pro-image-preview` | ❌ | |
+| Gemini 3 Pro Image | `gemini-3-pro-image-preview` | ❌ | High-fidelity image model |
 
 ## Configuration
 
@@ -198,19 +151,20 @@ Configure via environment variables or a `.env` file:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `AISTUDIO_PORT` | `8080` | API service port |
-| `AISTUDIO_CAMOUFOX_PORT` | `9222` | Camoufox debug port |
+| `AISTUDIO_BROWSER_PORT` | `9222` | Chromium remote debugging port |
+| `AISTUDIO_BROWSER_HEADLESS` | `1` | Run browser in headless mode (1=headless, 0=headed) |
+| `AISTUDIO_BROWSER_EXECUTABLE` | None | Path to Chromium executable (auto-detected if empty) |
 | `AISTUDIO_PROXY` | None | Browser proxy address |
-| `AISTUDIO_API_KEY` | None | API authentication key (enables Bearer / X-API-Key auth when set) |
-| `AISTUDIO_DEFAULT_TEXT_MODEL` | `gemma-4-31b-it` | Default chat model |
+| `AISTUDIO_API_KEY` | None | API authentication key (enables auth when set) |
+| `AISTUDIO_DEFAULT_TEXT_MODEL` | `gemini-3.7-flash` | Default chat model |
 | `AISTUDIO_DEFAULT_IMAGE_MODEL` | `gemini-3.1-flash-image-preview` | Default image model |
-| `AISTUDIO_CAMOUFOX_HEADLESS` | `1` | Run browser in headless mode |
 | `AISTUDIO_TIMEOUT_REPLAY` | `120` | Request timeout (seconds) |
 | `AISTUDIO_TIMEOUT_STREAM` | `120` | Stream timeout (seconds) |
 | `AISTUDIO_SNAPSHOT_CACHE_TTL` | `3600` | BotGuard snapshot cache duration (seconds) |
+| `AISTUDIO_ACCOUNTS_DIR` | `data/accounts` | Account storage persistence directory |
 | `AISTUDIO_ACCOUNT_ROTATION_MODE` | `round_robin` | Rotation mode: `round_robin`, `lru`, `least_rl` |
 | `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | `60` | Cooldown duration after rate limit (seconds) |
 | `AISTUDIO_DUMP_RAW_RESPONSE` | `0` | Save raw responses to disk (for debugging) |
-
 ### Model Configuration
 
 An optional `config.yaml` is supported in the root directory to supply default parameters for different model families. By default, it reads the `config.yaml` in the project root, but you can use `AISTUDIO_CONFIG_FILE` to point to a different config file.
@@ -344,25 +298,24 @@ The workflow uses GitHub's built-in `GITHUB_TOKEN` for GHCR, so no separate Dock
 ## Architecture
 
 ```
-Client (OpenAI SDK / curl)
+Client (Google GenAI SDK / curl / Web)
     │
     ▼
 ┌─────────────────────┐
-│   FastAPI Server    │  ← OpenAI + Gemini API routes
-│   /v1/chat/...      │
+│   FastAPI Server    │  ← /v1beta/models/... native API routes
 │   /v1beta/...       │
 └─────────┬───────────┘
           │
           ▼
 ┌─────────────────────┐
-│   Wire Codec        │  ← Converts API format → AI Studio gRPC body
+│   Wire Codec        │  ← Gemini API format ⇄ AI Studio gRPC body
 │   + BotGuard        │     Auto-detects snapshot function via features
 └─────────┬───────────┘
           │
           ▼
 ┌─────────────────────┐
-│  Camoufox Browser   │  ← Anti-fingerprint Firefox, injects cookies
-│  (headless)         │     Sends request via XHR hook
+│  Chromium Browser   │  ← Native Chromium CDP debugging bridge, injects cookies
+│  (headless)         │     Maintains sessions and execution
 └─────────┬───────────┘
           │
           ▼
@@ -372,16 +325,16 @@ Client (OpenAI SDK / curl)
 **How it works:**
 1. An API request comes in and is converted into AI Studio's wire format.
 2. A BotGuard snapshot is generated (auto-detects the check function, with caching).
-3. The full gRPC body is constructed and injected into the browser via XHR hook.
+3. The full gRPC body is constructed and transmitted via CDP session in the authenticated page context.
 4. The browser sends the request to Google (with valid cookies + BotGuard).
-5. The response is parsed and returned back in the requested API format.
+5. The response is parsed and returned in standard Gemini native format.
 
 Rotation modes:
 - `round_robin` — Cycle through accounts
 - `lru` — Least recently used
 - `least_rl` — Least rate-limited
 
-## How BotGuard Works
+## BotGuard Works
 
 Google requires a BotGuard "snapshot" with every request — an encrypted credential proving the request originates from a real browser. This project:
 
@@ -392,10 +345,8 @@ Google requires a BotGuard "snapshot" with every request — an encrypted creden
 The snapshot function name constantly changes with Google bundle updates (Mv → Ov → Sv → ...), but the feature pattern remains identical.
 
 ## TODO
-- [ ] Complete web UI support
-- [ ] Complete true streaming support
-- [ ] Compatibility with `/v1/messages`
-
+- [ ] Enhanced web management UI
+- [ ] Additional multimodal audio/video input support
 ## Acknowledgements
 - https://github.com/LuanRT/BgUtils
 - https://github.com/iBUHub/AIStudioToAPI

@@ -375,6 +375,4 @@ class AIStudioClient:
         return AistudioContent(role="user", parts=parts)
 
 
-from aistudio_api.infrastructure.gateway.cli import cli_main
-
-__all__ = ["AIStudioClient", "CapturedRequest", "cli_main"]
+__all__ = ["AIStudioClient", "CapturedRequest"]

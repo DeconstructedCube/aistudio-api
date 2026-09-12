@@ -45,6 +45,25 @@ def test_x_api_key_is_accepted(monkeypatch):
     assert response.json() == {"ok": True}
 
 
+def test_x_goog_api_key_is_accepted(monkeypatch):
+    monkeypatch.setattr(settings, "api_keys", frozenset({"secret-token"}))
+    client = _build_client()
+
+    response = client.get("/protected", headers={"x-goog-api-key": "secret-token"})
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+
+def test_query_param_key_is_accepted(monkeypatch):
+    monkeypatch.setattr(settings, "api_keys", frozenset({"secret-token"}))
+    client = _build_client()
+
+    response = client.get("/protected?key=secret-token")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
 def test_missing_or_invalid_api_key_returns_401(monkeypatch):
     monkeypatch.setattr(settings, "api_keys", frozenset({"secret-token"}))
     client = _build_client()
