@@ -40,7 +40,6 @@ def find_chromium_executable() -> str:
         for match in reversed(cloak_matches):
             if os.path.isfile(match) and os.access(match, os.X_OK):
                 return match
-
     # 3. Playwright cached Chromium (~/.cache/ms-playwright/chromium-*/chrome-linux/chrome)
     pw_matches = sorted(
         glob.glob(

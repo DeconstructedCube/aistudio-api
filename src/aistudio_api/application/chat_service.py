@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import os
+import tempfile
 import uuid
 from typing import TYPE_CHECKING
 
@@ -65,9 +66,10 @@ def cleanup_files(paths: list[str]):
             pass
 
 
-def inline_data_to_file(mime_type: str, data: str, tmp_dir: str = "/tmp") -> str:
+def inline_data_to_file(mime_type: str, data: str, tmp_dir: str | None = None) -> str:
+    effective_tmp = tmp_dir or tempfile.gettempdir()
     ext = mime_type.split("/")[-1].replace("jpeg", "jpg")
-    path = os.path.join(tmp_dir, f"aistudio_img_{uuid.uuid4().hex[:8]}.{ext}")
+    path = os.path.join(effective_tmp, f"aistudio_img_{uuid.uuid4().hex[:8]}.{ext}")
     with open(path, "wb") as file:
         file.write(base64.b64decode(data))
     return path
@@ -293,7 +295,7 @@ def _normalize_gemini_safety_settings(value: object) -> list[list[object]]:
 
 
 def normalize_gemini_request(
-    req: GeminiGenerateContentRequest, requested_model: str, tmp_dir: str = "/tmp"
+    req: GeminiGenerateContentRequest, requested_model: str, tmp_dir: str | None = None
 ) -> NormalizedGeminiRequest:
     if not req.contents:
         raise ValueError("contents is required")

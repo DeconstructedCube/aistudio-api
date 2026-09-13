@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -135,7 +136,7 @@ class Settings:
     browser_headless: bool = _load_bool_env("AISTUDIO_BROWSER_HEADLESS", default=True)
     browser_executable_path: str | None = os.getenv("AISTUDIO_BROWSER_EXECUTABLE")
     auth_file: str | None = discover_auth_file()
-    tmp_dir: str = os.getenv("AISTUDIO_TMP_DIR", "/tmp")
+    tmp_dir: str = os.getenv("AISTUDIO_TMP_DIR", tempfile.gettempdir())
     proxy_url: str | None = discover_proxy_url()
     api_keys: frozenset[str] = _load_api_keys()
     timeout_replay: int = int(os.getenv("AISTUDIO_TIMEOUT_REPLAY", "120"))
@@ -148,7 +149,9 @@ class Settings:
         "true",
         "True",
     )
-    dump_raw_response_dir: str = os.getenv("AISTUDIO_DUMP_RAW_RESPONSE_DIR", "/tmp")
+    dump_raw_response_dir: str = os.getenv(
+        "AISTUDIO_DUMP_RAW_RESPONSE_DIR", tempfile.gettempdir()
+    )
     accounts_dir: str = os.getenv("AISTUDIO_ACCOUNTS_DIR", "")
     # 账号轮询配置
     account_rotation_mode: str = os.getenv(

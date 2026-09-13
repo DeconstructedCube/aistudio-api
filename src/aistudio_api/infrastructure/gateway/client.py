@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 
 from aistudio_api.config import (
@@ -391,14 +393,13 @@ class AIStudioClient:
         if output.images:
             img = output.images[0]
             ext = "jpg" if "jpeg" in img.mime else "png"
+            default_img_path = os.path.join(
+                tempfile.gettempdir(), f"aistudio_generated.{ext}"
+            )
             path = (
                 save_path
                 if save_path and save_path.endswith(f".{ext}")
-                else (
-                    f"{save_path}.{ext}"
-                    if save_path
-                    else f"/tmp/aistudio_generated.{ext}"
-                )
+                else (f"{save_path}.{ext}" if save_path else default_img_path)
             )
             with open(path, "wb") as file:
                 file.write(img.data)
