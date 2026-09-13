@@ -27,7 +27,7 @@ Google AI Studio 反向代理服务。提供原生 Gemini API 接口。
 所有平台统一使用 [`uv`](https://docs.astral.sh/uv/) 作为依赖与虚拟环境管理器（与本仓库的 `uv.lock` / `pyproject.toml` 一致）。安装 `uv` 后，从源码同步即可获得受版本锁保护的可运行虚拟环境：
 
 ```bash
-git clone https://github.com/chrysoljq/aistudio-api.git
+git clone https://github.com/DeconstructedCube/aistudio-api.git
 cd aistudio-api
 uv sync
 uv run python3 main.py server --port 8080
@@ -41,7 +41,7 @@ uv run python3 main.py server --port 8080
 ```bash
 pkg update
 pkg install -y python git uv proot-distro
-git clone https://github.com/chrysoljq/aistudio-api.git
+git clone https://github.com/DeconstructedCube/aistudio-api.git
 cd aistudio-api
 uv sync
 bash scripts/install_termux_prereqs.sh --project-root "$PWD"

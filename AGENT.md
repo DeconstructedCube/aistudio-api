@@ -27,7 +27,7 @@ Python 与 Go 风格的工具链运行在 Termux 宿主（`uv` 管理虚拟环�
    - `proot-distro` 用来拉取 Ubuntu rootfs；安装器默认容器名为 `aistudio-api`（**不会触碰用户已有的 `ubuntu` / `debian` 等容器**），可用 `--proot-name` 改名。
 2. **仓库依赖与浏览器运行时（克隆后执行一次；后续升级版本再跑）**：
    ```bash
-   git clone https://github.com/chrysoljq/aistudio-api.git
+   git clone https://github.com/DeconstructedCube/aistudio-api.git
    cd aistudio-api
    uv sync                                              # 读 uv.lock，构建 .venv
    bash scripts/install_termux_prereqs.sh --project-root "$PWD"

@@ -27,7 +27,7 @@ Google AI Studio API reverse proxy. Exposes Google Gemini native API protocol.
 All platforms install through [`uv`](https://docs.astral.sh/uv/), which honours the pinned `uv.lock` / `pyproject.toml`. After installing `uv`, a single `uv sync` produces the version-locked virtual environment:
 
 ```bash
-git clone https://github.com/chrysoljq/aistudio-api.git
+git clone https://github.com/DeconstructedCube/aistudio-api.git
 cd aistudio-api
 uv sync
 uv run python3 main.py server --port 8080
@@ -42,7 +42,7 @@ Running on Termux requires `proot-distro` to provide a standard Linux environmen
 ```bash
 pkg update
 pkg install -y python git uv proot-distro
-git clone https://github.com/chrysoljq/aistudio-api.git
+git clone https://github.com/DeconstructedCube/aistudio-api.git
 cd aistudio-api
 uv sync
 bash scripts/install_termux_prereqs.sh --project-root "$PWD"
