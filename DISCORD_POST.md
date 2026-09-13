@@ -15,6 +15,8 @@
 2. **强力抗指纹拦截**：项目配套了定制版的 Chromium (CloakBrowser)，配合请求级的上下文隔离，能有效绕过 Google BotGuard 的反爬检测。
 3. **全平台支持（含手机）**：不仅支持 Linux/Windows/macOS 和 Docker，更是**完美支持安卓 Termux**，自带幂等脚本一键配置 proot 容器，闲置手机也能当服务器跑。
 
+> 📊 **内存占用参考（实测）**：纯 Python 服务部分约 30~85 MB；启用 CloakBrowser (Chromium) 后，整体常驻约 500~650 MB。手机 Termux 上请确保至少有 1 GB 可用 RAM（剩余 600~700 MB）以保证稳定运行。
+
 **Q3：目前支持哪些模型？**  
 **A3：** 只要 Google AI Studio 目前开放的 Gemini 模型（如 Gemini 1.5 Pro, Flash, Gemini 2.0 等）都会在 `/v1beta/models` 路由中动态发现并支持。
 

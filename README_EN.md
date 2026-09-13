@@ -14,6 +14,8 @@ Google AI Studio API reverse proxy. Exposes Google Gemini native API protocol.
 - Image generation
 - Chrome DevTools Protocol based headless browser session
 
+> 💡 **Memory footprint (measured)**: the pure-Python service layer runs at ~30–85 MB; with the bundled CloakBrowser (Chromium) enabled, the full daemon idles at ~500–650 MB. On Termux make sure the device has at least 1 GB of free RAM.
+
 ## Installation
 
 ### Dependencies

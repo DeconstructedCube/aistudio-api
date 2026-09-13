@@ -11,9 +11,10 @@ Google AI Studio 反向代理服务。提供原生 Gemini API 接口。
 - 多账号 Cookie 轮询
 - 支持官方工具调用，包含 Google Search、Google Maps、代码执行沙箱
 - 支持 Function Calling
-- 支持输出思维链
 - 支持图像生成
 - 基于 CDP 协议的轻量化无头浏览器环境
+
+> 💡 **内存占用参考（实测）**：纯 Python 服务部分约 30~85 MB；启用内置 CloakBrowser (Chromium) 后整体常驻约 500~650 MB。在 Termux 上请确保设备剩余可用 RAM ≥ 1 GB。
 
 ## 安装部署
 
