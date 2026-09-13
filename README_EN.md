@@ -78,27 +78,25 @@ This project supports deployments on **Linux (x86_64 / arm64)**, **macOS (Apple 
 
 ### 1. Cross-Platform Prerequisites & Launch
 
-#### 📱 Android Termux Bare-Metal Setup (Recommended)
-The Termux native Chromium build lacks SwiftShader / ANGLE, resulting in `NO_GL` (no WebGL context), failing Google BotGuard verification. We recommend running **CloakBrowser via Glibc-Runner**:
+#### 📱 Android Termux Environment (Native Glibc Script)
+The official Termux Chromium build lacks SwiftShader / ANGLE, resulting in `NO_GL` which gets rejected by Google BotGuard. We provide a bootstrap script to fetch a pre-built CloakBrowser and run it via Termux's glibc layer directly, without PRoot or Docker:
 
 ```bash
-# 1. Install base utilities and Glibc runtime layer
+# 1. Install base utilities and the Glibc loader
 pkg update && pkg install -y python git glibc glibc-runner patchelf-glibc
 
-# 2. Clone the repository
+# 2. Clone repo and install dependencies
 git clone https://github.com/chrysoljq/aistudio-api.git
 cd aistudio-api
-
-# 3. Install Python dependencies and isolate cache to project folder
-export CLOAKBROWSER_CACHE_DIR="$(pwd)/.cloakbrowser"
 pip install -r requirements.txt
 
-# 4. Start the server (automatically locates and launches project-scoped .cloakbrowser)
+# 3. Run the bootstrap script (downloads CloakBrowser and required Debian .so libraries to .cloakbrowser/)
+python3 scripts/bootstrap_cloakbrowser_termux.py
+
+# 4. Start the server (auto-detects the Termux wrapper script and runs the stealth backend)
 python3 main.py server --port 8080
 ```
-
 #### 🐧 Linux (Ubuntu / Debian / CentOS / Arch)
-```bash
 # 1. Install system runtime dependencies
 # Ubuntu / Debian:
 sudo apt-get update && sudo apt-get install -y \

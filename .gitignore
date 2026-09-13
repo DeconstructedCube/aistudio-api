@@ -19,10 +19,15 @@ docs/
 /capture_*
 chromium-profile/
 botguard-fork/
-scripts/
+# scripts/ (we now track scripts for bootstrap tools)
 data2/
 .ai_memory
 .antigravitycli
 chrome-headless
 .cloakbrowser/
+server-logs/
+cache/
+db/
+*.log
+*.pid
 

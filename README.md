@@ -78,27 +78,25 @@
 
 ### 1. 跨平台前置依赖安装与启动
 
-#### 📱 Android Termux 裸奔环境（推荐一键配置）
-Termux 原生 Chromium 因缺少 SwiftShader / ANGLE 会出现 `NO_GL`（无 WebGL 渲染）导致无法通过 Google BotGuard 验证。推荐使用项目内置的 **本地 CloakBrowser + Glibc-Runner 裸奔方案**：
+#### 📱 Android Termux 环境（全自动 Glibc 方案）
+Termux 官方 Chromium 包因缺失 SwiftShader / ANGLE 会产生 `NO_GL`（无 WebGL 渲染），无法通过 Google BotGuard。本项目内置自动化脚本，可直接下载 CloakBrowser 并使用原生 Glibc 加载，无需 Docker 或 PRoot：
 
 ```bash
-# 1. 安装 Termux 基础运行依赖与 Glibc 运行层
+# 1. 安装基础工具与 Glibc 运行层
 pkg update && pkg install -y python git glibc glibc-runner patchelf-glibc
 
-# 2. 克隆项目仓库
+# 2. 克隆仓库及依赖
 git clone https://github.com/chrysoljq/aistudio-api.git
 cd aistudio-api
-
-# 3. 安装 Python 依赖并配置项目本地缓存（强制在项目目录 .cloakbrowser 缓存浏览器防环境不匹配）
-export CLOAKBROWSER_CACHE_DIR="$(pwd)/.cloakbrowser"
 pip install -r requirements.txt
 
-# 4. 启动服务（优先自动拉取并使用项目目录 .cloakbrowser 中的反指纹内核）
+# 3. 运行自举脚本（自动拉取并配置基于 glibc 的浏览器及必需的 Debian 动态库至 .cloakbrowser/）
+python3 scripts/bootstrap_cloakbrowser_termux.py
+
+# 4. 启动服务（自动识别 wrapper 并以伪装指纹启动后台内核）
 python3 main.py server --port 8080
 ```
-
 #### 🐧 Linux (Ubuntu / Debian / CentOS / Arch)
-```bash
 # 1. 安装基础依赖库
 # Ubuntu / Debian:
 sudo apt-get update && sudo apt-get install -y \
