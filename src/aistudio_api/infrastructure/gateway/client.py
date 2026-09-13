@@ -5,18 +5,33 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
-from aistudio_api.config import DEFAULT_BROWSER_PORT, DEFAULT_IMAGE_MODEL, DEFAULT_TEXT_MODEL, settings
+from aistudio_api.config import (
+    DEFAULT_BROWSER_PORT,
+    DEFAULT_IMAGE_MODEL,
+    DEFAULT_TEXT_MODEL,
+    settings,
+)
 from aistudio_api.domain.errors import RequestError, classify_error
-from aistudio_api.domain.models import ModelOutput, parse_image_output, parse_text_output
+from aistudio_api.domain.models import (
+    ModelOutput,
+    parse_image_output,
+    parse_text_output,
+)
 from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
-from aistudio_api.infrastructure.gateway.capture import CapturedRequest, RequestCaptureService
+from aistudio_api.infrastructure.gateway.capture import (
+    CapturedRequest,
+    RequestCaptureService,
+)
 from aistudio_api.infrastructure.gateway.model_defaults import resolve_model_defaults
-from aistudio_api.infrastructure.gateway.wire_codec import TOOLS_TEMPLATES, build_image_generation_search_tool, modify_body
 from aistudio_api.infrastructure.gateway.replay import RequestReplayService
 from aistudio_api.infrastructure.gateway.session import BrowserSession
 from aistudio_api.infrastructure.gateway.streaming import StreamingGateway
+from aistudio_api.infrastructure.gateway.wire_codec import (
+    TOOLS_TEMPLATES,
+    build_image_generation_search_tool,
+    modify_body,
+)
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
 
 logger = logging.getLogger("aistudio")
@@ -47,11 +62,11 @@ class AIStudioClient:
 
     def __init__(self, port: int = DEFAULT_BROWSER_PORT):
         self.port = port
-        self._captured: Optional[CapturedRequest] = None
+        self._captured: CapturedRequest | None = None
         self._session = BrowserSession(port=port)
         self._capture_service = RequestCaptureService(self._session, _snapshot_cache)
         self._replay_service = RequestReplayService(session=self._session)
-        
+
         self._streaming_gateway = StreamingGateway(session=self._session)
 
     async def warmup(self) -> None:
@@ -61,13 +76,16 @@ class AIStudioClient:
             logger.info("浏览器预热完成")
 
     async def switch_auth(self, auth_file: str | None) -> None:
-        """切换账号的 auth 文件。"""
+        """切换账号的 auth 文件并清空所有模板和快照缓存。"""
+        self.clear_snapshot_cache()
         if self._session is not None:
             await self._session.switch_auth(auth_file)
 
     def clear_snapshot_cache(self) -> None:
-        """清除 snapshot 缓存。"""
+        """清除 snapshot 缓存和捕获模板。"""
         _snapshot_cache.clear()
+        if getattr(self, "_capture_service", None) is not None:
+            self._capture_service.clear_templates()
 
     async def close(self) -> None:
         """关闭浏览器后端。"""
@@ -105,10 +123,10 @@ class AIStudioClient:
         self,
         prompt: str,
         model: str = DEFAULT_TEXT_MODEL,
-        images: Optional[list[str]] = None,
-        contents: Optional[list[AistudioContent]] = None,
+        images: list[str] | None = None,
+        contents: list[AistudioContent] | None = None,
         force_refresh: bool = False,
-    ) -> Optional[CapturedRequest]:
+    ) -> CapturedRequest | None:
         return await self._capture_service.capture(
             prompt=prompt,
             model=model,
@@ -118,19 +136,21 @@ class AIStudioClient:
         )
 
     async def replay(self, body: str, timeout: int = 120) -> tuple[int, bytes]:
-        return await self._replay_service.replay(self._captured, body=body, timeout=timeout)
+        return await self._replay_service.replay(
+            self._captured, body=body, timeout=timeout
+        )
 
     async def stream_chat(
         self,
         *,
         prompt: str,
         model: str = DEFAULT_TEXT_MODEL,
-        images: Optional[list[str]] = None,
+        images: list[str] | None = None,
         system_instruction: str | None = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        top_k: Optional[int] = None,
-        max_tokens: Optional[int] = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        max_tokens: int | None = None,
         tools: list[list] | None = None,
     ):
         merged_tools = list(tools or [])
@@ -140,7 +160,9 @@ class AIStudioClient:
             capture_images=images,
             contents=[self._build_user_content(prompt=prompt, images=images)],
             system_instruction_content=(
-                AistudioContent(role="user", parts=[AistudioPart(text=system_instruction)])
+                AistudioContent(
+                    role="user", parts=[AistudioPart(text=system_instruction)]
+                )
                 if system_instruction
                 else None
             ),
@@ -157,15 +179,15 @@ class AIStudioClient:
         *,
         model: str = DEFAULT_TEXT_MODEL,
         capture_prompt: str,
-        capture_images: Optional[list[str]] = None,
-        contents: Optional[list[AistudioContent]] = None,
+        capture_images: list[str] | None = None,
+        contents: list[AistudioContent] | None = None,
         system_instruction_content: AistudioContent | None = None,
         tools: list[list] | None = None,
         safety_settings: list[list] | None = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        top_k: Optional[int] = None,
-        max_tokens: Optional[int] = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        max_tokens: int | None = None,
         generation_config_overrides: dict | None = None,
         sanitize_plain_text: bool = True,
         force_refresh_capture: bool = False,
@@ -198,17 +220,17 @@ class AIStudioClient:
         self,
         prompt: str,
         model: str = DEFAULT_TEXT_MODEL,
-        system_instruction: Optional[str] = None,
+        system_instruction: str | None = None,
         code_execution: bool = False,
         google_search: bool = False,
-        images: Optional[list[str]] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        top_k: Optional[int] = None,
-        max_tokens: Optional[int] = None,
-        tools: list[list] | None = None,
+        images: list[str] | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        max_tokens: int | None = None,
+        tools: list[list[object]] | None = None,
     ) -> ModelOutput:
-        merged_tools = list(tools or [])
+        merged_tools: list[list[object]] = list(tools or [])
         if code_execution or google_search:
             if code_execution:
                 merged_tools.append(TOOLS_TEMPLATES["code_execution"])
@@ -221,7 +243,9 @@ class AIStudioClient:
             capture_images=images,
             contents=[self._build_user_content(prompt=prompt, images=images)],
             system_instruction_content=(
-                AistudioContent(role="user", parts=[AistudioPart(text=system_instruction)])
+                AistudioContent(
+                    role="user", parts=[AistudioPart(text=system_instruction)]
+                )
                 if system_instruction
                 else None
             ),
@@ -237,20 +261,22 @@ class AIStudioClient:
         *,
         model: str = DEFAULT_TEXT_MODEL,
         capture_prompt: str,
-        capture_images: Optional[list[str]] = None,
-        contents: Optional[list[AistudioContent]] = None,
+        capture_images: list[str] | None = None,
+        contents: list[AistudioContent] | None = None,
         system_instruction_content: AistudioContent | None = None,
         tools: list[list] | None = None,
         safety_settings: list[list] | None = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        top_k: Optional[int] = None,
-        max_tokens: Optional[int] = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        max_tokens: int | None = None,
         generation_config_overrides: dict | None = None,
         sanitize_plain_text: bool = True,
     ) -> ModelOutput:
         logger.info("拦截请求: %r", f"{capture_prompt[:20]}...")
-        captured = await self.capture_request(capture_prompt, model=model, images=capture_images, contents=contents)
+        captured = await self.capture_request(
+            capture_prompt, model=model, images=capture_images, contents=contents
+        )
         if not captured:
             raise RequestError(0, "无法拦截请求")
 
@@ -293,17 +319,23 @@ class AIStudioClient:
         self,
         prompt: str,
         model: str = DEFAULT_IMAGE_MODEL,
-        save_path: Optional[str] = None,
+        save_path: str | None = None,
         size: str = "1024x1024",
         google_search: bool = False,
         image_search: bool = False,
         use_default_tools: bool = True,
-        images: Optional[list[str]] = None,
-        contents: Optional[list[AistudioContent]] = None,
+        images: list[str] | None = None,
+        contents: list[AistudioContent] | None = None,
     ) -> ModelOutput:
-        logger.info("生图请求: %r, images=%s", f"{prompt[:20]}...", len(images) if images else 0)
-        request_contents = contents or [self._build_user_content(prompt=prompt, images=images)]
-        captured = await self.capture_request(prompt, model=model, images=images, contents=request_contents)
+        logger.info(
+            "生图请求: %r, images=%s", f"{prompt[:20]}...", len(images) if images else 0
+        )
+        request_contents = contents or [
+            self._build_user_content(prompt=prompt, images=images)
+        ]
+        captured = await self.capture_request(
+            prompt, model=model, images=images, contents=request_contents
+        )
         if not captured:
             raise RequestError(0, "无法拦截请求")
 
@@ -312,22 +344,26 @@ class AIStudioClient:
         if output_resolution is not None:
             generation_config_overrides = {"output_resolution": output_resolution}
         model_defaults = resolve_model_defaults(model)
-        resolved_tools = None
+        resolved_tools: list[list[object]] | None = None
         if google_search or image_search:
-            resolved_tools = [
-                build_image_generation_search_tool(
-                    google_search=google_search,
-                    image_search=image_search,
-                )
-            ]
-        elif use_default_tools and model_defaults.default_tools:
-            from aistudio_api.infrastructure.gateway.wire_codec import build_tools_from_names
+            tool = build_image_generation_search_tool(
+                google_search=google_search,
+                image_search=image_search,
+            )
+            if tool is not None:
+                resolved_tools = [tool]
+            from aistudio_api.infrastructure.gateway.wire_codec import (
+                build_tools_from_names,
+            )
 
-            resolved_tools = build_tools_from_names(
-                model_defaults.default_tools,
-                model=model,
-                is_image_model=model_defaults.is_image_model,
-            ) or None
+            resolved_tools = (
+                build_tools_from_names(
+                    model_defaults.default_tools,
+                    model=model,
+                    is_image_model=model_defaults.is_image_model,
+                )
+                or None
+            )
 
         modified_body = modify_body(
             captured.body,
@@ -336,7 +372,9 @@ class AIStudioClient:
             tools=resolved_tools,
             generation_config_overrides=generation_config_overrides,
         )
-        status, raw = await self._replay_service.replay(captured, body=modified_body, timeout=120)
+        status, raw = await self._replay_service.replay(
+            captured, body=modified_body, timeout=120
+        )
         raw_text = raw.decode("utf-8", errors="replace")
         self._dump_raw_exchange(
             kind="generate_image",
@@ -353,8 +391,14 @@ class AIStudioClient:
         if output.images:
             img = output.images[0]
             ext = "jpg" if "jpeg" in img.mime else "png"
-            path = save_path if save_path and save_path.endswith(f".{ext}") else (
-                f"{save_path}.{ext}" if save_path else f"/tmp/aistudio_generated.{ext}"
+            path = (
+                save_path
+                if save_path and save_path.endswith(f".{ext}")
+                else (
+                    f"{save_path}.{ext}"
+                    if save_path
+                    else f"/tmp/aistudio_generated.{ext}"
+                )
             )
             with open(path, "wb") as file:
                 file.write(img.data)
@@ -362,7 +406,9 @@ class AIStudioClient:
 
         return output
 
-    def _build_user_content(self, prompt: str, images: Optional[list[str]] = None) -> AistudioContent:
+    def _build_user_content(
+        self, prompt: str, images: list[str] | None = None
+    ) -> AistudioContent:
         import base64
         import mimetypes
 
@@ -370,7 +416,14 @@ class AIStudioClient:
         for image_path in images or []:
             mime = mimetypes.guess_type(image_path)[0] or "image/jpeg"
             with open(image_path, "rb") as file:
-                parts.append(AistudioPart(inline_data=(mime, base64.b64encode(file.read()).decode("ascii"))))
+                parts.append(
+                    AistudioPart(
+                        inline_data=(
+                            mime,
+                            base64.b64encode(file.read()).decode("ascii"),
+                        )
+                    )
+                )
         parts.append(AistudioPart(text=prompt))
         return AistudioContent(role="user", parts=parts)
 

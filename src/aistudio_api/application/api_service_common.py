@@ -13,9 +13,9 @@ from aistudio_api.api.response_models import (
     StatsTotalsResponse,
 )
 from aistudio_api.api.state import runtime_state
+
 logger = logging.getLogger("aistudio.server")
 MAX_RETRIES = 3
-
 
 
 async def try_switch_account() -> bool:
@@ -30,7 +30,7 @@ async def try_switch_account() -> bool:
 
     account_service = runtime_state.account_service
     client = runtime_state.client
-    if not all([account_service, client]):
+    if account_service is None or client is None or client._session is None:
         return False
 
     result = await account_service.activate_account(
@@ -46,9 +46,18 @@ async def try_switch_account() -> bool:
 def require_busy_lock():
     busy_lock = runtime_state.busy_lock
     if busy_lock is None:
-        raise HTTPException(503, detail={"message": "Server not ready", "type": "service_unavailable"})
+        raise HTTPException(
+            503, detail={"message": "Server not ready", "type": "service_unavailable"}
+        )
     if busy_lock.locked():
-        raise HTTPException(429, detail={"message": "Server is busy", "type": "rate_limit_exceeded"})
+        raise HTTPException(
+            503,
+            detail={
+                "message": "Server is busy with maximum concurrent requests",
+                "type": "service_unavailable",
+            },
+            headers={"Retry-After": "2"},
+        )
     return busy_lock
 
 
@@ -74,7 +83,6 @@ def record_rotator_event(event: str) -> None:
         rotator.record_error(account.id)
 
 
-
 def health_response() -> HealthResponse:
     busy_lock = runtime_state.busy_lock
     return HealthResponse(status="ok", busy=busy_lock.locked() if busy_lock else False)
@@ -83,13 +91,25 @@ def health_response() -> HealthResponse:
 def stats_response() -> StatsResponse:
     stats = dict(runtime_state.model_stats)
     totals = StatsTotalsResponse(
-        requests=sum(s["requests"] for s in stats.values()),
-        success=sum(s["success"] for s in stats.values()),
-        rate_limited=sum(s["rate_limited"] for s in stats.values()),
-        errors=sum(s["errors"] for s in stats.values()),
-        prompt_tokens=sum(s["prompt_tokens"] for s in stats.values()),
-        completion_tokens=sum(s["completion_tokens"] for s in stats.values()),
-        total_tokens=sum(s["total_tokens"] for s in stats.values()),
+        requests=sum(s.requests for s in stats.values()),
+        success=sum(s.success for s in stats.values()),
+        rate_limited=sum(s.rate_limited for s in stats.values()),
+        errors=sum(s.errors for s in stats.values()),
+        prompt_tokens=sum(s.prompt_tokens for s in stats.values()),
+        completion_tokens=sum(s.completion_tokens for s in stats.values()),
+        total_tokens=sum(s.total_tokens for s in stats.values()),
     )
-    models = {name: ModelStatsResponse(**values) for name, values in stats.items()}
+    models = {
+        name: ModelStatsResponse(
+            requests=s.requests,
+            success=s.success,
+            rate_limited=s.rate_limited,
+            errors=s.errors,
+            prompt_tokens=s.prompt_tokens,
+            completion_tokens=s.completion_tokens,
+            total_tokens=s.total_tokens,
+            last_used=s.last_used,
+        )
+        for name, s in stats.items()
+    }
     return StatsResponse(models=models, totals=totals)

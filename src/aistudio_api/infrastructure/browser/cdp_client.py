@@ -10,7 +10,8 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+
 import httpx
 import websockets
 from websockets.asyncio.client import ClientConnection
@@ -42,7 +43,7 @@ BLOCKED_URL_PATTERNS: list[str] = [
 class CDPError(Exception):
     """Exception raised for CDP JSON-RPC errors."""
 
-    def __init__(self, code: int | str, message: str, data: Any = None):
+    def __init__(self, code: int | str, message: str, data: object = None):
         super().__init__(f"CDP error {code}: {message}")
         self.code = code
         self.message = message
@@ -56,8 +57,8 @@ class CDPConnection:
         self.ws_url = ws_url
         self.ws: ClientConnection | None = None
         self._next_id = 1
-        self._futures: dict[int, asyncio.Future[dict[str, Any]]] = {}
-        self._listeners: dict[str, list[Callable[[dict[str, Any]], Any]]] = {}
+        self._futures: dict[int, asyncio.Future[dict[str, object]]] = {}
+        self._listeners: dict[str, list[Callable[[dict[str, object]], object]]] = {}
         self._recv_task: asyncio.Task[None] | None = None
         self._closed = False
 
@@ -115,7 +116,9 @@ class CDPConnection:
                             if asyncio.iscoroutine(res):
                                 asyncio.create_task(res)
                         except Exception as e:
-                            log.debug("Error in CDP event listener for %s: %s", method, e)
+                            log.debug(
+                                "Error in CDP event listener for %s: %s", method, e
+                            )
 
         except asyncio.CancelledError:
             pass
@@ -132,9 +135,9 @@ class CDPConnection:
     async def send(
         self,
         method: str,
-        params: dict[str, Any] | None = None,
+        params: dict[str, object] | None = None,
         timeout_s: float = 30.0,
-    ) -> dict[str, Any]:
+    ) -> dict[str, object]:
         """Send a JSON-RPC command over CDP and await result."""
         if not self.ws or self._closed:
             raise RuntimeError("CDP connection is not open")
@@ -143,7 +146,7 @@ class CDPConnection:
         self._next_id += 1
 
         loop = asyncio.get_running_loop()
-        fut: asyncio.Future[dict[str, Any]] = loop.create_future()
+        fut: asyncio.Future[dict[str, object]] = loop.create_future()
         self._futures[req_id] = fut
 
         payload = {
@@ -155,11 +158,15 @@ class CDPConnection:
 
         try:
             return await asyncio.wait_for(fut, timeout=timeout_s)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._futures.pop(req_id, None)
-            raise TimeoutError(f"CDP command {method} timed out after {timeout_s}s") from None
+            raise TimeoutError(
+                f"CDP command {method} timed out after {timeout_s}s"
+            ) from None
 
-    def on(self, event: str, callback: Callable[[dict[str, Any]], Any]) -> Callable[[], None]:
+    def on(
+        self, event: str, callback: Callable[[dict[str, object]], object]
+    ) -> Callable[[], None]:
         """Register an event listener. Returns an unsubscribe function."""
         if event not in self._listeners:
             self._listeners[event] = []
@@ -170,7 +177,9 @@ class CDPConnection:
 
         return unsubscribe
 
-    def remove_listener(self, event: str, callback: Callable[[dict[str, Any]], Any]) -> None:
+    def remove_listener(
+        self, event: str, callback: Callable[[dict[str, object]], object]
+    ) -> None:
         """Remove an event listener."""
         if event in self._listeners and callback in self._listeners[event]:
             self._listeners[event].remove(callback)
@@ -216,11 +225,11 @@ class CDPPage:
         await self.cdp.send("DOM.enable")
 
         # Track navigation URLs
-        def on_navigated(params: dict[str, Any]) -> None:
-            frame = params.get("frame", {})
+        def on_navigated(params: dict[str, object]) -> None:
+            raw_frame = params.get("frame")
+            frame = raw_frame if isinstance(raw_frame, dict) else {}
             if not frame.get("parentId"):  # Main frame
-                self._last_url = frame.get("url", "")
-
+                self._last_url = str(frame.get("url") or "")
         self.cdp.on("Page.frameNavigated", on_navigated)
 
         if block_assets:
@@ -237,11 +246,11 @@ class CDPPage:
     async def evaluate(
         self,
         expression: str,
-        args: Any = None,
+        args: object = None,
         await_promise: bool = True,
         return_by_value: bool = True,
         timeout_s: float = 30.0,
-    ) -> Any:
+    ) -> object:
         """Evaluate a JS expression or function in the page's main world."""
         expr = expression.strip()
         if expr.startswith("mw:"):
@@ -252,7 +261,11 @@ class CDPPage:
         else:
             is_iife = bool(re.search(r"\)\s*\([^)]*\)\s*;?$", expr))
             if not is_iife:
-                is_arrow = bool(re.match(r"^(?:async\s+)?(?:\([^()]*\)|[a-zA-Z_$][\w$]*)\s*=>", expr))
+                is_arrow = bool(
+                    re.match(
+                        r"^(?:async\s+)?(?:\([^()]*\)|[a-zA-Z_$][\w$]*)\s*=>", expr
+                    )
+                )
                 is_fn = bool(re.match(r"^(?:async\s+)?function\b", expr))
                 if is_arrow or is_fn:
                     expr = f"({expr})()"
@@ -268,11 +281,15 @@ class CDPPage:
         )
 
         if "exceptionDetails" in res:
-            exc = res["exceptionDetails"]
-            exc_text = exc.get("exception", {}).get("description") or exc.get("text", "JS exception")
+            raw_exc = res["exceptionDetails"]
+            exc: dict[str, object] = raw_exc if isinstance(raw_exc, dict) else {}
+            raw_inner = exc.get("exception")
+            inner: dict[str, object] = raw_inner if isinstance(raw_inner, dict) else {}
+            exc_text = str(inner.get("description") or exc.get("text") or "JS exception")
             raise RuntimeError(f"CDP JS evaluation error: {exc_text}")
 
-        result_obj = res.get("result", {})
+        raw_result_obj = res.get("result")
+        result_obj: dict[str, object] = raw_result_obj if isinstance(raw_result_obj, dict) else {}
         val_type = result_obj.get("type")
         if val_type == "undefined":
             return None
@@ -288,22 +305,28 @@ class CDPPage:
         loop = asyncio.get_running_loop()
         nav_done: asyncio.Future[bool] = loop.create_future()
 
-        event_name = "Page.loadEventFired" if wait_until == "load" else "Page.domContentEventFired"
+        event_name = (
+            "Page.loadEventFired"
+            if wait_until == "load"
+            else "Page.domContentEventFired"
+        )
 
-        def on_event(_params: dict[str, Any]) -> None:
+        def on_event(_params: dict[str, object]) -> None:
             if not nav_done.done():
                 nav_done.set_result(True)
 
         unsub = self.cdp.on(event_name, on_event)
         try:
-            nav_res = await self.cdp.send("Page.navigate", {"url": url}, timeout_s=timeout_s)
+            nav_res = await self.cdp.send(
+                "Page.navigate", {"url": url}, timeout_s=timeout_s
+            )
             if "errorText" in nav_res:
                 raise RuntimeError(f"Navigation failed: {nav_res['errorText']}")
 
             # Also update current URL
             self._last_url = url
             await asyncio.wait_for(nav_done, timeout=timeout_s)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Timeout during DOM load is non-fatal for SPAs, update URL from location
             pass
         finally:
@@ -311,26 +334,30 @@ class CDPPage:
 
         # Update actual URL from window.location
         try:
-            actual_url = await self.evaluate("() => window.location.href", timeout_s=5.0)
-            if actual_url:
-                self._last_url = actual_url
+            actual_url = await self.evaluate(
+                "() => window.location.href", timeout_s=5.0
+            )
+            if actual_url is not None:
+                self._last_url = str(actual_url)
         except Exception:
             pass
-
     async def title(self) -> str:
         """Get document title."""
         try:
-            return (await self.evaluate("() => document.title", timeout_s=5.0)) or ""
+            val = await self.evaluate("() => document.title", timeout_s=5.0)
+            return str(val) if val is not None else ""
         except Exception:
             return ""
 
     async def content(self) -> str:
         """Get full HTML content of the page."""
         try:
-            return (await self.evaluate("() => document.documentElement.outerHTML", timeout_s=10.0)) or ""
+            val = await self.evaluate(
+                "() => document.documentElement.outerHTML", timeout_s=10.0
+            )
+            return str(val) if val is not None else ""
         except Exception:
             return ""
-
     async def wait_for_timeout(self, ms: float) -> None:
         """Wait for specified milliseconds."""
         await asyncio.sleep(ms / 1000.0)
@@ -500,51 +527,53 @@ class CDPPage:
             log.debug("send_control_enter failed: %s", e)
             return False
 
-    async def get_cookies(self) -> list[dict[str, Any]]:
+    async def get_cookies(self) -> list[dict[str, object]]:
         """Retrieve cookies via CDP Network domain."""
         res = await self.cdp.send("Network.getCookies")
-        return res.get("cookies", [])
-
-    async def set_cookies(self, cookies: list[dict[str, Any]]) -> None:
+        raw_cookies = res.get("cookies")
+        return raw_cookies if isinstance(raw_cookies, list) else []
+    async def set_cookies(self, cookies: list[dict[str, object]]) -> None:
         """Inject cookies via CDP Network domain."""
         if not cookies:
             return
 
-        formatted: list[dict[str, Any]] = []
+        formatted: list[dict[str, object]] = []
         for c in cookies:
-            item: dict[str, Any] = {
-                "name": str(c["name"]),
-                "value": str(c["value"]),
+            c_name = str(c.get("name", ""))
+            item: dict[str, object] = {
+                "name": c_name,
+                "value": str(c.get("value", "")),
                 "path": str(c.get("path", "/")),
                 "secure": bool(c.get("secure", True)),
                 "httpOnly": bool(c.get("httpOnly", False)),
             }
-            # Handle domain vs url
             domain = c.get("domain")
             url = c.get("url")
-            if domain:
-                if item["name"].startswith("__Host-"):
+            if domain is not None:
+                dom_str = str(domain)
+                if c_name.startswith("__Host-"):
                     # Host-only cookies must not specify domain with leading dot
-                    clean_domain = domain.lstrip(".")
+                    clean_domain = dom_str.lstrip(".")
                     item["url"] = f"https://{clean_domain}/"
                 else:
-                    item["domain"] = domain
-            elif url:
-                item["url"] = url
+                    item["domain"] = dom_str
+            elif url is not None:
+                item["url"] = str(url)
             else:
                 item["domain"] = ".google.com"
 
             same_site = c.get("sameSite")
-            if same_site:
-                if same_site.lower() == "none":
+            if same_site is not None:
+                ss_str = str(same_site).lower()
+                if ss_str == "none":
                     item["sameSite"] = "None"
-                elif same_site.lower() == "lax":
+                elif ss_str == "lax":
                     item["sameSite"] = "Lax"
-                elif same_site.lower() == "strict":
+                elif ss_str == "strict":
                     item["sameSite"] = "Strict"
 
             if "expires" in c and c["expires"] is not None:
-                item["expires"] = float(c["expires"])
+                item["expires"] = float(str(c["expires"]))
 
             formatted.append(item)
 
@@ -552,7 +581,9 @@ class CDPPage:
             await self.cdp.send("Network.setCookies", {"cookies": formatted})
             log.debug("Injected %d cookies via CDP", len(formatted))
         except Exception as e:
-            log.warning("Batch Network.setCookies failed (%s), retrying individually", e)
+            log.warning(
+                "Batch Network.setCookies failed (%s), retrying individually", e
+            )
             for item in formatted:
                 try:
                     await self.cdp.send("Network.setCookies", {"cookies": [item]})
@@ -566,43 +597,53 @@ class CDPPage:
         except Exception as e:
             log.debug("Network.clearBrowserCookies failed: %s", e)
 
-    def on_request(self, callback: Callable[[dict[str, Any]], Any]) -> Callable[[], None]:
+    def on_request(
+        self, callback: Callable[[dict[str, object]], object]
+    ) -> Callable[[], None]:
         """Listen to outgoing HTTP requests."""
-        def listener(params: dict[str, Any]) -> None:
-            req = params.get("request", {})
-            data = {
+
+        def listener(params: dict[str, object]) -> None:
+            raw_req = params.get("request")
+            req: dict[str, object] = raw_req if isinstance(raw_req, dict) else {}
+            data: dict[str, object] = {
                 "request_id": params.get("requestId"),
-                "url": req.get("url", ""),
-                "method": req.get("method", "GET"),
-                "headers": req.get("headers", {}),
-                "post_data": req.get("postData", ""),
+                "url": str(req.get("url") or ""),
+                "method": str(req.get("method") or "GET"),
+                "headers": req.get("headers") or {},
+                "post_data": str(req.get("postData") or ""),
             }
             callback(data)
 
         return self.cdp.on("Network.requestWillBeSent", listener)
 
-    def on_response(self, callback: Callable[[dict[str, Any]], Any]) -> Callable[[], None]:
+    def on_response(
+        self, callback: Callable[[dict[str, object]], object]
+    ) -> Callable[[], None]:
         """Listen to incoming HTTP responses."""
-        def listener(params: dict[str, Any]) -> None:
-            resp = params.get("response", {})
-            data = {
+
+        def listener(params: dict[str, object]) -> None:
+            raw_resp = params.get("response")
+            resp: dict[str, object] = raw_resp if isinstance(raw_resp, dict) else {}
+            data: dict[str, object] = {
                 "request_id": params.get("requestId"),
-                "url": resp.get("url", ""),
-                "status": resp.get("status", 0),
-                "headers": resp.get("headers", {}),
-                "mime_type": resp.get("mimeType", ""),
+                "url": str(resp.get("url") or ""),
+                "status": int(str(resp.get("status") or 0)),
+                "headers": resp.get("headers") or {},
+                "mime_type": str(resp.get("mimeType") or ""),
             }
             callback(data)
-
         return self.cdp.on("Network.responseReceived", listener)
 
     async def get_response_body(self, request_id: str) -> str:
         """Get response body for a completed request."""
         try:
-            res = await self.cdp.send("Network.getResponseBody", {"requestId": request_id})
-            body = res.get("body", "")
+            res = await self.cdp.send(
+                "Network.getResponseBody", {"requestId": request_id}
+            )
+            body = str(res.get("body") or "")
             if res.get("base64Encoded"):
                 import base64
+
                 return base64.b64decode(body).decode("utf-8", errors="replace")
             return body
         except Exception as e:
@@ -628,14 +669,14 @@ class CDPClient:
         self.base_url = f"http://{host}:{port}"
         self.page: CDPPage | None = None
 
-    async def get_version(self) -> dict[str, Any]:
+    async def get_version(self) -> dict[str, object]:
         """Fetch /json/version info."""
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(f"{self.base_url}/json/version")
             resp.raise_for_status()
             return resp.json()
 
-    async def get_targets(self) -> list[dict[str, Any]]:
+    async def get_targets(self) -> list[dict[str, object]]:
         """Fetch list of active targets via /json/list."""
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(f"{self.base_url}/json/list")
@@ -653,7 +694,9 @@ class CDPClient:
             except Exception as e:
                 last_err = e
                 await asyncio.sleep(0.2)
-        raise TimeoutError(f"Chromium CDP endpoint on port {self.port} not ready after {timeout_s}s: {last_err}")
+        raise TimeoutError(
+            f"Chromium CDP endpoint on port {self.port} not ready after {timeout_s}s: {last_err}"
+        )
 
     async def connect_page(self, block_assets: bool = True) -> CDPPage:
         """Connect to an existing page target or create one."""
@@ -672,8 +715,8 @@ class CDPClient:
                 resp.raise_for_status()
                 page_target = resp.json()
 
-        ws_url = page_target["webSocketDebuggerUrl"]
-        target_id = page_target.get("id", "")
+        ws_url = str(page_target.get("webSocketDebuggerUrl") or "")
+        target_id = str(page_target.get("id") or "")
 
         conn = CDPConnection(ws_url)
         await conn.connect()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,9 +14,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DEFAULT_TEXT_MODEL = os.getenv("AISTUDIO_DEFAULT_TEXT_MODEL", "gemini-3.7-flash")
-DEFAULT_IMAGE_MODEL = os.getenv("AISTUDIO_DEFAULT_IMAGE_MODEL", "gemini-3.1-flash-image-preview")
+DEFAULT_IMAGE_MODEL = os.getenv(
+    "AISTUDIO_DEFAULT_IMAGE_MODEL", "gemini-3.1-flash-image-preview"
+)
 DEFAULT_BROWSER_PORT = 9222
-
 
 
 def _load_env(*names: str) -> str | None:
@@ -79,7 +81,6 @@ def discover_auth_file() -> str | None:
         registry_path = root / "accounts" / "registry.json"
         if registry_path.exists():
             try:
-                import json
                 registry = json.loads(registry_path.read_text())
                 active_id = registry.get("active_account_id")
                 if active_id:
@@ -125,11 +126,12 @@ def build_browser_proxy(proxy_url: str | None) -> dict[str, str] | None:
     return proxy
 
 
-
 @dataclass(slots=True)
 class Settings:
     port: int = int(os.getenv("AISTUDIO_PORT", "8080"))
-    browser_port: int = _load_int_env("AISTUDIO_BROWSER_PORT", default=DEFAULT_BROWSER_PORT)
+    browser_port: int = _load_int_env(
+        "AISTUDIO_BROWSER_PORT", default=DEFAULT_BROWSER_PORT
+    )
     browser_headless: bool = _load_bool_env("AISTUDIO_BROWSER_HEADLESS", default=True)
     browser_executable_path: str | None = os.getenv("AISTUDIO_BROWSER_EXECUTABLE")
     auth_file: str | None = discover_auth_file()
@@ -141,12 +143,20 @@ class Settings:
     timeout_capture: int = int(os.getenv("AISTUDIO_TIMEOUT_CAPTURE", "30"))
     snapshot_cache_ttl: int = int(os.getenv("AISTUDIO_SNAPSHOT_CACHE_TTL", "3600"))
     snapshot_cache_max: int = int(os.getenv("AISTUDIO_SNAPSHOT_CACHE_MAX", "100"))
-    dump_raw_response: bool = os.getenv("AISTUDIO_DUMP_RAW_RESPONSE", "0") in ("1", "true", "True")
+    dump_raw_response: bool = os.getenv("AISTUDIO_DUMP_RAW_RESPONSE", "0") in (
+        "1",
+        "true",
+        "True",
+    )
     dump_raw_response_dir: str = os.getenv("AISTUDIO_DUMP_RAW_RESPONSE_DIR", "/tmp")
     accounts_dir: str = os.getenv("AISTUDIO_ACCOUNTS_DIR", "")
     # 账号轮询配置
-    account_rotation_mode: str = os.getenv("AISTUDIO_ACCOUNT_ROTATION_MODE", "round_robin")  # round_robin, lru, least_rl
-    account_cooldown_seconds: int = int(os.getenv("AISTUDIO_ACCOUNT_COOLDOWN_SECONDS", "60"))
+    account_rotation_mode: str = os.getenv(
+        "AISTUDIO_ACCOUNT_ROTATION_MODE", "round_robin"
+    )  # round_robin, lru, least_rl
+    account_cooldown_seconds: int = int(
+        os.getenv("AISTUDIO_ACCOUNT_COOLDOWN_SECONDS", "60")
+    )
     account_max_retries: int = int(os.getenv("AISTUDIO_ACCOUNT_MAX_RETRIES", "3"))
     max_concurrency: int = int(os.getenv("AISTUDIO_MAX_CONCURRENCY", "3"))
 

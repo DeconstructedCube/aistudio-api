@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
@@ -9,6 +11,8 @@ from aistudio_api.api.dependencies import get_runtime_state
 from aistudio_api.api.response_models import HealthResponse, StatsResponse
 from aistudio_api.application.api_service import health_response, stats_response
 
+if TYPE_CHECKING:
+    from aistudio_api.api.state import RuntimeState
 public_router = APIRouter()
 protected_router = APIRouter()
 
@@ -25,13 +29,16 @@ async def stats():
 
 # ========== 轮询管理 API ==========
 
+
 class RotationModeRequest(BaseModel):
     mode: str  # round_robin, lru, least_rl
     cooldown_seconds: int | None = None
 
 
 @protected_router.get("/rotation")
-async def get_rotation_status(runtime_state=Depends(get_runtime_state)):
+async def get_rotation_status(
+    runtime_state: RuntimeState = Depends(get_runtime_state),
+) -> dict[str, object]:
     """获取轮询状态。"""
     rotator = runtime_state.rotator
     if rotator is None:
@@ -48,8 +55,8 @@ async def get_rotation_status(runtime_state=Depends(get_runtime_state)):
 @protected_router.post("/rotation/mode")
 async def set_rotation_mode(
     req: RotationModeRequest,
-    runtime_state=Depends(get_runtime_state),
-):
+    runtime_state: RuntimeState = Depends(get_runtime_state),
+) -> dict[str, object]:
     """设置轮询模式。"""
     rotator = runtime_state.rotator
     if rotator is None:
@@ -57,6 +64,7 @@ async def set_rotation_mode(
 
     try:
         from aistudio_api.application.account_rotator import RotationMode
+
         rotator.mode = RotationMode(req.mode)
         if req.cooldown_seconds is not None:
             rotator.cooldown_seconds = req.cooldown_seconds
@@ -66,11 +74,15 @@ async def set_rotation_mode(
             "cooldown_seconds": rotator.cooldown_seconds,
         }
     except ValueError:
-        raise HTTPException(400, detail=f"无效的轮询模式: {req.mode}，可选: round_robin, lru, least_rl")
+        raise HTTPException(
+            400, detail=f"无效的轮询模式: {req.mode}，可选: round_robin, lru, least_rl"
+        )
 
 
 @protected_router.get("/rotation/accounts")
-async def get_rotation_accounts(runtime_state=Depends(get_runtime_state)):
+async def get_rotation_accounts(
+    runtime_state: RuntimeState = Depends(get_runtime_state),
+) -> dict[str, dict[str, object]]:
     """获取所有账号的轮询统计。"""
     rotator = runtime_state.rotator
     if rotator is None:
@@ -80,7 +92,9 @@ async def get_rotation_accounts(runtime_state=Depends(get_runtime_state)):
 
 
 @protected_router.post("/rotation/next")
-async def force_next_account(runtime_state=Depends(get_runtime_state)):
+async def force_next_account(
+    runtime_state: RuntimeState = Depends(get_runtime_state),
+) -> dict[str, object]:
     """强制切换到下一个可用账号。"""
     rotator = runtime_state.rotator
     if rotator is None:
@@ -96,7 +110,7 @@ async def force_next_account(runtime_state=Depends(get_runtime_state)):
     client = runtime_state.client
     busy_lock = runtime_state.busy_lock
 
-    if not all([account_service, client, busy_lock]):
+    if account_service is None or client is None or client._session is None or busy_lock is None:
         raise HTTPException(503, detail="服务未就绪")
 
     result = await account_service.activate_account(

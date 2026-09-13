@@ -6,7 +6,6 @@ import hashlib
 import logging
 import time
 from collections import OrderedDict
-from typing import Optional
 
 from aistudio_api.config import settings
 
@@ -23,7 +22,7 @@ class SnapshotCache:
     def _hash(prompt: str) -> str:
         return hashlib.sha256(prompt.encode()).hexdigest()
 
-    def get(self, prompt: str) -> Optional[tuple]:
+    def get(self, prompt: str) -> tuple | None:
         key = self._hash(prompt)
         if key not in self._cache:
             return None

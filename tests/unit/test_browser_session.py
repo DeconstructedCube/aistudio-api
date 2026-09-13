@@ -39,7 +39,7 @@ async def test_browser_session_generate_snapshot(mock_cdp_page):
     session._snap_key = "test_snapshot_fn"
 
     async def fake_evaluate(expr, *args, **kwargs):
-        if "Promise.resolve(dms[snapKey]" in expr:
+        if "Promise.resolve(result)" in expr or "Promise.resolve(dms[snapKey]" in expr:
             return "!mocked_snapshot_token_value_123"
         if "window.__bg_hooked" in expr or "return 'already_hooked'" in expr:
             return "already_hooked"

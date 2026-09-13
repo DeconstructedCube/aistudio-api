@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-from typing import Generator
+from collections.abc import Generator
 
 from aistudio_api.domain.models import parse_response_chunk
-
 
 XSSI_PREFIX = ")]}'"
 
@@ -78,9 +77,9 @@ class IncrementalJSONStreamParser:
             if not made_progress:
                 break
 
-    def finish(self) -> Generator:
-        return iter([])
-
+    def finish(self) -> Generator[list[object], None, None]:
+        return
+        yield []
 
 def classify_chunk(chunk: list) -> tuple[str, object]:
     candidate = parse_response_chunk(chunk)

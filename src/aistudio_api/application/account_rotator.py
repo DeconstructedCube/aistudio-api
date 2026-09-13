@@ -5,48 +5,49 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections import defaultdict
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
 
-from aistudio_api.infrastructure.account.account_store import AccountStore, AccountMeta
+from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
 
 logger = logging.getLogger("aistudio.rotator")
 
 
 class RotationMode(str, Enum):
     """轮询模式。"""
-    ROUND_ROBIN = "round_robin"          # 顺序轮询
-    LEAST_RECENTLY_USED = "lru"         # 最久未用
-    LEAST_RATE_LIMITED = "least_rl"     # 最少限流
+
+    ROUND_ROBIN = "round_robin"  # 顺序轮询
+    LEAST_RECENTLY_USED = "lru"  # 最久未用
+    LEAST_RATE_LIMITED = "least_rl"  # 最少限流
 
 
 def get_pacific_date_key(ts: float | None = None) -> str:
     """获取美西太平洋时间（America/Los_Angeles）日期键值 YYYY-MM-DD。"""
     try:
         from zoneinfo import ZoneInfo
+
         tz = ZoneInfo("America/Los_Angeles")
         dt = datetime.fromtimestamp(ts or time.time(), tz=tz)
         return dt.strftime("%Y-%m-%d")
     except Exception:
         # 简易保底（UTC-8 / UTC-7）
-        dt = datetime.fromtimestamp((ts or time.time()) - 28800, tz=timezone.utc)
+        dt = datetime.fromtimestamp((ts or time.time()) - 28800, tz=UTC)
         return dt.strftime("%Y-%m-%d")
 
 
 @dataclass
 class AccountStats:
     """单账号的运行统计。"""
+
     account_id: str
     requests: int = 0
     success: int = 0
     rate_limited: int = 0
     errors: int = 0
-    last_used: float = 0.0           # timestamp
-    last_rate_limited: float = 0.0   # timestamp
-    cooldown_until: float = 0.0      # timestamp, 429 后冷却期
+    last_used: float = 0.0  # timestamp
+    last_rate_limited: float = 0.0  # timestamp
+    cooldown_until: float = 0.0  # timestamp, 429 后冷却期
     rate_limited_date_la: str | None = None
 
     def is_available(self) -> bool:
@@ -75,6 +76,8 @@ class AccountStats:
         self.requests += 1
         self.errors += 1
         self.last_used = time.time()
+
+
 class AccountRotator:
     """多账号轮询管理器。
 
@@ -119,7 +122,7 @@ class AccountRotator:
     def cooldown_seconds(self, value: int) -> None:
         self._cooldown_seconds = value
 
-    def get_all_stats(self) -> dict[str, dict[str, Any]]:
+    def get_all_stats(self) -> dict[str, dict[str, object]]:
         """获取所有账号的统计信息。"""
         result = {}
         for account in self._store.list_accounts():
@@ -131,8 +134,14 @@ class AccountRotator:
                 "success": stats.success,
                 "rate_limited": stats.rate_limited,
                 "errors": stats.errors,
-                "last_used": datetime.fromtimestamp(stats.last_used, tz=timezone.utc).isoformat() if stats.last_used else None,
-                "last_rate_limited": datetime.fromtimestamp(stats.last_rate_limited, tz=timezone.utc).isoformat() if stats.last_rate_limited else None,
+                "last_used": datetime.fromtimestamp(stats.last_used, tz=UTC).isoformat()
+                if stats.last_used
+                else None,
+                "last_rate_limited": datetime.fromtimestamp(
+                    stats.last_rate_limited, tz=UTC
+                ).isoformat()
+                if stats.last_rate_limited
+                else None,
                 "is_available": stats.is_available(),
                 "cooldown_remaining": max(0, int(stats.cooldown_until - time.time())),
             }
@@ -148,7 +157,9 @@ class AccountRotator:
                 available.append((account, stats))
         return available
 
-    def _pick_round_robin(self, available: list[tuple[AccountMeta, AccountStats]]) -> tuple[AccountMeta, AccountStats] | None:
+    def _pick_round_robin(
+        self, available: list[tuple[AccountMeta, AccountStats]]
+    ) -> tuple[AccountMeta, AccountStats] | None:
         """Round-robin 选择，基于全量账号索引，避免 available 变化导致跳过或重复。"""
         if not available:
             return None
@@ -161,16 +172,25 @@ class AccountRotator:
             idx = (self._current_index + i) % total
             if all_accounts[idx].id in available_ids:
                 self._current_index = (idx + 1) % total
-                return next((a, s) for a, s in available if a.id == all_accounts[idx].id)
+                return next(
+                    (a, s) for a, s in available if a.id == all_accounts[idx].id
+                )
         return available[0]
 
-    def _pick_lru(self, available: list[tuple[AccountMeta, AccountStats]]) -> tuple[AccountMeta, AccountStats] | None:
+    def _pick_lru(
+        self, available: list[tuple[AccountMeta, AccountStats]]
+    ) -> tuple[AccountMeta, AccountStats] | None:
         """最久未用优先。"""
         if not available:
             return None
-        return min(available, key=lambda x: x[1].last_used if x[1].last_used > 0 else float("inf"))
+        return min(
+            available,
+            key=lambda x: x[1].last_used if x[1].last_used > 0 else float("inf"),
+        )
 
-    def _pick_least_rl(self, available: list[tuple[AccountMeta, AccountStats]]) -> tuple[AccountMeta, AccountStats] | None:
+    def _pick_least_rl(
+        self, available: list[tuple[AccountMeta, AccountStats]]
+    ) -> tuple[AccountMeta, AccountStats] | None:
         """最少限流优先。"""
         if not available:
             return None
@@ -188,12 +208,17 @@ class AccountRotator:
                     return None
                 # 选冷却结束最早的
                 earliest = min(
-                    [(a, self._stats.get(a.id, AccountStats(account_id=a.id))) for a in all_accounts],
+                    [
+                        (a, self._stats.get(a.id, AccountStats(account_id=a.id)))
+                        for a in all_accounts
+                    ],
                     key=lambda x: x[1].cooldown_until,
                 )
                 account, stats = earliest
                 wait_time = max(0, stats.cooldown_until - time.time())
-                logger.warning("所有账号都在冷却期，等待 %.1fs 使用 %s", wait_time, account.name)
+                logger.warning(
+                    "所有账号都在冷却期，等待 %.1fs 使用 %s", wait_time, account.name
+                )
                 await asyncio.sleep(wait_time)
                 return account
 
@@ -214,7 +239,9 @@ class AccountRotator:
             logger.info("轮询选择账号: %s (mode=%s)", account.name, self._mode)
             return account
 
-    async def get_next_account_with_stats(self) -> tuple[AccountMeta, AccountStats] | None:
+    async def get_next_account_with_stats(
+        self,
+    ) -> tuple[AccountMeta, AccountStats] | None:
         """获取下一个可用的账号及其统计。"""
         async with self._lock:
             available = self._get_available_accounts()
@@ -223,7 +250,10 @@ class AccountRotator:
                 if not all_accounts:
                     return None
                 earliest = min(
-                    [(a, self._stats.get(a.id, AccountStats(account_id=a.id))) for a in all_accounts],
+                    [
+                        (a, self._stats.get(a.id, AccountStats(account_id=a.id)))
+                        for a in all_accounts
+                    ],
                     key=lambda x: x[1].cooldown_until,
                 )
                 account, stats = earliest

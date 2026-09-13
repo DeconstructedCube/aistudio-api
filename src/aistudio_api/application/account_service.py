@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import asyncio
+    from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
+    from aistudio_api.infrastructure.gateway.session import BrowserSession
 
 from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
-
 logger = logging.getLogger("aistudio.account")
 
 
@@ -38,9 +42,9 @@ class AccountService:
     async def activate_account(
         self,
         account_id: str,
-        browser_session: Any,
-        snapshot_cache: Any,
-        busy_lock: Any = None,  # None = skip lock (caller already holds it)
+        browser_session: BrowserSession,
+        snapshot_cache: SnapshotCache | None,
+        busy_lock: asyncio.Semaphore | None = None,
         keep_snapshot_cache: bool = False,
     ) -> AccountMeta | None:
         """切换到指定账号。"""
@@ -49,7 +53,9 @@ class AccountService:
             return None
 
         async def _do_switch():
-            auth_path = self._store.get_auth_path_optional(account_id, require_exists=False)
+            auth_path = self._store.get_auth_path_optional(
+                account_id, require_exists=False
+            )
             if auth_path is None:
                 logger.error("账号 %s 的账号目录不存在", account_id)
                 return None

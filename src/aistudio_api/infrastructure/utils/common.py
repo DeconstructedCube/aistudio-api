@@ -6,17 +6,16 @@ import base64
 import json
 import logging
 import reprlib
-from typing import Any
 
 logger = logging.getLogger("aistudio")
 
 
 def get_nested_value(
-    data: Any,
+    data: object,
     path: list[int | str],
-    default: Any = None,
+    default: object = None,
     verbose: bool = False,
-) -> Any:
+) -> object:
     current = data
     for i, key in enumerate(path):
         found = False
@@ -42,8 +41,7 @@ def get_nested_value(
 
     return current if current is not None else default
 
-
-def extract_outer_json(raw: str) -> list[Any]:
+def extract_outer_json(raw: str) -> list[object]:
     stripped = raw.strip()
     if not stripped:
         return []
@@ -67,8 +65,7 @@ def extract_outer_json(raw: str) -> list[Any]:
             continue
     return results
 
-
-def extract_all_strings(obj: Any, min_len: int = 5) -> list[str]:
+def extract_all_strings(obj: object, min_len: int = 5) -> list[str]:
     results = []
     if isinstance(obj, str) and len(obj) >= min_len:
         results.append(obj)
@@ -77,8 +74,7 @@ def extract_all_strings(obj: Any, min_len: int = 5) -> list[str]:
             results.extend(extract_all_strings(item, min_len))
     return results
 
-
-def find_base64_images(obj: Any) -> list[dict]:
+def find_base64_images(obj: object) -> list[dict[str, object]]:
     if isinstance(obj, list):
         if (
             len(obj) >= 2
@@ -95,13 +91,12 @@ def find_base64_images(obj: Any) -> list[dict]:
     return []
 
 
-def decode_base64_images(images: list[dict]) -> list[dict]:
+def decode_base64_images(images: list[dict[str, object]]) -> list[dict[str, object]]:
     decoded = []
     for img in images:
         try:
-            data = base64.b64decode(img["data"])
-            decoded.append({"mime": img["mime"], "bytes": data, "size": len(data)})
+            data = base64.b64decode(str(img["data"]))
+            decoded.append({"mime": str(img.get("mime", "image/jpeg")), "bytes": data, "size": len(data)})
         except Exception:
             pass
     return decoded
-

@@ -20,7 +20,9 @@ from .routes_system import protected_router as system_protected_router
 from .routes_system import public_router as system_public_router
 from .state import runtime_state
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s", datefmt="%H:%M:%S")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s", datefmt="%H:%M:%S"
+)
 logger = logging.getLogger("aistudio.server")
 
 
@@ -28,20 +30,22 @@ logger = logging.getLogger("aistudio.server")
 async def lifespan(app: FastAPI):
     import asyncio
 
+    from aistudio_api.application.account_rotator import RotationMode, init_rotator
+    from aistudio_api.application.account_service import AccountService
     from aistudio_api.config import settings
     from aistudio_api.infrastructure.account.account_store import AccountStore
-    from aistudio_api.application.account_service import AccountService
-    from aistudio_api.application.account_rotator import init_rotator, RotationMode
 
     client = AIStudioClient(
         port=runtime_state.browser_port,
     )
     runtime_state.client = client
     from aistudio_api.config import settings as app_settings
+
     runtime_state.busy_lock = asyncio.Semaphore(app_settings.max_concurrency)
 
     # 注入 snapshot 缓存引用，切号时需要清除
     from aistudio_api.infrastructure.gateway.client import _snapshot_cache
+
     runtime_state.snapshot_cache = _snapshot_cache
 
     # 初始化账号管理服务
@@ -68,11 +72,13 @@ async def lifespan(app: FastAPI):
 
     # 后台预热浏览器，避免首次请求延迟
     warmup_task = None
+
     async def _warmup():
         try:
             await client.warmup()
         except Exception as e:
             logger.warning("浏览器预热失败: %s", e)
+
     warmup_task = asyncio.create_task(_warmup())
 
     yield
@@ -99,6 +105,7 @@ app.include_router(accounts_router, dependencies=[Depends(require_api_key)])
 
 # 挂载静态文件
 import os
+
 static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
 if os.path.isdir(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -118,6 +125,7 @@ async def login_page():
 async def auth_check():
     """检查认证状态，用于前端判断是否需要登录。"""
     from aistudio_api.config import settings
+
     return {"auth_enabled": settings.auth_enabled}
 
 

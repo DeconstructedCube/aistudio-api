@@ -12,9 +12,11 @@ import logging
 import shutil
 import time
 import uuid
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, AsyncGenerator
+
 
 from aistudio_api.config import settings
 from aistudio_api.infrastructure.account.account_store import AccountStore
@@ -205,9 +207,22 @@ class BrowserSession:
         self._cdp_client: CDPClient | None = None
         self._page: CDPPage | None = None
         self._snap_key: str | None = None
-        self._templates: dict[str, dict[str, Any]] = {}
-        self._bootstrap_template: dict[str, Any] | None = None
+        self._templates: dict[str, dict[str, object]] = {}
+        self._bootstrap_template: dict[str, object] | None = None
         self._lock = asyncio.Lock()
+        self._in_flight: int = 0
+        self._switching: bool = False
+
+    @asynccontextmanager
+    async def request_scope(self):
+        """追踪正在进行的请求，防止切号时进程被强杀造成断流。"""
+        while self._switching:
+            await asyncio.sleep(0.1)
+        self._in_flight += 1
+        try:
+            yield
+        finally:
+            self._in_flight = max(0, self._in_flight - 1)
 
     async def ensure_context(self) -> CDPPage:
         """Ensure Chromium process is running and CDPPage is connected."""
@@ -219,13 +234,23 @@ class BrowserSession:
             return await self._ensure_browser_cdp()
 
     async def switch_auth(self, auth_file: str | None) -> None:
-        """Switch active auth file and invalidate browser profile/templates."""
+        """Switch active auth file and invalidate browser profile/templates with request draining."""
         async with self._lock:
-            self._auth_file = auth_file
-            self._profile_dir = self._derive_profile_dir(auth_file)
-            self._templates.clear()
-            self._bootstrap_template = None
-            await self._close_internal()
+            self._switching = True
+            try:
+                # 等待正在处理的请求排干，最多等待 5 秒，避免直接切号杀进程导致进行中的流断连
+                for _ in range(50):
+                    if self._in_flight <= 0:
+                        break
+                    await asyncio.sleep(0.1)
+
+                self._auth_file = auth_file
+                self._profile_dir = self._derive_profile_dir(auth_file)
+                self._templates.clear()
+                self._bootstrap_template = None
+                await self._close_internal()
+            finally:
+                self._switching = False
 
     async def ensure_hook_page(self) -> bool:
         """Ensure page is navigated to AI Studio and hooks are installed."""
@@ -246,40 +271,47 @@ class BrowserSession:
             return page
 
         t0 = time.time()
-        captured: dict[str, Any] = {}
+        captured: dict[str, object] = {}
+        original_text: str = ""
 
-        def on_req(req: dict[str, Any]) -> None:
-            url = req.get("url", "")
+        def on_req(req: dict[str, object]) -> None:
+            url = str(req.get("url") or "")
             if "GenerateContent" not in url or "Count" in url or captured:
                 return
-            body = req.get("post_data", "")
+            body = str(req.get("post_data") or "")
             if not body:
                 return
             captured["url"] = url
-            captured["headers"] = req.get("headers", {})
+            captured["headers"] = req.get("headers") or {}
             captured["body"] = body
-
         unsub = page.on_request(on_req)
         await page.evaluate(DIALOG_CLEANUP_JS)
 
         try:
-            # Wait for textarea presence during Angular SPA bootstrapping
+            original_text = ""
             try:
                 await page.wait_for_selector("textarea", timeout_s=20.0)
             except Exception:
                 dbg_url = page.url
                 dbg_title = await page.title()
-                dbg_body = (await page.evaluate("() => document.body?.innerText?.substring(0, 300) || ''")) or ""
+                raw_dbg_body = await page.evaluate(
+                    "() => document.body?.innerText?.substring(0, 300) || ''"
+                )
+                dbg_body = str(raw_dbg_body or "")
                 raise RuntimeError(
                     f"textarea not found while capturing BotGuardService; url={dbg_url}, title={dbg_title}, body={dbg_body[:200]}"
                 )
-            original_text = (await page.evaluate("() => document.querySelector('textarea')?.value || ''")) or ""
+            original_text = str(
+                (await page.evaluate("() => document.querySelector('textarea')?.value || ''")) or ""
+            )
             await page.fill("textarea", BOTGUARD_BOOTSTRAP_PROMPT)
             await page.wait_for_timeout(800)
             await page.evaluate(DIALOG_CLEANUP_JS)
 
             if not await self._click_run_button(page):
-                raise RuntimeError("failed to trigger send while capturing BotGuardService")
+                raise RuntimeError(
+                    "failed to trigger send while capturing BotGuardService"
+                )
 
             for i in range(45):
                 await page.wait_for_timeout(1000)
@@ -288,20 +320,26 @@ class BrowserSession:
                     if captured and self._bootstrap_template is None:
                         self._bootstrap_template = dict(captured)
                     await page.fill("textarea", original_text)
-                    log.debug(f"[timing] botguard captured after {i+1}s, total {time.time()-t0:.1f}s")
+                    log.debug(
+                        f"[timing] botguard captured after {i + 1}s, total {time.time() - t0:.1f}s"
+                    )
                     return page
 
             raise RuntimeError("BotGuardService capture timeout")
         finally:
             unsub()
             try:
-                await page.fill("textarea", original_text if "original_text" in locals() else "")
+                await page.fill("textarea", original_text)
             except Exception:
                 pass
 
-    async def import_cookies(self, cookie_string: str, auth_file: str | None = None) -> int:
+    async def import_cookies(
+        self, cookie_string: str, auth_file: str | None = None
+    ) -> int:
         """Inject cookie string, navigate through Google surfaces, and save cookies."""
-        from aistudio_api.infrastructure.account.cookie_refresher import load_cookies_from_string
+        from aistudio_api.infrastructure.account.cookie_refresher import (
+            load_cookies_from_string,
+        )
 
         pw_cookies = load_cookies_from_string(cookie_string)
         target_auth_file = auth_file or self._auth_file
@@ -334,8 +372,13 @@ class BrowserSession:
         try:
             browser_cookies = await page.get_cookies()
             if browser_cookies:
-                await self._save_cookies(auth_file=target_auth_file, cookies=browser_cookies)
-                log.info("[import_cookies] exported %d cookies from browser", len(browser_cookies))
+                await self._save_cookies(
+                    auth_file=target_auth_file, cookies=browser_cookies
+                )
+                log.info(
+                    "[import_cookies] exported %d cookies from browser",
+                    len(browser_cookies),
+                )
             else:
                 await self._save_cookies(auth_file=target_auth_file, cookies=pw_cookies)
             return len(browser_cookies or pw_cookies)
@@ -344,42 +387,44 @@ class BrowserSession:
                 await self.switch_auth(original_auth_file)
                 self._profile_dir = original_profile_dir
 
-    async def capture_template(self, model: str) -> dict[str, Any]:
+    async def capture_template(self, model: str) -> dict[str, object]:
         """Capture GenerateContent request headers and URL template for the given model."""
         if model in self._templates:
             return self._templates[model]
 
         page = await self.ensure_botguard_service()
         if self._bootstrap_template:
-            captured = dict(self._bootstrap_template)
-            self._templates[model] = captured
-            return captured
+            bootstrap = dict(self._bootstrap_template)
+            self._templates[model] = bootstrap
+            return bootstrap
 
-        captured: dict[str, Any] = {}
-        last_response: dict[str, Any] | None = None
+        captured: dict[str, object] = {}
+        last_response: dict[str, object] | None = None
 
-        def on_req(req: dict[str, Any]) -> None:
-            url = req.get("url", "")
+        def on_req(req: dict[str, object]) -> None:
+            url = str(req.get("url") or "")
             if "GenerateContent" not in url or "Count" in url or captured:
                 return
-            body = req.get("post_data", "")
+            body = str(req.get("post_data") or "")
             if not body or len(body) <= 100:
                 return
             captured["url"] = url
-            captured["headers"] = req.get("headers", {})
+            captured["headers"] = req.get("headers") or {}
             captured["body"] = body
-
-        def on_resp(resp: dict[str, Any]) -> None:
+        def on_resp(resp: dict[str, object]) -> None:
             nonlocal last_response
-            url = resp.get("url", "")
+            url = str(resp.get("url") or "")
             if "GenerateContent" not in url or "Count" in url:
                 return
             last_response = resp
 
         unsub_req = page.on_request(on_req)
         unsub_resp = page.on_response(on_resp)
+        original_text = ""
         try:
-            original_text = (await page.evaluate("() => document.querySelector('textarea')?.value || ''")) or ""
+            original_text = str(
+                (await page.evaluate("() => document.querySelector('textarea')?.value || ''")) or ""
+            )
             await page.fill("textarea", TEMPLATE_CAPTURE_PROMPT)
             await page.wait_for_timeout(500)
             if not await self._click_run_button(page):
@@ -405,7 +450,7 @@ class BrowserSession:
             unsub_req()
             unsub_resp()
             try:
-                await page.fill("textarea", original_text if "original_text" in locals() else "")
+                await page.fill("textarea", original_text)
             except Exception:
                 pass
 
@@ -424,220 +469,156 @@ class BrowserSession:
                     hash_parts.append(str(part.text))
         content_hash = sha256(" ".join(hash_parts).encode("utf-8")).hexdigest()
 
-        # Fast path: 直接以 Promise 形式求值，避免 20 次轮询的 500ms~1000ms 额外等待
-        try:
-            snapshot = await page.evaluate(
-                """
-                async (hash) => {
-                    const dms = window.default_MakerSuite;
-                    const service = window.__bg_service;
-                    const snapKey = window.__snap_key;
-                    if (!dms || !service || !snapKey || typeof dms[snapKey] !== 'function') {
-                        return null;
-                    }
-                    return await Promise.resolve(dms[snapKey](service, hash));
-                }
-                """,
-                args=content_hash,
-                timeout_s=10.0,
-            )
-            if snapshot and isinstance(snapshot, str) and len(snapshot) > 0:
-                return snapshot
-        except Exception as e:
-            log.debug("Direct async evaluate snapshot failed: %s, falling back to polling", e)
-
-        # Fallback path
-        await page.evaluate(
-            """
-            ((hash) => {
-                const dms = window.default_MakerSuite;
-                const service = window.__bg_service;
-                const snapKey = window.__snap_key;
-                if (!dms || !service || !snapKey || typeof dms[snapKey] !== 'function') {
-                    window.__sr = '';
-                    window.__sl = 0;
-                    window.__snap_error = 'service_unavailable';
-                    return;
-                }
-                window.__sr = '';
-                window.__sl = 0;
-                window.__snap_error = '';
-                const result = dms[snapKey](service, hash);
-                if (result instanceof Promise) {
-                    result.then((snapshot) => {
-                        window.__sr = snapshot || '';
-                        window.__sl = snapshot ? snapshot.length : 0;
-                    }).catch((error) => {
-                        window.__snap_error = String(error);
-                    });
-                    return;
-                }
-                window.__sr = result || '';
-                window.__sl = result ? result.length : 0;
-            })(%s)
-            """
-            % json.dumps(content_hash)
-        )
-
-        for _ in range(20):
-            length = await page.evaluate("() => (window.__sl || 0)")
-            if length and length > 0:
-                break
-            await page.wait_for_timeout(200)
-
-        snapshot = await page.evaluate("() => window.__sr")
-        if snapshot:
-            return snapshot
-        error = await page.evaluate("() => window.__snap_error || ''")
-        raise RuntimeError(f"Snapshot generation failed: {error or 'unknown'}")
-    async def upload_images(self, image_paths: list[str]) -> list[str]:
-        """Upload images via Google Drive API using page session credentials."""
-        if not image_paths:
-            return []
-
-        page = await self.ensure_botguard_service()
-        cookies = await page.get_cookies()
-        return await self._upload_images_via_api(image_paths, cookies)
-
-    async def _upload_images_via_api(self, image_paths: list[str], cookies: list[dict[str, Any]]) -> list[str]:
-        """Upload images through HTTP requests carrying the browser cookies."""
-        import httpx
-
-        cookie_header = "; ".join(f"{c['name']}={c['value']}" for c in cookies if "google" in c.get("domain", ""))
-        uploaded_ids: list[str] = []
-
-        headers = {
-            "Cookie": cookie_header,
-            "Origin": "https://aistudio.google.com",
-            "Referer": "https://aistudio.google.com/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+        # 直接使用 Promise 求值，完全隔离每个并发调用的结果，避免污染 window 全局变量
+        script = """
+        async (hash) => {
+            const dms = window.default_MakerSuite;
+            const service = window.__bg_service;
+            const snapKey = window.__snap_key;
+            if (!dms || !service || !snapKey || typeof dms[snapKey] !== 'function') {
+                throw new Error('service_unavailable');
+            }
+            const result = dms[snapKey](service, hash);
+            const snapshot = await Promise.resolve(result);
+            if (!snapshot || typeof snapshot !== 'string') {
+                throw new Error('empty_snapshot');
+            }
+            return snapshot;
         }
+        """
+        for attempt in range(3):
+            try:
+                snapshot = await page.evaluate(
+                    script, args=content_hash, timeout_s=10.0
+                )
+                if snapshot and isinstance(snapshot, str) and len(snapshot) > 0:
+                    return snapshot
+            except Exception as e:
+                log.debug(
+                    "Async evaluate snapshot attempt %d failed: %s", attempt + 1, e
+                )
+                if attempt < 2:
+                    await page.wait_for_timeout(300)
+                    try:
+                        await self.ensure_botguard_service()
+                    except Exception:
+                        pass
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            for path_str in image_paths:
-                p = Path(path_str)
-                if not p.exists():
-                    continue
-                file_bytes = p.read_bytes()
-                mime = "image/jpeg" if p.suffix.lower() in (".jpg", ".jpeg") else "image/png"
-                upload_url = "https://content.googleapis.com/upload/drive/v3/files?uploadType=media"
-                upload_headers = dict(headers)
-                upload_headers["Content-Type"] = mime
-                resp = await client.post(upload_url, headers=upload_headers, content=file_bytes)
-                if resp.status_code in (200, 201):
-                    data = resp.json()
-                    file_id = data.get("id")
-                    if file_id:
-                        uploaded_ids.append(file_id)
-
-        if len(uploaded_ids) != len(image_paths):
-            log.warning("Partial image upload: expected %d, got %d", len(image_paths), len(uploaded_ids))
-        return uploaded_ids
-
-    async def send_hooked_request(self, *, body: str, timeout_ms: int) -> tuple[int, bytes]:
-        """Replay request via XHR inside the browser context."""
-        page = await self.ensure_botguard_service()
-        captured_url, captured_headers = self._get_captured_info()
-
-        timeout_s = timeout_ms / 1000
-        result = await page.evaluate(
-            """(args) => {
-                return new Promise((resolve) => {
-                    var xhr = new XMLHttpRequest();
-                    xhr.open('POST', args.url);
-                    var h = args.headers;
-                    for (var k in h) {
-                        xhr.setRequestHeader(k, h[k]);
-                    }
-                    xhr.withCredentials = true;
-                    xhr.timeout = args.timeout * 1000;
-                    xhr.onload = function() {
-                        resolve({status: xhr.status, body: xhr.responseText});
-                    };
-                    xhr.onerror = function() {
-                        resolve({status: 0, body: 'network error'});
-                    };
-                    xhr.ontimeout = function() {
-                        resolve({status: 0, body: 'timeout'});
-                    };
-                    xhr.send(args.body);
-                });
-            }""",
-            {
-                "url": captured_url,
-                "headers": captured_headers,
-                "body": body,
-                "timeout": timeout_s,
-            },
+        raise RuntimeError(
+            f"Snapshot generation failed for content hash {content_hash[:8]}"
         )
 
-        status = result.get("status", 0) if result else 0
-        raw_text = result.get("body", "") if result else ""
-        if status == 0:
-            raise RuntimeError(f"replay failed: {raw_text}")
-        return status, raw_text.encode("utf-8")
+    async def send_hooked_request(
+        self, *, body: str, timeout_ms: int
+    ) -> tuple[int, bytes]:
+        """Replay request via XHR inside the browser context."""
+        async with self.request_scope():
+            page = await self.ensure_botguard_service()
+            captured_url, captured_headers = self._get_captured_info()
+
+            timeout_s = timeout_ms / 1000
+            result = await page.evaluate(
+                """(args) => {
+                    return new Promise((resolve) => {
+                        var xhr = new XMLHttpRequest();
+                        xhr.open('POST', args.url);
+                        var h = args.headers;
+                        for (var k in h) {
+                            xhr.setRequestHeader(k, h[k]);
+                        }
+                        xhr.withCredentials = true;
+                        xhr.timeout = args.timeout * 1000;
+                        xhr.onload = function() {
+                            resolve({status: xhr.status, body: xhr.responseText});
+                        };
+                        xhr.onerror = function() {
+                            resolve({status: 0, body: 'network error'});
+                        };
+                        xhr.ontimeout = function() {
+                            resolve({status: 0, body: 'timeout'});
+                        };
+                        xhr.send(args.body);
+                    });
+                }""",
+                {
+                    "url": captured_url,
+                    "headers": captured_headers,
+                    "body": body,
+                    "timeout": timeout_s,
+                },
+            )
+
+            res_dict: dict[str, object] = result if isinstance(result, dict) else {}
+            status = int(str(res_dict.get("status") or 0))
+            raw_text = str(res_dict.get("body") or "")
+            if status == 0:
+                raise RuntimeError(f"replay failed: {raw_text}")
+            return status, raw_text.encode("utf-8")
 
     async def send_streaming_request(
         self,
         *,
         body: str,
         timeout_ms: int,
-    ) -> AsyncGenerator[tuple[str, Any], None]:
+    ) -> AsyncGenerator[tuple[str, object], None]:
         """Send a streaming request, yielding ('status', int) and ('chunk', bytes) events."""
-        page, captured_url, captured_headers = await self._prepare_streaming()
-        timeout_s = timeout_ms / 1000
-        rid = uuid.uuid4().hex[:8]
+        async with self.request_scope():
+            page, captured_url, captured_headers = await self._prepare_streaming()
+            timeout_s = timeout_ms / 1000
+            rid = uuid.uuid4().hex[:8]
 
-        await page.evaluate(
-            STREAMING_INIT_JS,
-            {
-                "url": captured_url,
-                "headers": captured_headers,
-                "body": body,
-                "timeout": timeout_s,
-                "rid": rid,
-            },
-        )
+            await page.evaluate(
+                STREAMING_INIT_JS,
+                {
+                    "url": captured_url,
+                    "headers": captured_headers,
+                    "body": body,
+                    "timeout": timeout_s,
+                    "rid": rid,
+                },
+            )
 
-        deadline = asyncio.get_running_loop().time() + timeout_s
-        status_sent = False
+            deadline = asyncio.get_running_loop().time() + timeout_s
+            status_sent = False
 
-        try:
-            while asyncio.get_running_loop().time() < deadline:
-                event = await page.evaluate("(rid) => window.__stream_next[rid](250)", rid)
-                if not event:
-                    await asyncio.sleep(0.05)
-                    continue
-
-                event_type = event.get("type")
-                if event_type == "idle":
-                    continue
-                if event_type == "status":
-                    status = event.get("status", 0)
-                    yield ("status", status)
-                    status_sent = True
-                    continue
-                if event_type == "chunk":
-                    text = event.get("text") or ""
-                    if text:
-                        yield ("chunk", text.encode("utf-8"))
-                    continue
-                if event_type == "error":
-                    message = event.get("message", "unknown error")
-                    raise RuntimeError(f"streaming request failed: {message}")
-                if event_type in ("done", "aborted"):
-                    break
-
-            if not status_sent:
-                raise RuntimeError("streaming request timeout: no response status")
-        finally:
             try:
-                await page.evaluate(
-                    "(rid) => { if (window.__stream_abort && window.__stream_abort[rid]) window.__stream_abort[rid](); }",
-                    rid,
-                )
-            except Exception:
-                pass
+                while asyncio.get_running_loop().time() < deadline:
+                    raw_event = await page.evaluate(
+                        "(rid) => window.__stream_next[rid](250)", rid
+                    )
+                    if not raw_event or not isinstance(raw_event, dict):
+                        await asyncio.sleep(0.05)
+                        continue
+
+                    event: dict[str, object] = raw_event
+                    event_type = str(event.get("type") or "")
+                    if event_type == "idle":
+                        continue
+                    if event_type == "status":
+                        status = int(str(event.get("status") or 0))
+                        yield ("status", status)
+                        status_sent = True
+                        continue
+                    if event_type == "chunk":
+                        text = str(event.get("text") or "")
+                        if text:
+                            yield ("chunk", text.encode("utf-8"))
+                        continue
+                    if event_type == "error":
+                        message = str(event.get("message") or "unknown error")
+                        raise RuntimeError(f"streaming request failed: {message}")
+                    if event_type in ("done", "aborted"):
+                        break
+                if not status_sent:
+                    raise RuntimeError("streaming request timeout: no response status")
+            finally:
+                try:
+                    await page.evaluate(
+                        "(rid) => { if (window.__stream_abort && window.__stream_abort[rid]) window.__stream_abort[rid](); }",
+                        rid,
+                    )
+                except Exception:
+                    pass
 
     async def close(self) -> None:
         """Close browser session and free resources."""
@@ -670,7 +651,9 @@ class BrowserSession:
         should_seed_from_auth = True
         if profile_dir:
             profile_path = Path(profile_dir)
-            should_seed_from_auth = not (profile_path.exists() and any(profile_path.iterdir()))
+            should_seed_from_auth = not (
+                profile_path.exists() and any(profile_path.iterdir())
+            )
             profile_path.mkdir(parents=True, exist_ok=True)
 
         self._proc = launch_chromium_process(
@@ -690,7 +673,10 @@ class BrowserSession:
                     await self._page.set_cookies(cached)
                     await self._bootstrap_google_session(self._page)
                     if "accounts.google.com" not in (self._page.url or ""):
-                        log.info("[chromium-auth] auth.json seeded context (%d cookies)", len(cached))
+                        log.info(
+                            "[chromium-auth] auth.json seeded context (%d cookies)",
+                            len(cached),
+                        )
                         await self._save_cookies()
                         await self._goto_aistudio(self._page)
                         await self._install_hooks(self._page)
@@ -716,18 +702,23 @@ class BrowserSession:
 
     def _get_captured_info(self) -> tuple[str, dict[str, str]]:
         for tpl in self._templates.values():
-            if tpl.get("url"):
-                url = tpl["url"]
+            raw_url = tpl.get("url")
+            if raw_url:
+                url = str(raw_url)
+                raw_headers = tpl.get("headers")
+                headers_dict = raw_headers if isinstance(raw_headers, dict) else {}
                 headers = {
-                    k: v
-                    for k, v in tpl.get("headers", {}).items()
-                    if k.lower() not in ("host", "content-length")
+                    str(k): str(v)
+                    for k, v in headers_dict.items()
+                    if str(k).lower() not in ("host", "content-length")
                 }
                 return url, headers
         raise RuntimeError("no captured URL available for replay")
 
     async def _bootstrap_google_session(self, page: CDPPage) -> None:
-        await page.goto(GOOGLE_LOGIN_BOOTSTRAP_URL, wait_until="domcontentloaded", timeout_s=30.0)
+        await page.goto(
+            GOOGLE_LOGIN_BOOTSTRAP_URL, wait_until="domcontentloaded", timeout_s=30.0
+        )
         await page.wait_for_timeout(3000)
         for url in (AI_STUDIO_URL, AI_STUDIO_URL_FALLBACK):
             try:
@@ -767,7 +758,9 @@ class BrowserSession:
                 await page.goto(url, wait_until="domcontentloaded", timeout_s=20.0)
                 current_url = page.url or ""
                 if "available-regions" in current_url:
-                    raise RuntimeError(f"Google AI Studio 地区限制 (IP 漏了/不支持): {current_url}")
+                    raise RuntimeError(
+                        f"Google AI Studio 地区限制 (IP 漏了/不支持): {current_url}"
+                    )
                 if "accounts.google.com" in current_url and "signin" in current_url:
                     raise RuntimeError(
                         f"Cookie 认证失败，已被重定向到 Google 登录页。 (url={current_url})"
@@ -813,7 +806,9 @@ class BrowserSession:
                 return
         page_url = page.url if page else "(no page)"
         page_title = await page.title() if page else ""
-        raise RuntimeError(f"Hook install failed: {result} (url={page_url}, title={page_title!r})")
+        raise RuntimeError(
+            f"Hook install failed: {result} (url={page_url}, title={page_title!r})"
+        )
 
     async def _click_run_button(self, page: CDPPage) -> bool:
         if await page.send_control_enter("textarea"):
@@ -875,7 +870,9 @@ class BrowserSession:
         if self._profile_dir:
             profile_path = Path(self._profile_dir)
             if profile_path.exists():
-                log.warning("[account-guard] 删除被污染的 profile 目录: %s", profile_path)
+                log.warning(
+                    "[account-guard] 删除被污染的 profile 目录: %s", profile_path
+                )
                 shutil.rmtree(profile_path, ignore_errors=True)
         raise RuntimeError(
             f"页面未登录期望的账号 {expected_email} ({account_id})，"
@@ -886,7 +883,7 @@ class BrowserSession:
         self,
         *,
         auth_file: str | None = None,
-        cookies: list[dict[str, Any]] | None = None,
+        cookies: list[dict[str, object]] | None = None,
     ) -> None:
         target_auth_file = auth_file or self._auth_file
         if not target_auth_file:
@@ -908,7 +905,9 @@ class BrowserSession:
                 except Exception:
                     pass
             auth_path.parent.mkdir(parents=True, exist_ok=True)
-            auth_path.write_text(json.dumps({"cookies": current_cookies, "origins": origins}, indent=2))
+            auth_path.write_text(
+                json.dumps({"cookies": current_cookies, "origins": origins}, indent=2)
+            )
             log.info(f"Saved {len(current_cookies)} cookies to {target_auth_file}")
         except Exception as e:
             log.debug(f"Failed to save cookies: {e}")

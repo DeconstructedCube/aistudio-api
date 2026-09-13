@@ -5,14 +5,19 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
-from dataclasses import replace
+import os
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL
 
 from .model_defaults import resolve_model_defaults
-from .wire_types import AistudioContent, AistudioGenerationConfig, AistudioPart, AistudioRequest
+from .wire_types import (
+    AistudioContent,
+    AistudioGenerationConfig,
+    AistudioPart,
+    AistudioRequest,
+)
 
-TOOLS_TEMPLATES = {
+TOOLS_TEMPLATES: dict[str, list[object]] = {
     "code_execution": [[]],
     "google_search": [None, None, None, [None, [[]]]],
     "google_maps": [None, None, None, None, None, None, None, None, None, None, []],
@@ -20,7 +25,9 @@ TOOLS_TEMPLATES = {
 }
 
 
-def build_image_generation_search_tool(*, google_search: bool = False, image_search: bool = False) -> list | None:
+def build_image_generation_search_tool(
+    *, google_search: bool = False, image_search: bool = False
+) -> list[object] | None:
     if not google_search and not image_search:
         return None
     if google_search and image_search:
@@ -33,7 +40,10 @@ def build_image_generation_search_tool(*, google_search: bool = False, image_sea
 def _normalize_tool_name(raw_name: str, *, is_image_model: bool = False) -> str:
     name = str(raw_name).strip().lower()
     if is_image_model:
-        if name in {"google_search_and_image_search", "image_google_search_and_image_search"}:
+        if name in {
+            "google_search_and_image_search",
+            "image_google_search_and_image_search",
+        }:
             return "google_search_and_image_search"
         if name in {"image_search", "google_image_search"}:
             return "image_search"
@@ -42,7 +52,9 @@ def _normalize_tool_name(raw_name: str, *, is_image_model: bool = False) -> str:
     return name
 
 
-def _allowed_builtin_tools_for_model(model: str | None, *, is_image_model: bool = False) -> set[str]:
+def _allowed_builtin_tools_for_model(
+    model: str | None, *, is_image_model: bool = False
+) -> set[str]:
     if is_image_model:
         return {"google_search", "image_search", "google_search_and_image_search"}
     normalized_model = str(model or "").removeprefix("models/").lower()
@@ -68,7 +80,9 @@ def build_tools_from_names(
             if not name:
                 continue
             if name not in allowed:
-                raise ValueError(f"Tool {raw_name!r} is not allowed for model {model or 'unknown'}")
+                raise ValueError(
+                    f"Tool {raw_name!r} is not allowed for model {model or 'unknown'}"
+                )
             if name == "google_search_and_image_search":
                 google_search = True
                 image_search = True
@@ -82,13 +96,15 @@ def build_tools_from_names(
         )
         return [tool] if tool is not None else []
 
-    tools: list[list] = []
+    tools: list[list[object]] = []
     for raw_name in tool_names:
         name = _normalize_tool_name(raw_name, is_image_model=False)
         if not name:
             continue
         if name not in allowed:
-            raise ValueError(f"Tool {raw_name!r} is not allowed for model {model or 'unknown'}")
+            raise ValueError(
+                f"Tool {raw_name!r} is not allowed for model {model or 'unknown'}"
+            )
         if name not in TOOLS_TEMPLATES:
             raise ValueError(f"Unsupported tool name: {raw_name!r}")
         tools.append(TOOLS_TEMPLATES[name])
@@ -120,13 +136,27 @@ class AistudioWireCodec:
             model=body[self.MODEL_INDEX],
             contents=self._decode_contents(body[self.CONTENTS_INDEX]),
             safety_settings=body[self.SAFETY_INDEX],
-            generation_config=AistudioGenerationConfig(list(body[self.GENERATION_CONFIG_INDEX])),
-            snapshot=body[self.SNAPSHOT_INDEX] if len(body) > self.SNAPSHOT_INDEX else None,
-            system_instruction=self._decode_system_instruction(body[self.SYSTEM_INSTRUCTION_INDEX] if len(body) > self.SYSTEM_INSTRUCTION_INDEX else None),
+            generation_config=AistudioGenerationConfig(
+                list(body[self.GENERATION_CONFIG_INDEX])
+            ),
+            snapshot=body[self.SNAPSHOT_INDEX]
+            if len(body) > self.SNAPSHOT_INDEX
+            else None,
+            system_instruction=self._decode_system_instruction(
+                body[self.SYSTEM_INSTRUCTION_INDEX]
+                if len(body) > self.SYSTEM_INSTRUCTION_INDEX
+                else None
+            ),
             tools=body[self.TOOLS_INDEX] if len(body) > self.TOOLS_INDEX else None,
-            request_flag=body[self.REQUEST_FLAG_INDEX] if len(body) > self.REQUEST_FLAG_INDEX else None,
-            cached_content=body[self.CACHED_CONTENT_INDEX] if len(body) > self.CACHED_CONTENT_INDEX else None,
-            location=body[self.TIMEZONE_INDEX] if len(body) > self.TIMEZONE_INDEX else None,
+            request_flag=body[self.REQUEST_FLAG_INDEX]
+            if len(body) > self.REQUEST_FLAG_INDEX
+            else None,
+            cached_content=body[self.CACHED_CONTENT_INDEX]
+            if len(body) > self.CACHED_CONTENT_INDEX
+            else None,
+            location=body[self.TIMEZONE_INDEX]
+            if len(body) > self.TIMEZONE_INDEX
+            else None,
             raw_body=body,
         )
 
@@ -142,7 +172,9 @@ class AistudioWireCodec:
         body[self.SAFETY_INDEX] = request.safety_settings
         body[self.GENERATION_CONFIG_INDEX] = request.generation_config.values
         body[self.SNAPSHOT_INDEX] = request.snapshot
-        body[self.SYSTEM_INSTRUCTION_INDEX] = request.system_instruction.to_wire() if request.system_instruction else None
+        body[self.SYSTEM_INSTRUCTION_INDEX] = (
+            request.system_instruction.to_wire() if request.system_instruction else None
+        )
         body[self.TOOLS_INDEX] = request.tools
         body[self.REQUEST_FLAG_INDEX] = request.request_flag
         body[self.CACHED_CONTENT_INDEX] = request.cached_content
@@ -161,7 +193,9 @@ class AistudioWireCodec:
         else:
             if request.tools:
                 self._ensure_len(body, self.TIMEZONE_INDEX + 1)
-                body[self.TIMEZONE_INDEX] = request.location or [[None, None, os.getenv("AISTUDIO_TIMEZONE", "Asia/Tokyo")]]
+                body[self.TIMEZONE_INDEX] = request.location or [
+                    [None, None, os.getenv("AISTUDIO_TIMEZONE", "Asia/Tokyo")]
+                ]
             else:
                 body = body[:11]
 
@@ -202,7 +236,9 @@ class AistudioWireCodec:
             request.system_instruction = system_instruction_content
         else:
             request.system_instruction = (
-                AistudioContent(role="user", parts=[AistudioPart(text=system_instruction)])
+                AistudioContent(
+                    role="user", parts=[AistudioPart(text=system_instruction)]
+                )
                 if system_instruction
                 else None
             )
@@ -247,15 +283,17 @@ class AistudioWireCodec:
 
         return self.encode(request)
 
-    def _build_user_content(self, prompt: str, images: list[str] | None) -> AistudioContent:
+    def _build_user_content(
+        self, prompt: str, images: list[str] | None
+    ) -> AistudioContent:
         parts = []
         for img_path in images or []:
             parts.append(AistudioPart(inline_data=_encode_image(img_path)))
         parts.append(AistudioPart(text=prompt))
         return AistudioContent(role="user", parts=parts)
 
-    def _decode_contents(self, raw_contents) -> list[AistudioContent]:
-        contents = []
+    def _decode_contents(self, raw_contents: object) -> list[AistudioContent]:
+        contents: list[AistudioContent] = []
         if not isinstance(raw_contents, list):
             return contents
         for item in raw_contents:
@@ -292,18 +330,46 @@ class AistudioWireCodec:
             elif len(raw_part) > 3 and isinstance(raw_part[3], list):
                 raw_function_call = raw_part[3]
             if raw_function_call is not None:
-                name = raw_function_call[0] if raw_function_call and isinstance(raw_function_call[0], str) else "unknown"
+                name = (
+                    raw_function_call[0]
+                    if raw_function_call and isinstance(raw_function_call[0], str)
+                    else "unknown"
+                )
                 args = raw_function_call[1] if len(raw_function_call) > 1 else {}
-                call_id = raw_function_call[2] if len(raw_function_call) > 2 and isinstance(raw_function_call[2], str) else None
-                signature = raw_part[14] if len(raw_part) > 14 and isinstance(raw_part[14], str) else None
+                call_id = (
+                    raw_function_call[2]
+                    if len(raw_function_call) > 2
+                    and isinstance(raw_function_call[2], str)
+                    else None
+                )
+                signature = (
+                    raw_part[14]
+                    if len(raw_part) > 14 and isinstance(raw_part[14], str)
+                    else None
+                )
                 function_call = (name, args, call_id) if call_id else (name, args)
-                return AistudioPart(function_call=function_call, thought_signature=signature)
+                return AistudioPart(
+                    function_call=function_call, thought_signature=signature
+                )
         if isinstance(raw_part, list) and (
-            len(raw_part) > 11 and isinstance(raw_part[11], list) or len(raw_part) > 4 and isinstance(raw_part[4], list)
+            len(raw_part) > 11
+            and isinstance(raw_part[11], list)
+            or len(raw_part) > 4
+            and isinstance(raw_part[4], list)
         ):
-            raw_function_response = raw_part[11] if len(raw_part) > 11 and isinstance(raw_part[11], list) else raw_part[4]
-            name = raw_function_response[0] if raw_function_response and isinstance(raw_function_response[0], str) else "unknown"
-            response = raw_function_response[1] if len(raw_function_response) > 1 else {}
+            raw_function_response = (
+                raw_part[11]
+                if len(raw_part) > 11 and isinstance(raw_part[11], list)
+                else raw_part[4]
+            )
+            name = (
+                raw_function_response[0]
+                if raw_function_response and isinstance(raw_function_response[0], str)
+                else "unknown"
+            )
+            response = (
+                raw_function_response[1] if len(raw_function_response) > 1 else {}
+            )
             return AistudioPart(function_response=(name, response))
         if isinstance(raw_part, list) and len(raw_part) > 1:
             return AistudioPart(text=raw_part[1])
@@ -315,7 +381,11 @@ class AistudioWireCodec:
         if len(raw_instruction) >= 2 and isinstance(raw_instruction[1], str):
             decoded = self._decode_contents([raw_instruction])
             return decoded[0] if decoded else None
-        parts = [self._decode_part(raw_part) for raw_part in raw_instruction if isinstance(raw_part, list)]
+        parts = [
+            self._decode_part(raw_part)
+            for raw_part in raw_instruction
+            if isinstance(raw_part, list)
+        ]
         if not parts:
             return None
         return AistudioContent(role="user", parts=parts)

@@ -13,7 +13,6 @@ import platform
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
 
 from aistudio_api.config import settings
 
@@ -28,11 +27,15 @@ def _derive_stable_fingerprint_seed(key: str) -> int:
 def find_chromium_executable() -> str:
     """Find the best Chromium executable available on the system."""
     # 1. Configured explicit path
-    if settings.browser_executable_path and os.path.exists(settings.browser_executable_path):
+    if settings.browser_executable_path and os.path.exists(
+        settings.browser_executable_path
+    ):
         return settings.browser_executable_path
 
     # 2. Cloakbrowser installed Chromium (~/.cloakbrowser/**/chrome)
-    cloak_matches = sorted(glob.glob(os.path.expanduser("~/.cloakbrowser/**/chrome"), recursive=True))
+    cloak_matches = sorted(
+        glob.glob(os.path.expanduser("~/.cloakbrowser/**/chrome"), recursive=True)
+    )
     if cloak_matches:
         for match in reversed(cloak_matches):
             if os.path.isfile(match) and os.access(match, os.X_OK):
@@ -40,7 +43,10 @@ def find_chromium_executable() -> str:
 
     # 3. Playwright cached Chromium (~/.cache/ms-playwright/chromium-*/chrome-linux/chrome)
     pw_matches = sorted(
-        glob.glob(os.path.expanduser("~/.cache/ms-playwright/chromium-*/chrome-linux/chrome"), recursive=True)
+        glob.glob(
+            os.path.expanduser("~/.cache/ms-playwright/chromium-*/chrome-linux/chrome"),
+            recursive=True,
+        )
     )
     if pw_matches:
         for match in reversed(pw_matches):
@@ -63,7 +69,9 @@ def find_chromium_executable() -> str:
         if os.path.isfile(p) and os.access(p, os.X_OK):
             return p
 
-    raise FileNotFoundError("Could not locate a valid Chromium executable on this system.")
+    raise FileNotFoundError(
+        "Could not locate a valid Chromium executable on this system."
+    )
 
 
 def build_chromium_args(
@@ -111,16 +119,20 @@ def build_chromium_args(
         args.append(f"--user-data-dir={user_data_dir}")
 
     if is_headless:
-        args.extend([
-            "--headless=new",
-            "--hide-scrollbars",
-            "--window-size=1280,800",
-        ])
+        args.extend(
+            [
+                "--headless=new",
+                "--hide-scrollbars",
+                "--window-size=1280,800",
+            ]
+        )
     else:
-        args.extend([
-            "--start-maximized",
-            "--ignore-gpu-blocklist",
-        ])
+        args.extend(
+            [
+                "--start-maximized",
+                "--ignore-gpu-blocklist",
+            ]
+        )
 
     effective_proxy = proxy_url or settings.proxy_url
     if effective_proxy:
@@ -147,7 +159,12 @@ def build_chromium_args(
 class ChromiumProcess:
     """Manages lifecycle of a direct Chromium subprocess."""
 
-    def __init__(self, process: subprocess.Popen[Any], port: int, user_data_dir: str | None = None):
+    def __init__(
+        self,
+        process: subprocess.Popen[bytes],
+        port: int,
+        user_data_dir: str | None = None,
+    ):
         self.process = process
         self.port = port
         self.user_data_dir = user_data_dir

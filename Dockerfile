@@ -7,45 +7,15 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Install system dependencies required for Camoufox and Playwright
+# Install system dependencies and Chromium for headless CDP browser automation
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Core libraries for Firefox/Camoufox
-    libgtk-3-0 \
-    libglib2.0-0 \
-    libx11-6 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    libxext6 \
-    libxfixes3 \
-    libxi6 \
-    libxtst6 \
-    libasound2 \
-    libpango-1.0-0 \
-    libcairo2 \
-    libatk1.0-0 \
-    libatk-bridge2.0-0 \
-    libgdk-pixbuf2.0-0 \
-    libnspr4 \
-    libnss3 \
-    libdrm2 \
-    libgbm1 \
-    libxcb1 \
-    libxkbcommon0 \
-    libatspi2.0-0 \
-    libwayland-client0 \
-    libwayland-egl1 \
-    libwayland-server0 \
-    # Fonts
+    chromium \
     fonts-liberation \
     fonts-noto-color-emoji \
     fonts-wqy-zenhei \
-    # Utilities
     curl \
-    # Cleanup
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
 # Create app directory
 WORKDIR /app
 

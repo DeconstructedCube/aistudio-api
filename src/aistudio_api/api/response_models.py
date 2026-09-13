@@ -1,8 +1,8 @@
 """Structured HTTP response models."""
 
 from __future__ import annotations
+from typing import Literal
 
-from typing import Any, Literal
 from pydantic import BaseModel
 
 
@@ -14,6 +14,7 @@ class ErrorDetail(BaseModel):
 class ErrorResponse(BaseModel):
     error: ErrorDetail
 
+
 class GeminiUsageMetadata(BaseModel):
     promptTokenCount: int = 0
     candidatesTokenCount: int = 0
@@ -23,12 +24,12 @@ class GeminiUsageMetadata(BaseModel):
 
 class GeminiFunctionCallPayload(BaseModel):
     name: str
-    args: Any | None = None
+    args: object | None = None
 
 
 class GeminiFunctionResponsePayload(BaseModel):
     name: str
-    response: Any | None = None
+    response: object | None = None
 
 
 class GeminiInlineDataResponse(BaseModel):

@@ -86,7 +86,7 @@ function app() {
       return res;
     },
 
-    async loadModels() { try { const r = await this.apiFetch('/v1beta/models'); const d = await r.json(); this.models = d.models || d.data || []; if (!this.model && this.models.length) this.model = this.models[0].name || this.models[0].id; this.saveToCache(); } catch (e) { } },
+    async loadModels() { try { const r = await this.apiFetch('/v1beta/models'); const d = await r.json(); this.models = d.models || []; if (!this.model && this.models.length) this.model = this.models[0].name || this.models[0].id; this.saveToCache(); } catch (e) { } },
     async loadStats() { try { const r = await this.apiFetch('/stats'); const d = await r.json(); this.stats = d.models || {} } catch (e) { } },
     async loadAccounts() { try { const [a, b] = await Promise.all([this.apiFetch('/accounts').then(r => r.json()), this.apiFetch('/accounts/active').then(r => r.json())]); this.accounts = a || []; this.activeId = b?.id || ''; this.activeAccount = b || {} } catch (e) { } },
     async loadRotation() { try { const r = await this.apiFetch('/rotation'); const d = await r.json(); this.rotationMode = d.mode || 'round_robin'; this.rotCfg.mode = d.mode || 'round_robin'; this.rotCfg.cooldown = d.cooldown_seconds || 60; this.rotationAccounts = d.accounts || {} } catch (e) { } },

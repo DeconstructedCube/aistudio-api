@@ -1,8 +1,10 @@
 """HTTP request schemas."""
+
 from __future__ import annotations
 
-from typing import Any, Optional
+
 from pydantic import BaseModel
+
 
 class GeminiInlineData(BaseModel):
     mimeType: str
@@ -10,48 +12,48 @@ class GeminiInlineData(BaseModel):
 
 
 class GeminiFileData(BaseModel):
-    mimeType: Optional[str] = None
+    mimeType: str | None = None
     fileUri: str
 
 
 class GeminiPart(BaseModel):
-    text: Optional[str] = None
-    inlineData: Optional[GeminiInlineData] = None
-    fileData: Optional[GeminiFileData] = None
-    thought: Optional[bool] = None
-    thoughtSignature: Optional[str] = None
+    text: str | None = None
+    inlineData: GeminiInlineData | None = None
+    fileData: GeminiFileData | None = None
+    thought: bool | None = None
+    thoughtSignature: str | None = None
 
 
 class GeminiContent(BaseModel):
-    role: Optional[str] = None
+    role: str | None = None
     parts: list[GeminiPart]
 
 
 class GeminiTool(BaseModel):
-    codeExecution: Optional[dict[str, Any]] = None
-    googleSearch: Optional[dict[str, Any]] = None
-    googleSearchRetrieval: Optional[dict[str, Any]] = None
-    googleMaps: Optional[dict[str, Any]] = None
-    urlContext: Optional[dict[str, Any]] = None
-    functionDeclarations: Optional[list[dict[str, Any]]] = None
+    codeExecution: dict[str, object] | None = None
+    googleSearch: dict[str, object] | None = None
+    googleSearchRetrieval: dict[str, object] | None = None
+    googleMaps: dict[str, object] | None = None
+    urlContext: dict[str, object] | None = None
+    functionDeclarations: list[dict[str, object]] | None = None
 
 
 class GeminiGenerationConfig(BaseModel):
-    stopSequences: Optional[list[str]] = None
-    temperature: Optional[float] = None
-    topP: Optional[float] = None
-    topK: Optional[int] = None
-    maxOutputTokens: Optional[int] = None
-    responseModalities: Optional[list[str]] = None
-    responseMimeType: Optional[str] = None
-    responseSchema: Optional[list[Any] | dict[str, Any]] = None
-    presencePenalty: Optional[float] = None
-    frequencyPenalty: Optional[float] = None
-    responseLogprobs: Optional[bool] = None
-    logprobs: Optional[int] = None
-    mediaResolution: Optional[list[Any] | int | str] = None
-    thinkingConfig: Optional[list[Any] | dict[str, Any]] = None
-    imageConfig: Optional[dict[str, Any]] = None
+    stopSequences: list[str] | None = None
+    temperature: float | None = None
+    topP: float | None = None
+    topK: int | None = None
+    maxOutputTokens: int | None = None
+    responseModalities: list[str] | None = None
+    responseMimeType: str | None = None
+    responseSchema: list[object] | dict[str, object] | None = None
+    presencePenalty: float | None = None
+    frequencyPenalty: float | None = None
+    responseLogprobs: bool | None = None
+    logprobs: int | None = None
+    mediaResolution: list[object] | int | str | None = None
+    thinkingConfig: list[object] | dict[str, object] | None = None
+    imageConfig: dict[str, object] | None = None
 
 
 class GeminiSafetySetting(BaseModel):
@@ -61,8 +63,7 @@ class GeminiSafetySetting(BaseModel):
 
 class GeminiGenerateContentRequest(BaseModel):
     contents: list[GeminiContent]
-    systemInstruction: Optional[GeminiContent] = None
-    tools: Optional[list[GeminiTool]] = None
-    generationConfig: Optional[GeminiGenerationConfig] = None
-    safetySettings: Optional[list[GeminiSafetySetting]] = None
-
+    systemInstruction: GeminiContent | None = None
+    tools: list[GeminiTool] | None = None
+    generationConfig: GeminiGenerationConfig | None = None
+    safetySettings: list[GeminiSafetySetting] | None = None

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
@@ -12,9 +11,11 @@ from aistudio_api.config import settings
 from aistudio_api.domain.errors import RequestError, classify_error
 from aistudio_api.domain.models import parse_chunk_usage, parse_response_chunk
 from aistudio_api.infrastructure.gateway.capture import CapturedRequest
-from aistudio_api.infrastructure.gateway.wire_codec import modify_body
 from aistudio_api.infrastructure.gateway.session import BrowserSession
-from aistudio_api.infrastructure.gateway.stream_parser import IncrementalJSONStreamParser
+from aistudio_api.infrastructure.gateway.stream_parser import (
+    IncrementalJSONStreamParser,
+)
+from aistudio_api.infrastructure.gateway.wire_codec import modify_body
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
 
 logger = logging.getLogger("aistudio")
@@ -107,7 +108,7 @@ class StreamingGateway:
         )
 
         parser = IncrementalJSONStreamParser()
-        latest_usage: dict | None = None
+        latest_usage: dict[str, object] | None = None
         raw_parts: list[str] = []
         status_code = 0
 
@@ -116,9 +117,12 @@ class StreamingGateway:
             timeout_ms=settings.timeout_stream * 1000,
         ):
             if event_type == "status" and payload and not status_code:
-                status_code = int(payload)
+                status_code = int(str(payload))
             elif event_type == "chunk" and payload:
-                text_payload = payload.decode("utf-8", errors="replace")
+                if isinstance(payload, bytes):
+                    text_payload = payload.decode("utf-8", errors="replace")
+                else:
+                    text_payload = str(payload)
                 raw_parts.append(text_payload)
                 for parsed_chunk in parser.feed(text_payload):
                     usage = parse_chunk_usage(parsed_chunk)

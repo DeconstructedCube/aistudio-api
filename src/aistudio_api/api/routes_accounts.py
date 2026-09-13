@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from aistudio_api.api.dependencies import get_account_service, get_runtime_state
 from aistudio_api.infrastructure.account.cookie_parser import parse_cookie_string
 
+if TYPE_CHECKING:
+    from aistudio_api.api.state import RuntimeState
+    from aistudio_api.application.account_service import AccountService
 log = logging.getLogger("aistudio.routes_accounts")
 
 router = APIRouter(prefix="/accounts")
@@ -55,8 +60,8 @@ class ProbeAndImportResponse(BaseModel):
 
 @router.get("", response_model=list[AccountResponse])
 async def list_accounts(
-    account_service=Depends(get_account_service),
-):
+    account_service: AccountService = Depends(get_account_service),
+) -> list[AccountResponse]:
     """列出所有账号。"""
     accounts = account_service.list_accounts()
     return [
@@ -74,8 +79,8 @@ async def list_accounts(
 
 @router.get("/active", response_model=AccountResponse)
 async def get_active_account(
-    account_service=Depends(get_account_service),
-):
+    account_service: AccountService = Depends(get_account_service),
+) -> AccountResponse:
     """获取当前活跃账号。"""
     account = account_service.get_active_account()
     if account is None:
@@ -93,9 +98,9 @@ async def get_active_account(
 @router.post("/{account_id}/activate", response_model=AccountResponse)
 async def activate_account(
     account_id: str,
-    account_service=Depends(get_account_service),
-    runtime_state=Depends(get_runtime_state),
-):
+    account_service: AccountService = Depends(get_account_service),
+    runtime_state: RuntimeState = Depends(get_runtime_state),
+) -> AccountResponse:
     """切换到指定账号。"""
     browser_session = runtime_state.client._session if runtime_state.client else None
     snapshot_cache = runtime_state.snapshot_cache
@@ -122,8 +127,8 @@ async def activate_account(
 @router.delete("/{account_id}")
 async def delete_account(
     account_id: str,
-    account_service=Depends(get_account_service),
-):
+    account_service: AccountService = Depends(get_account_service),
+) -> dict[str, bool]:
     """删除账号。"""
     success = account_service.delete_account(account_id)
     if not success:
@@ -135,8 +140,8 @@ async def delete_account(
 async def update_account(
     account_id: str,
     req: UpdateAccountRequest,
-    account_service=Depends(get_account_service),
-):
+    account_service: AccountService = Depends(get_account_service),
+) -> AccountResponse:
     """更新账号名称。"""
     account = account_service.update_account(account_id, req.name)
     if account is None:
@@ -154,22 +159,27 @@ async def update_account(
 @router.post("/import-cookies", response_model=ImportCookiesResponse)
 async def import_cookies(
     req: ImportCookiesRequest,
-    account_service=Depends(get_account_service),
-    runtime_state=Depends(get_runtime_state),
-):
+    account_service: AccountService = Depends(get_account_service),
+    runtime_state: RuntimeState = Depends(get_runtime_state),
+) -> ImportCookiesResponse:
     """从 cookie 导入账号（支持 JSON 数组、Netscape 或 KV）。"""
     storage_state = parse_cookie_string(req.cookies)
-    cookie_count = len(storage_state["cookies"])
+    raw_cookies = storage_state.get("cookies")
+    cookie_list: list[dict[str, object]] = (
+        raw_cookies if isinstance(raw_cookies, list) else []
+    )
+    cookie_count = len(cookie_list)
 
     if cookie_count == 0:
         raise HTTPException(status_code=400, detail="未解析到有效 cookie")
 
     domain_summary: dict[str, int] = {}
-    for c in storage_state["cookies"]:
-        d = c.get("domain", "")
+    for c in cookie_list:
+        d = str(c.get("domain", ""))
         domain_summary[d] = domain_summary.get(d, 0) + 1
-
-    name = req.name or (f"Google Account (u/{req.auth_user})" if req.auth_user != "0" else "导入的账号")
+    name = req.name or (
+        f"Google Account (u/{req.auth_user})" if req.auth_user != "0" else "导入的账号"
+    )
 
     account = account_service._store.save_account(
         name=name,
@@ -180,7 +190,9 @@ async def import_cookies(
     )
 
     try:
-        browser_session = runtime_state.client._session if runtime_state.client else None
+        browser_session = (
+            runtime_state.client._session if runtime_state.client else None
+        )
         if browser_session:
             auth_path = account_service._store.get_auth_path(account.id)
             count = await browser_session.import_cookies(
@@ -203,11 +215,15 @@ async def import_cookies(
 @router.post("/probe-import", response_model=ProbeAndImportResponse)
 async def probe_and_import(
     req: ProbeAndImportRequest,
-    account_service=Depends(get_account_service),
-    runtime_state=Depends(get_runtime_state),
-):
+    account_service: AccountService = Depends(get_account_service),
+    runtime_state: RuntimeState = Depends(get_runtime_state),
+) -> ProbeAndImportResponse:
     """单份 Cookie 无限向下探活多账号并一键批量导入。"""
-    from aistudio_api.infrastructure.account.cookie_parser import parse_cookie_string, probe_google_accounts_infinite
+    from aistudio_api.infrastructure.account.cookie_parser import (
+        parse_cookie_string,
+        probe_google_accounts_infinite,
+    )
+
     probed = await probe_google_accounts_infinite(req.cookies)
     if not probed:
         raise HTTPException(status_code=400, detail="未探测到有效已登录 Google 账号")
@@ -219,7 +235,9 @@ async def probe_and_import(
 
     for p in probed:
         u_idx = str(p["auth_user"])
-        acc_name = f"{prefix} (u/{u_idx})" if len(probed) > 1 or u_idx != "0" else prefix
+        acc_name = (
+            f"{prefix} (u/{u_idx})" if len(probed) > 1 or u_idx != "0" else prefix
+        )
         account = account_service._store.save_account(
             name=acc_name,
             email=None,

@@ -32,7 +32,7 @@ class AistudioThinkingConfig:
         return [self.mode, None, None, int(self.level)]
 
     @classmethod
-    def default(cls) -> "AistudioThinkingConfig":
+    def default(cls) -> AistudioThinkingConfig:
         return cls()
 
 
@@ -47,11 +47,11 @@ class AistudioImageOutputMode:
         return [int(self.output_type)]
 
     @classmethod
-    def image_only(cls) -> "AistudioImageOutputMode":
+    def image_only(cls) -> AistudioImageOutputMode:
         return cls(include_text=False)
 
     @classmethod
-    def text_and_image(cls) -> "AistudioImageOutputMode":
+    def text_and_image(cls) -> AistudioImageOutputMode:
         return cls(include_text=True)
 
 
@@ -252,7 +252,9 @@ class AistudioPart:
             return part
         if self.function_response:
             name, response = self.function_response[0], self.function_response[1]
-            call_id = self.function_response[2] if len(self.function_response) > 2 else None
+            call_id = (
+                self.function_response[2] if len(self.function_response) > 2 else None
+            )
             function_response = [name, _encode_wire_args(response)]
             if call_id:
                 function_response.append(call_id)

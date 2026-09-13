@@ -8,8 +8,8 @@ from dataclasses import dataclass
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL
 from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
-from aistudio_api.infrastructure.gateway.wire_codec import modify_body
 from aistudio_api.infrastructure.gateway.session import BrowserSession
+from aistudio_api.infrastructure.gateway.wire_codec import modify_body
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
 
 logger = logging.getLogger("aistudio")
@@ -26,7 +26,9 @@ class CapturedRequest:
     def __post_init__(self):
         parsed = json.loads(self.body)
         self.model = parsed[0] if parsed else ""
-        self.snapshot = parsed[4] if len(parsed) > 4 and isinstance(parsed[4], str) else ""
+        self.snapshot = (
+            parsed[4] if len(parsed) > 4 and isinstance(parsed[4], str) else ""
+        )
 
 
 class RequestCaptureService:
@@ -37,6 +39,11 @@ class RequestCaptureService:
         self._snapshot_cache = snapshot_cache
         self._templates: dict[str, CapturedRequest] = {}
 
+    def clear_templates(self) -> None:
+        """清空捕获的请求模板（账号切换或强制刷新时调用）。"""
+        self._templates.clear()
+        logger.info("已清空捕获模板缓存")
+
     async def capture(
         self,
         prompt: str,
@@ -45,10 +52,14 @@ class RequestCaptureService:
         contents: list[AistudioContent] | None = None,
         force_refresh: bool = False,
     ) -> CapturedRequest | None:
+        if force_refresh:
+            self._templates.pop(model, None)
         template = await self._ensure_template(model)
         # 先只走 inlineData 路径，避免 fileData/Drive 上传链路干扰主流程。
         rewritten_contents = contents
-        snapshot_contents = rewritten_contents or [self._build_capture_content(prompt=prompt, images=images)]
+        snapshot_contents = rewritten_contents or [
+            self._build_capture_content(prompt=prompt, images=images)
+        ]
         snapshot = await self._session.generate_snapshot(snapshot_contents)
         body = modify_body(
             template.body,
@@ -57,7 +68,9 @@ class RequestCaptureService:
             contents=rewritten_contents,
             snapshot=snapshot,
         )
-        captured = CapturedRequest(url=template.url, headers=template.headers, body=body)
+        captured = CapturedRequest(
+            url=template.url, headers=template.headers, body=body
+        )
         logger.info(
             "Hook 拦截成功: model=%s, snapshot=%s chars, body=%s chars",
             captured.model,
@@ -71,11 +84,21 @@ class RequestCaptureService:
             return self._templates[model]
 
         captured = await self._session.capture_template(model)
-        template = CapturedRequest(**captured)
-        self._templates[model] = template
+        headers_dict = captured.get("headers")
+        headers = {
+            str(k): str(v)
+            for k, v in (headers_dict.items() if isinstance(headers_dict, dict) else [])
+        }
+        template = CapturedRequest(
+            url=str(captured.get("url") or ""),
+            headers=headers,
+            body=str(captured.get("body") or ""),
+        )
         logger.info("Hook 模板已就绪: model=%s", model)
         return template
 
-    def _build_capture_content(self, prompt: str, images: list[str] | None) -> AistudioContent:
+    def _build_capture_content(
+        self, prompt: str, images: list[str] | None
+    ) -> AistudioContent:
         parts = [AistudioPart(text=prompt)]
         return AistudioContent(role="user", parts=parts)

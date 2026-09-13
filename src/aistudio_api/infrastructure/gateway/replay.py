@@ -15,14 +15,20 @@ class RequestReplayService:
     def __init__(self, session: BrowserSession | None):
         self._session = session
 
-    async def replay(self, captured: CapturedRequest | None, body: str, timeout: int | None = None) -> tuple[int, bytes]:
+    async def replay(
+        self, captured: CapturedRequest | None, body: str, timeout: int | None = None
+    ) -> tuple[int, bytes]:
         if not captured:
             return 0, b""
 
         if timeout is None:
             timeout = settings.timeout_replay
 
-        headers = {k: v for k, v in captured.headers.items() if k.lower() not in ("host", "content-length")}
+        headers = {
+            k: v
+            for k, v in captured.headers.items()
+            if k.lower() not in ("host", "content-length")
+        }
 
         try:
             if self._session is not None:
@@ -31,17 +37,15 @@ class RequestReplayService:
                     timeout_ms=timeout * 1000,
                 )
 
-            import aiohttp
+            import httpx
 
-            async with aiohttp.ClientSession(trust_env=True) as session:
-                async with session.post(
+            async with httpx.AsyncClient(timeout=float(timeout)) as client:
+                resp = await client.post(
                     captured.url,
-                    data=body,
+                    content=body.encode("utf-8"),
                     headers=headers,
-                    timeout=aiohttp.ClientTimeout(total=timeout),
-                ) as resp:
-                    raw = await resp.read()
-                    return resp.status, raw
+                )
+                return resp.status_code, resp.content
         except Exception as exc:
             logger.error("Replay error: %s", exc)
             return 0, str(exc).encode()

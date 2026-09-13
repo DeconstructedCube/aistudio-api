@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import logging
 import time
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING
 
-from aistudio_api.config import settings
+if TYPE_CHECKING:
+    from aistudio_api.infrastructure.browser.cdp_client import CDPPage
+    from aistudio_api.infrastructure.gateway.session import BrowserSession
+
 from aistudio_api.infrastructure.account.cookie_parser import (
     DEFAULT_API_KEY,
     DEFAULT_EXT_BIN,
@@ -23,20 +24,76 @@ logger = logging.getLogger("aistudio.model_discovery")
 
 # 本地保底默认模型列表（当网络未就绪或未配置账号时使用）
 _FALLBACK_MODELS = [
-    {"id": "gemini-3.8-flash", "displayName": "Gemini 3.8 Flash", "description": "Latest Gemini 3.8 Flash model"},
-    {"id": "gemini-3.7-flash", "displayName": "Gemini 3.7 Flash", "description": "Gemini 3.7 Flash default text model"},
-    {"id": "gemini-3.5-flash-lite", "displayName": "Gemini 3.5 Flash Lite", "description": "Ultra fast and lightweight model"},
-    {"id": "gemini-3.1-pro-preview", "displayName": "Gemini 3.1 Pro Preview", "description": "Pro capabilities with complex reasoning"},
-    {"id": "gemini-3.6-flash", "displayName": "Gemini 3.6 Flash", "description": "High throughput flash model"},
-    {"id": "gemini-3.5-flash", "displayName": "Gemini 3.5 Flash", "description": "Balanced high-performance flash model"},
-    {"id": "gemini-3.1-flash-image", "displayName": "Nano Banana 2", "description": "Image generation and multimodal editing"},
-    {"id": "gemini-3-pro-image", "displayName": "Nano Banana Pro", "description": "High-fidelity multimodal generation"},
-    {"id": "gemma-4-31b-it", "displayName": "Gemma 4 31B IT", "description": "Open weights flagship text model"},
-    {"id": "gemma-4-26b-a4b-it", "displayName": "Gemma 4 26B A4B IT", "description": "Open weights instruction tuned model"},
-    {"id": "veo-3.1-generate-preview", "displayName": "Veo 3.1", "description": "Video generation preview model"},
-    {"id": "gemini-pro-latest", "displayName": "Gemini Pro Latest", "description": "Latest stable Gemini Pro alias"},
-    {"id": "gemini-flash-latest", "displayName": "Gemini Flash Latest", "description": "Latest stable Gemini Flash alias"},
-    {"id": "gemini-flash-lite-latest", "displayName": "Gemini Flash-Lite Latest", "description": "Latest stable Gemini Flash Lite alias"},
+    {
+        "id": "gemini-3.8-flash",
+        "displayName": "Gemini 3.8 Flash",
+        "description": "Latest Gemini 3.8 Flash model",
+    },
+    {
+        "id": "gemini-3.7-flash",
+        "displayName": "Gemini 3.7 Flash",
+        "description": "Gemini 3.7 Flash default text model",
+    },
+    {
+        "id": "gemini-3.5-flash-lite",
+        "displayName": "Gemini 3.5 Flash Lite",
+        "description": "Ultra fast and lightweight model",
+    },
+    {
+        "id": "gemini-3.1-pro-preview",
+        "displayName": "Gemini 3.1 Pro Preview",
+        "description": "Pro capabilities with complex reasoning",
+    },
+    {
+        "id": "gemini-3.6-flash",
+        "displayName": "Gemini 3.6 Flash",
+        "description": "High throughput flash model",
+    },
+    {
+        "id": "gemini-3.5-flash",
+        "displayName": "Gemini 3.5 Flash",
+        "description": "Balanced high-performance flash model",
+    },
+    {
+        "id": "gemini-3.1-flash-image",
+        "displayName": "Nano Banana 2",
+        "description": "Image generation and multimodal editing",
+    },
+    {
+        "id": "gemini-3-pro-image",
+        "displayName": "Nano Banana Pro",
+        "description": "High-fidelity multimodal generation",
+    },
+    {
+        "id": "gemma-4-31b-it",
+        "displayName": "Gemma 4 31B IT",
+        "description": "Open weights flagship text model",
+    },
+    {
+        "id": "gemma-4-26b-a4b-it",
+        "displayName": "Gemma 4 26B A4B IT",
+        "description": "Open weights instruction tuned model",
+    },
+    {
+        "id": "veo-3.1-generate-preview",
+        "displayName": "Veo 3.1",
+        "description": "Video generation preview model",
+    },
+    {
+        "id": "gemini-pro-latest",
+        "displayName": "Gemini Pro Latest",
+        "description": "Latest stable Gemini Pro alias",
+    },
+    {
+        "id": "gemini-flash-latest",
+        "displayName": "Gemini Flash Latest",
+        "description": "Latest stable Gemini Flash alias",
+    },
+    {
+        "id": "gemini-flash-lite-latest",
+        "displayName": "Gemini Flash-Lite Latest",
+        "description": "Latest stable Gemini Flash Lite alias",
+    },
 ]
 
 
@@ -45,7 +102,7 @@ class ModelDiscoveryService:
 
     def __init__(self, cache_ttl_seconds: int = 600) -> None:
         self._cache_ttl = cache_ttl_seconds
-        self._cached_models: list[dict[str, Any]] = []
+        self._cached_models: list[dict[str, object]] = []
         self._last_fetched_at: float = 0.0
         self._lock = asyncio.Lock()
 
@@ -55,16 +112,24 @@ class ModelDiscoveryService:
         force_refresh: bool = False,
         cookies: dict[str, str] | None = None,
         auth_user: str = "0",
-        session: Any = None,
-    ) -> list[dict[str, Any]]:
+        session: BrowserSession | None = None,
+    ) -> list[dict[str, object]]:
         """获取可用模型列表。"""
         now = time.time()
-        if not force_refresh and self._cached_models and (now - self._last_fetched_at < self._cache_ttl):
+        if (
+            not force_refresh
+            and self._cached_models
+            and (now - self._last_fetched_at < self._cache_ttl)
+        ):
             return self._cached_models
 
         async with self._lock:
             # 双重检查
-            if not force_refresh and self._cached_models and (time.time() - self._last_fetched_at < self._cache_ttl):
+            if (
+                not force_refresh
+                and self._cached_models
+                and (time.time() - self._last_fetched_at < self._cache_ttl)
+            ):
                 return self._cached_models
 
             # 1. 优先通过当前激活的浏览器 Page 会话发 XHR 拉取 ListModels
@@ -76,7 +141,9 @@ class ModelDiscoveryService:
                         if models:
                             self._cached_models = models
                             self._last_fetched_at = time.time()
-                            logger.info("通过 Page XHR 动态更新了 %d 个模型", len(models))
+                            logger.info(
+                                "通过 Page XHR 动态更新了 %d 个模型", len(models)
+                            )
                             return models
                 except Exception as e:
                     logger.debug("Fetch models via page failed: %s", e)
@@ -100,7 +167,7 @@ class ModelDiscoveryService:
 
             return self._cached_models
 
-    async def _fetch_via_page(self, page: Any) -> list[dict[str, Any]]:
+    async def _fetch_via_page(self, page: CDPPage) -> list[dict[str, object]]:
         """在 CDP Page 环境中直接执行 XHR 拉取 ListModels（自动带齐浏览器完整凭据）。"""
         script = """
         () => {
@@ -131,12 +198,14 @@ class ModelDiscoveryService:
         }
         """
         res = await page.evaluate(script, timeout_s=12.0)
-        if not res or not res.get("ok"):
+        if not isinstance(res, dict) or not res.get("ok"):
             return []
         raw_data = res.get("data")
         return self._parse_raw_models(raw_data)
 
-    async def _fetch_via_http(self, cookies: dict[str, str], auth_user: str) -> list[dict[str, Any]]:
+    async def _fetch_via_http(
+        self, cookies: dict[str, str], auth_user: str
+    ) -> list[dict[str, object]]:
         """通过 HTTP 客户端携带 SAPISIDHASH 拉取。"""
         import httpx
 
@@ -163,25 +232,40 @@ class ModelDiscoveryService:
                 return self._parse_raw_models(resp.json())
         return []
 
-    def _parse_raw_models(self, raw_data: Any) -> list[dict[str, Any]]:
+    def _parse_raw_models(self, raw_data: object) -> list[dict[str, object]]:
         """解析 Google ListModels 的原始 protobuf 数组结构。"""
-        if not isinstance(raw_data, list) or not raw_data or not isinstance(raw_data[0], list):
+        if (
+            not isinstance(raw_data, list)
+            or not raw_data
+            or not isinstance(raw_data[0], list)
+        ):
             return []
 
-        models: list[dict[str, Any]] = []
+        models: list[dict[str, object]] = []
         for item in raw_data[0]:
             if not isinstance(item, list) or not item or not isinstance(item[0], str):
                 continue
             raw_id = item[0]  # e.g. "models/gemini-3.7-flash"
             model_id = raw_id.replace("models/", "")
-            display_name = item[3] if len(item) > 3 and isinstance(item[3], str) and item[3].strip() else model_id
+            display_name = (
+                item[3]
+                if len(item) > 3 and isinstance(item[3], str) and item[3].strip()
+                else model_id
+            )
             description = item[4] if len(item) > 4 and isinstance(item[4], str) else ""
-            input_token_limit = item[5] if len(item) > 5 and isinstance(item[5], (int, float)) else 0
-            output_token_limit = item[6] if len(item) > 6 and isinstance(item[6], (int, float)) else 0
+            input_token_limit = (
+                item[5] if len(item) > 5 and isinstance(item[5], (int, float)) else 0
+            )
+            output_token_limit = (
+                item[6] if len(item) > 6 and isinstance(item[6], (int, float)) else 0
+            )
             methods = item[7] if len(item) > 7 and isinstance(item[7], list) else []
 
             # 过滤支持内容生成的模型
-            if not any("generateContent" in str(m) for m in methods) and not any("image" in model_id or "veo" in model_id or "lyria" in model_id for _ in [0]):
+            if not any("generateContent" in str(m) for m in methods) and not any(
+                "image" in model_id or "veo" in model_id or "lyria" in model_id
+                for _ in [0]
+            ):
                 continue
 
             is_image = "image" in model_id or "imagen" in model_id
@@ -200,18 +284,20 @@ class ModelDiscoveryService:
             elif "gemma" in model_id:
                 category = "gemma"
 
-            models.append({
-                "id": model_id,
-                "name": raw_id,
-                "displayName": display_name,
-                "description": description,
-                "category": category,
-                "inputTokenLimit": int(input_token_limit),
-                "outputTokenLimit": int(output_token_limit),
-                "is_image_model": is_image,
-                "is_video_model": is_video,
-                "is_audio_model": is_audio,
-            })
+            models.append(
+                {
+                    "id": model_id,
+                    "name": raw_id,
+                    "displayName": display_name,
+                    "description": description,
+                    "category": category,
+                    "inputTokenLimit": int(input_token_limit),
+                    "outputTokenLimit": int(output_token_limit),
+                    "is_image_model": is_image,
+                    "is_video_model": is_video,
+                    "is_audio_model": is_audio,
+                }
+            )
 
         return models
 

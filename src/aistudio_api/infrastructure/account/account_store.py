@@ -5,15 +5,37 @@ from __future__ import annotations
 import json
 import os
 import shutil
-from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
+import threading
+import time
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+
+
+def _atomic_write_json(path: Path, data: object) -> None:
+    """原子写入 JSON 文件（写唯一临时文件后原子替换，防止写穿或损坏）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(f".tmp.{os.getpid()}_{time.time_ns()}")
+    try:
+        tmp_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        os.replace(tmp_path, path)
+    except Exception:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
+
 
 # 默认搜索路径（与 config.py 保持一致）
 _SEARCH_ROOTS: list[Path] = [
     Path.cwd(),
-    Path(__file__).resolve().parents[4],  # src/aistudio_api/infrastructure/account -> 项目根
+    Path(__file__)
+    .resolve()
+    .parents[4],  # src/aistudio_api/infrastructure/account -> 项目根
 ]
 
 
@@ -42,12 +64,14 @@ def _resolve_legacy_auth_file() -> Path | None:
 def _generate_account_id() -> str:
     """生成 acc_ 前缀的随机 ID。"""
     import secrets
+
     return f"acc_{secrets.token_hex(4)}"
 
 
 @dataclass
 class AccountMeta:
     """账号元数据。"""
+
     id: str
     name: str
     email: str | None
@@ -55,47 +79,72 @@ class AccountMeta:
     last_used: str | None = None
     auth_user: str = "0"
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> AccountMeta:
-        fields = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}
-        return cls(**fields)
+    def from_dict(cls, data: dict[str, object]) -> AccountMeta:
+        return cls(
+            id=str(data.get("id") or ""),
+            name=str(data.get("name") or ""),
+            email=str(data["email"]) if data.get("email") is not None else None,
+            created_at=str(data.get("created_at") or ""),
+            last_used=str(data["last_used"]) if data.get("last_used") is not None else None,
+            auth_user=str(data.get("auth_user") or "0"),
+        )
 
 @dataclass
 class Registry:
     """账号注册表。"""
+
     accounts: dict[str, AccountMeta]
     active_account_id: str | None = None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> dict[str, object]:
         return {
             "accounts": {k: v.to_dict() for k, v in self.accounts.items()},
             "active_account_id": self.active_account_id,
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Registry:
+    def from_dict(cls, data: dict[str, object]) -> Registry:
+        raw_accounts = data.get("accounts")
+        accounts_dict: dict[str, object] = raw_accounts if isinstance(raw_accounts, dict) else {}
         accounts = {
-            k: AccountMeta.from_dict(v) for k, v in data.get("accounts", {}).items()
+            k: AccountMeta.from_dict(v) for k, v in accounts_dict.items() if isinstance(v, dict)
         }
+        raw_active_id = data.get("active_account_id")
         return cls(
             accounts=accounts,
-            active_account_id=data.get("active_account_id"),
+            active_account_id=str(raw_active_id) if raw_active_id is not None else None,
         )
 
 
 class AccountStore:
-    """账号存储管理器。"""
+    """账号存储管理器（线程安全单例，支持原子文件替换）。"""
+
+    _instances: dict[Path, AccountStore] = {}
+    _singleton_lock = threading.Lock()
+    _initialized: bool = False
+
+    def __new__(cls, accounts_dir: Path | None = None) -> AccountStore:
+        resolved_dir = (accounts_dir or _resolve_accounts_dir()).resolve()
+        with cls._singleton_lock:
+            if resolved_dir not in cls._instances:
+                instance = super().__new__(cls)
+                cls._instances[resolved_dir] = instance
+            return cls._instances[resolved_dir]
 
     def __init__(self, accounts_dir: Path | None = None) -> None:
-        self._accounts_dir = accounts_dir or _resolve_accounts_dir()
+        if getattr(self, "_initialized", False):
+            return
+        self._accounts_dir = (accounts_dir or _resolve_accounts_dir()).resolve()
         self._registry_path = self._accounts_dir / "registry.json"
         self._registry: Registry | None = None
+        self._lock = threading.Lock()
         self._ensure_dirs()
         self._migrate_legacy_if_needed()
-
+        self._initialized = True
     def _ensure_dirs(self) -> None:
         """确保目录存在。"""
         self._accounts_dir.mkdir(parents=True, exist_ok=True)
@@ -109,7 +158,7 @@ class AccountStore:
             return
         # 创建一个迁移账号
         account_id = "acc_migrated"
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         meta = AccountMeta(
             id=account_id,
             name="迁移的账号",
@@ -122,9 +171,7 @@ class AccountStore:
         # 复制 auth.json
         shutil.copy2(legacy, account_dir / "auth.json")
         # 写入 meta.json
-        (account_dir / "meta.json").write_text(
-            json.dumps(meta.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        _atomic_write_json(account_dir / "meta.json", meta.to_dict())
         # 创建注册表
         registry = Registry(
             accounts={account_id: meta},
@@ -133,23 +180,25 @@ class AccountStore:
         self._save_registry(registry)
 
     def _load_registry(self) -> Registry:
-        """加载注册表。"""
-        if self._registry is not None:
+        """加载注册表（线程安全）。"""
+        with self._lock:
+            if self._registry is not None:
+                return self._registry
+            if not self._registry_path.exists():
+                self._registry = Registry(accounts={})
+                return self._registry
+            try:
+                data = json.loads(self._registry_path.read_text(encoding="utf-8"))
+                self._registry = Registry.from_dict(data)
+            except Exception:
+                self._registry = Registry(accounts={})
             return self._registry
-        if not self._registry_path.exists():
-            self._registry = Registry(accounts={})
-            return self._registry
-        data = json.loads(self._registry_path.read_text(encoding="utf-8"))
-        self._registry = Registry.from_dict(data)
-        return self._registry
 
     def _save_registry(self, registry: Registry) -> None:
-        """保存注册表。"""
-        self._registry = registry
-        self._registry_path.write_text(
-            json.dumps(registry.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        """保存注册表（线程安全+原子写入）。"""
+        with self._lock:
+            self._registry = registry
+            _atomic_write_json(self._registry_path, registry.to_dict())
 
     def list_accounts(self) -> list[AccountMeta]:
         """列出所有账号。"""
@@ -181,7 +230,7 @@ class AccountStore:
         if account_id not in registry.accounts:
             return None
         registry.active_account_id = account_id
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         registry.accounts[account_id].last_used = now
         self._save_registry(registry)
         return registry.accounts[account_id]
@@ -190,13 +239,13 @@ class AccountStore:
         self,
         name: str,
         email: str | None,
-        storage_state: dict[str, Any],
+        storage_state: dict[str, object],
         account_id: str | None = None,
         auth_user: str = "0",
     ) -> AccountMeta:
         """保存新账号。"""
         registry = self._load_registry()
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         created_at = now
         if account_id is None and email:
             for acc in registry.accounts.values():
@@ -218,14 +267,9 @@ class AccountStore:
         )
         account_dir = self._accounts_dir / account_id
         account_dir.mkdir(parents=True, exist_ok=True)
-        # 写入 auth.json
-        (account_dir / "auth.json").write_text(
-            json.dumps(storage_state, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        # 写入 meta.json
-        (account_dir / "meta.json").write_text(
-            json.dumps(meta.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        # 原子写入 auth.json 与 meta.json
+        _atomic_write_json(account_dir / "auth.json", storage_state)
+        _atomic_write_json(account_dir / "meta.json", meta.to_dict())
         # 更新注册表
         registry.accounts[account_id] = meta
         if registry.active_account_id is None:
@@ -241,7 +285,7 @@ class AccountStore:
         # 删除目录
         account_dir = self._accounts_dir / account_id
         if account_dir.is_dir():
-            shutil.rmtree(account_dir)
+            shutil.rmtree(account_dir, ignore_errors=True)
         # 从注册表移除
         del registry.accounts[account_id]
         if registry.active_account_id == account_id:
@@ -259,10 +303,7 @@ class AccountStore:
         account_dir = self._accounts_dir / account_id
         meta_path = account_dir / "meta.json"
         if meta_path.exists():
-            meta_path.write_text(
-                json.dumps(registry.accounts[account_id].to_dict(), ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            _atomic_write_json(meta_path, registry.accounts[account_id].to_dict())
         self._save_registry(registry)
         return registry.accounts[account_id]
 
@@ -270,7 +311,9 @@ class AccountStore:
         """获取指定账号的 auth.json 路径。"""
         return self.get_auth_path_optional(account_id, require_exists=True)
 
-    def get_auth_path_optional(self, account_id: str, *, require_exists: bool = False) -> Path | None:
+    def get_auth_path_optional(
+        self, account_id: str, *, require_exists: bool = False
+    ) -> Path | None:
         """获取指定账号的 auth.json 路径，可选是否要求文件已存在。"""
         registry = self._load_registry()
         if account_id not in registry.accounts:

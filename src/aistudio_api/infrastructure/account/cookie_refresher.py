@@ -4,16 +4,21 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
 
 log = logging.getLogger("aistudio.cookie_refresher")
 
 # Keep browser injection behavior close to the original implementation that was
 # known to produce a working login session after the browser visited Google.
 AUTH_COOKIE_NAMES = {
-    "SID", "SSID", "HSID", "APISID", "SAPISID",
-    "__Secure-1PAPISID", "__Secure-3PAPISID",
-    "__Secure-1PSID", "__Secure-3PSID",
+    "SID",
+    "SSID",
+    "HSID",
+    "APISID",
+    "SAPISID",
+    "__Secure-1PAPISID",
+    "__Secure-3PAPISID",
+    "__Secure-1PSID",
+    "__Secure-3PSID",
 }
 
 
@@ -67,8 +72,7 @@ def _refresh_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
     log.info("Refreshed cookies: %d total", len(all_cookies))
     return all_cookies
 
-
-def load_cookies_from_string(cookie_string: str) -> list[dict[str, Any]]:
+def load_cookies_from_string(cookie_string: str) -> list[dict[str, object]]:
     """Load cookies from a raw cookie string.
 
     Parses directly, refreshes session cookies via curl_cffi,
@@ -87,16 +91,18 @@ def load_cookies_from_string(cookie_string: str) -> list[dict[str, Any]]:
         if _should_skip_browser_injection(name):
             skipped_names.append(name)
             continue
-        cookies.append({
-            "name": name,
-            "value": value,
-            "domain": ".google.com",
-            "path": "/",
-            "secure": True,
-            "httpOnly": name not in AUTH_COOKIE_NAMES,
-            "sameSite": "None",
-            "expires": default_expires,
-        })
+        cookies.append(
+            {
+                "name": name,
+                "value": value,
+                "domain": ".google.com",
+                "path": "/",
+                "secure": True,
+                "httpOnly": name not in AUTH_COOKIE_NAMES,
+                "sameSite": "None",
+                "expires": default_expires,
+            }
+        )
     log.info(
         "[cookie_string] raw=%d refreshed=%d merged=%d",
         len(parsed),
@@ -104,6 +110,9 @@ def load_cookies_from_string(cookie_string: str) -> list[dict[str, Any]]:
         len(merged),
     )
     if skipped_names:
-        log.info("[cookie_string] skipped host-only cookies for browser injection: %s", sorted(skipped_names))
+        log.info(
+            "[cookie_string] skipped host-only cookies for browser injection: %s",
+            sorted(skipped_names),
+        )
     log.info("[cookie_string] parsed %d cookies", len(cookies))
     return cookies

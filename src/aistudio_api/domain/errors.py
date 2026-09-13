@@ -47,4 +47,3 @@ def classify_error(status: int, body: str) -> AistudioError:
     if status == 403:
         return AuthError(f"禁止访问: {body[:200]}")
     return RequestError(status, body[:200])
-
