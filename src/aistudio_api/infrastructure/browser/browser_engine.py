@@ -223,15 +223,34 @@ class ChromiumProcess:
         return self.process.poll() is None
 
     def terminate(self, timeout_s: float = 3.0) -> None:
+        """Terminate the Chromium subprocess tree.
+
+        Sends SIGTERM to the entire process group (the wrapper,
+        ``proot-distro login``, and the actual ``chrome`` binary). Falls back
+        to SIGKILL on the group if anything still lingers. Without
+        ``killpg`` the Termux proot wrapper routinely survives the signal and
+        leaves an orphan ``chrome`` behind that pins the CDP port.
+        """
+        import signal
+
         if self.process.poll() is not None:
             return
         try:
-            self.process.terminate()
+            pgid = os.getpgid(self.process.pid)
+        except ProcessLookupError:
+            return
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        try:
+            self.process.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
             try:
-                self.process.wait(timeout=timeout_s)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(timeout=1.0)
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            self.process.wait(timeout=1.0)
         except Exception as e:
             log.debug("Error terminating Chromium process: %s", e)
 
