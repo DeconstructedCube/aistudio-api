@@ -24,35 +24,12 @@ def _derive_stable_fingerprint_seed(key: str) -> int:
     return 10000 + (int(digest[:8], 16) % 90000)
 
 
-def _is_glibc_elf(path: str) -> bool:
-    """True iff ``path`` is an ELF requiring a glibc dynamic linker.
-
-    On Termux/Android the bionic loader cannot satisfy glibc-built binaries
-    (``PT_INTERP`` points at ``/lib64/ld-linux-*.so.1``) and subsequent
-    ``subprocess.Popen`` calls fail with ``FileNotFoundError: No such file or
-    directory`` even though the file exists. Detect this so we route the
-    launch through the project's glibc wrapper instead.
-
-    Implementation note: we shell out to ``readelf -l`` rather than parsing
-    the ELF header by hand. The project's bootstrap script (``bootstrap_*``)
-    already depends on ``readelf`` for NEEDED resolution, and it is part of
-    the standard Termux ``binutils`` package.
-    """
-    try:
-        out = subprocess.check_output(
-            ["readelf", "-l", path], text=True, stderr=subprocess.DEVNULL
-        )
-    except (OSError, subprocess.CalledProcessError):
-        return False
-    return "ld-linux" in out
-
-
-def _requires_glibc_interpreter() -> bool:
-    """True on hosts whose kernel loader cannot exec glibc ELFs directly."""
-    if platform.system() == "Android":
-        return True
-    prefix = os.environ.get("PREFIX", "")
-    return prefix.startswith("/data/data/com.termux")
+def _is_termux() -> bool:
+    """True iff running inside Termux (host or via app)."""
+    return (
+        platform.system() == "Android"
+        or os.environ.get("PREFIX", "").startswith("/data/data/com.termux")
+    )
 
 
 def _find_wrapper_path() -> str | None:
@@ -64,19 +41,17 @@ def _find_wrapper_path() -> str | None:
 
 
 def _resolve_local_chrome(match: str) -> str:
-    """Return the launch path for a locally-discovered chrome binary.
+    """Route Termux chrome launches through the proot wrapper.
 
-    On hosts where the kernel loader cannot run glibc ELFs (Termux / Android),
-    route the launch through the Termux glibc wrapper so the binary is exec'd
-    by the project's glibc dynamic linker instead of bionic. Anywhere else,
-    return the chrome path unchanged.
+    On Termux the kernel loader cannot run glibc-built CloakBrowser, so the
+    wrapper re-execs the binary inside ``proot-distro login <container>``.
+    On every other host we return the binary path unchanged.
     """
-    wrapper_path = _find_wrapper_path()
-    if wrapper_path and _requires_glibc_interpreter() and _is_glibc_elf(match):
-        log.debug(
-            "glibc ELF %s -> routing through wrapper %s", match, wrapper_path
-        )
-        return wrapper_path
+    if _is_termux():
+        wrapper = _find_wrapper_path()
+        if wrapper:
+            log.debug("Termux host: routing %s through wrapper %s", match, wrapper)
+            return wrapper
     return match
 
 
@@ -142,18 +117,10 @@ def find_chromium_executable() -> str:
         if os.path.isfile(p) and os.access(p, os.X_OK):
             return p
 
-    # 6. Repo-committed launcher wrapper (Termux glibc + CloakBrowser).
-    # Last-resort fallback: when the only Chromium available is webgl-less
-    # (e.g. Termux's native build), this wrapper resolves the project's
-    # CloakBrowser with the correct glibc loader. Beep & fast.
-    wrapper_path = _find_wrapper_path()
-    if wrapper_path:
-        return wrapper_path
-
     raise FileNotFoundError(
         "Could not locate a valid Chromium executable on this system.\n"
-        "Hint: run `python3 scripts/bootstrap_cloakbrowser_termux.py` to provision\n"
-        "the project's bundled CloakBrowser (anti-bot Chromium with WebGL/SwiftShader)."
+        "Hint: on Termux run `bash scripts/install_termux_prereqs.sh` to provision\n"
+        "the proot-distro container with CloakBrowser."
     )
 
 

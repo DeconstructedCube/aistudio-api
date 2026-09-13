@@ -24,24 +24,33 @@ Google AI Studio API reverse proxy. Exposes Google Gemini native API protocol.
 
 ### Linux macOS Windows
 
+All platforms install through [`uv`](https://docs.astral.sh/uv/), which honours the pinned `uv.lock` / `pyproject.toml`. After installing `uv`, a single `uv sync` produces the version-locked virtual environment:
+
 ```bash
 git clone https://github.com/chrysoljq/aistudio-api.git
 cd aistudio-api
-pip install -r requirements.txt
-python3 main.py server --port 8080
+uv sync
+uv run python3 main.py server --port 8080
 ```
+
+> Please ensure you use `uv sync` to install dependencies. Do not use `pip install -r requirements.txt`, as it will cause aarch64 prebuilt package version mismatches.
 
 ### Android Termux
 
+Running on Termux requires `proot-distro` to provide a standard Linux environment. Execute the following commands to install and start the service:
+
 ```bash
 pkg update
-pkg install -y python git glibc glibc-runner patchelf-glibc
+pkg install -y python git uv proot-distro
 git clone https://github.com/chrysoljq/aistudio-api.git
 cd aistudio-api
-pip install -r requirements.txt
-python3 scripts/bootstrap_cloakbrowser_termux.py
-python3 main.py server --port 8080
+uv sync
+bash scripts/install_termux_prereqs.sh --project-root "$PWD"
+uv run python3 main.py server --port 8080
 ```
+
+> The `install_termux_prereqs.sh` script will automatically set up a dedicated `aistudio-api` container and download the required browser on its first run (this may take a few minutes depending on your network).
+> For troubleshooting (e.g., port collisions, container errors), please check project Issues or discussions.
 
 ### Docker
 

@@ -24,24 +24,32 @@ Google AI Studio 反向代理服务。提供原生 Gemini API 接口。
 
 ### Linux macOS Windows 环境
 
+所有平台统一使用 [`uv`](https://docs.astral.sh/uv/) 作为依赖与虚拟环境管理器（与本仓库的 `uv.lock` / `pyproject.toml` 一致）。安装 `uv` 后，从源码同步即可获得受版本锁保护的可运行虚拟环境：
+
 ```bash
 git clone https://github.com/chrysoljq/aistudio-api.git
 cd aistudio-api
-pip install -r requirements.txt
-python3 main.py server --port 8080
+uv sync
+uv run python3 main.py server --port 8080
 ```
+
+> 请务必使用 `uv sync` 安装依赖，不要使用 `pip install -r requirements.txt`，否则会导致 aarch64 预编译包版本不匹配。
 
 ### Android Termux 环境
 
+在 Termux 上运行需要借助 `proot-distro` 提供必要的 Linux 运行环境。请按顺序执行以下命令进行完整安装与启动：
 ```bash
 pkg update
-pkg install -y python git glibc glibc-runner patchelf-glibc
+pkg install -y python git uv proot-distro
 git clone https://github.com/chrysoljq/aistudio-api.git
 cd aistudio-api
-pip install -r requirements.txt
-python3 scripts/bootstrap_cloakbrowser_termux.py
-python3 main.py server --port 8080
+uv sync
+bash scripts/install_termux_prereqs.sh --project-root "$PWD"
+uv run python3 main.py server --port 8080
 ```
+
+> 首次运行 `install_termux_prereqs.sh` 时会自动配置一个名为 `aistudio-api` 的专属容器并下载浏览器，过程视网络情况可能需要几分钟。
+> 常见问题排查（如端口冲突、容器报错等）请查阅项目 Issues 或讨论区。
 
 ### Docker 环境
 

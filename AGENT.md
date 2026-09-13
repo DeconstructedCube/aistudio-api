@@ -14,20 +14,35 @@
 
 ---
 
-## 2. 运行时与环境约束 (Termux / PRoot)
+## 2. 运行时与环境约束 (Termux)
 
-本工程运行在移动端/轻量 Linux 容器（Termux + PRoot Ubuntu）环境中，必须遵守以下执行规范：
+Python 与 Go 风格的工具链运行在 Termux 宿主（`uv` 管理虚拟环境）；Chromium（CloakBrowser）由于 glibc/bionic ABI 不兼容，必须跑在 `proot-distro` Linux 容器里。**严禁引入 Playwright（Puppeteer/Node 链路在 Android 上不可用）**，CDP 通过仓库自带的 `cdp_client.py` 直连。
 
-1. **Python 环境**：
-   - 必须使用 PRoot 容器内的 Python 3.14 虚拟环境执行 Python 命令：
-     ```bash
-     proot-distro login ubuntu -- bash -c 'cd /data/data/com.termux/files/home/aistudio-api && source .venv/bin/activate && <COMMAND>'
-     ```
-   - 严禁在 Termux 宿主外部直接混用系统 pip / uv 安装平台不兼容的依赖。
-2. **JavaScript / 前端工具链**：
-   - 前端脚本及语法检查统一使用 **`bun`** 处理（如 `bun build`、`bun x pyright`）。
-
----
+1. **系统级准备（仅 Termux 宿主执行一次）**：
+   ```bash
+   pkg update
+   pkg install -y python git uv proot-distro
+   ```
+   - `uv` 负责解析 `uv.lock` 中 termux-user-repository 镜像索引；不可改用 `pip`。
+   - `proot-distro` 用来拉取 Ubuntu rootfs；安装器默认容器名为 `aistudio-api`（**不会触碰用户已有的 `ubuntu` / `debian` 等容器**），可用 `--proot-name` 改名。
+2. **仓库依赖与浏览器运行时（克隆后执行一次；后续升级版本再跑）**：
+   ```bash
+   git clone https://github.com/chrysoljq/aistudio-api.git
+   cd aistudio-api
+   uv sync                                              # 读 uv.lock，构建 .venv
+   bash scripts/install_termux_prereqs.sh --project-root "$PWD"
+   uv run python3 main.py server --port 8080
+   ```
+   - 安装器幂等：proot 容器、apt 依赖、CloakBrowser 二进制均按"已就绪则跳过"逻辑短路；可重复运行。
+   - 不要用 `pip install -r requirements.txt`；会绕过 `pydantic-core==2.41.5` 的锁和 termux-user-repository 镜像索引，破坏 aarch64 二进制 ABI。
+   - `scripts/cloakbrowser_termux/run-chrome.sh` 是唯一被引擎接受的启动入口；它只做 `proot-distro login aistudio-api -- /opt/cloakbrowser/chrome "$@"` 加必要的 `--bind`。不要在仓库里新增其它 Chromium 启动器（会破坏多账号的进程隔离约定）。
+3. **JavaScript / 前端工具链**：前端脚本及语法检查统一使用 `bun` 处理（如 `bun build`、`bun x pyright`）。
+4. **常见故障与诊断**：
+   - `[Errno 98] address already in use`：上一次 `main.py server` 未退出。`pkill -f 'main.py server'` 后重试，或临时切换 `--port`。
+   - `Chromium CDP endpoint on port N not ready after 15.0s`：proot 容器没起来或没装 apt 依赖。重跑 `bash scripts/install_termux_prereqs.sh --project-root "$PWD"`。
+   - `proot-distro login: container 'aistudio-api' is missing`：要么重跑安装器，要么 `AISTUDIO_PROOT_NAME=...` 显式指定容器名。
+   - `pydantic-core` 报 `undefined symbol` / `version 'GLIBC_X.Y' not found`：违反 §2，用了 `pip` 而非 `uv`。删掉 `.venv/` 后 `uv sync` 重建。
+   - Chromium 启动后 BotGuard 仍被拦截：通常是 BotGuard 上下文里检测到自动化痕迹（headless 标签、User-Agent）。确认是用 `bash scripts/install_termux_prereqs.sh` 装的完整 CloakBrowser，不是仓库外的零散 chromium。
 
 ## 3. 严格类型与代码质量规范
 
