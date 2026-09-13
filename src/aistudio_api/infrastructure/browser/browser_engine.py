@@ -32,14 +32,32 @@ def find_chromium_executable() -> str:
     ):
         return settings.browser_executable_path
 
-    # 2. Cloakbrowser installed Chromium (~/.cloakbrowser/**/chrome)
-    cloak_matches = sorted(
-        glob.glob(os.path.expanduser("~/.cloakbrowser/**/chrome"), recursive=True)
-    )
-    if cloak_matches:
-        for match in reversed(cloak_matches):
-            if os.path.isfile(match) and os.access(match, os.X_OK):
-                return match
+    # 2. Local project-scoped CloakBrowser (.cloakbrowser/**/chrome)
+    project_root = Path(__file__).resolve().parents[4]
+    local_cloak_patterns = [
+        str(project_root / ".cloakbrowser" / "**" / "chrome"),
+        str(project_root / ".cloakbrowser" / "**" / "Chromium.app" / "Contents" / "MacOS" / "Chromium"),
+        str(project_root / ".cloakbrowser" / "**" / "chrome.exe"),
+    ]
+    for pat in local_cloak_patterns:
+        local_matches = sorted(glob.glob(pat, recursive=True))
+        if local_matches:
+            for match in reversed(local_matches):
+                if os.path.isfile(match) and (os.access(match, os.X_OK) or platform.system() == "Windows"):
+                    return match
+
+    # 3. User-level CloakBrowser (~/.cloakbrowser/**/chrome)
+    user_cloak_patterns = [
+        os.path.expanduser("~/.cloakbrowser/**/chrome"),
+        os.path.expanduser("~/.cloakbrowser/**/chrome.exe"),
+        os.path.expanduser("~/.cloakbrowser/**/Chromium.app/Contents/MacOS/Chromium"),
+    ]
+    for pat in user_cloak_patterns:
+        cloak_matches = sorted(glob.glob(pat, recursive=True))
+        if cloak_matches:
+            for match in reversed(cloak_matches):
+                if os.path.isfile(match) and (os.access(match, os.X_OK) or platform.system() == "Windows"):
+                    return match
     # 3. Playwright cached Chromium (~/.cache/ms-playwright/chromium-*/chrome-linux/chrome)
     pw_matches = sorted(
         glob.glob(

@@ -72,27 +72,69 @@ Powered by native asynchronous Chromium CDP debugging protocol and kernel-level 
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start & Multi-Platform Installation Guide
 
-### 1. Direct Local Launch
+This project supports deployments on **Linux (x86_64 / arm64)**, **macOS (Apple Silicon / Intel)**, **Windows (x64)**, **Docker containers**, and **Android Termux (Bare-Metal / PRoot)** environments.
 
-Ensure **Python 3.11+** and **Chromium / Google Chrome** are installed on your system:
+### 1. Cross-Platform Prerequisites & Launch
+
+#### 📱 Android Termux Bare-Metal Setup (Recommended)
+The Termux native Chromium build lacks SwiftShader / ANGLE, resulting in `NO_GL` (no WebGL context), failing Google BotGuard verification. We recommend running **CloakBrowser via Glibc-Runner**:
 
 ```bash
-# 1. Clone the repository
+# 1. Install base utilities and Glibc runtime layer
+pkg update && pkg install -y python git glibc glibc-runner patchelf-glibc
+
+# 2. Clone the repository
 git clone https://github.com/chrysoljq/aistudio-api.git
 cd aistudio-api
 
-# 2. Install dependencies (uv or pip)
+# 3. Install Python dependencies and isolate cache to project folder
+export CLOAKBROWSER_CACHE_DIR="$(pwd)/.cloakbrowser"
 pip install -r requirements.txt
-# or via uv: uv pip install -r requirements.txt
 
-# 3. Start the API server (default port 8080, automatically detects local Chromium)
+# 4. Start the server (automatically locates and launches project-scoped .cloakbrowser)
 python3 main.py server --port 8080
 ```
 
-> **Note**: On headless Linux servers or mobile Termux, the service automatically searches for system binaries like `chromium-browser` or `google-chrome`. You can also specify an exact path using the `AISTUDIO_BROWSER_EXECUTABLE` environment variable.
+#### 🐧 Linux (Ubuntu / Debian / CentOS / Arch)
+```bash
+# 1. Install system runtime dependencies
+# Ubuntu / Debian:
+sudo apt-get update && sudo apt-get install -y \
+    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+    libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
+    libpango-1.0-0 libcairo2
 
+# 2. Clone and install Python dependencies
+git clone https://github.com/chrysoljq/aistudio-api.git
+cd aistudio-api
+export CLOAKBROWSER_CACHE_DIR="$(pwd)/.cloakbrowser"
+pip install -r requirements.txt
+
+# 3. Start API Server
+python3 main.py server --port 8080
+```
+
+#### 🍎 macOS (Apple Silicon M1-M4 / Intel)
+```bash
+git clone https://github.com/chrysoljq/aistudio-api.git
+cd aistudio-api
+export CLOAKBROWSER_CACHE_DIR="$(pwd)/.cloakbrowser"
+pip install -r requirements.txt
+python3 main.py server --port 8080
+```
+
+#### 🪟 Windows (PowerShell)
+```powershell
+git clone https://github.com/chrysoljq/aistudio-api.git
+cd aistudio-api
+$env:CLOAKBROWSER_CACHE_DIR = "$PWD\.cloakbrowser"
+pip install -r requirements.txt
+python main.py server --port 8080
+```
+
+> **Browser Search Priority**: When the service launches, it prioritizes searching for the **project-scoped `.cloakbrowser` cache**. If not found, it falls back to `~/.cloakbrowser` or system-installed Chromium/Chrome. You can also specify an exact binary with `AISTUDIO_BROWSER_EXECUTABLE`.
 ### 2. Docker Deployment
 
 ```bash

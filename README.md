@@ -72,27 +72,69 @@
 
 ---
 
-## 🚀 快速开始
+## 🚀 快速开始与多系统安装引导
 
-### 1. 本地直接运行
+本项目支持在 **Linux (x86_64 / arm64)**、**macOS (Apple Silicon / Intel)**、**Windows (x64)**、**Docker 容器** 以及 **Android Termux (裸奔 / PRoot)** 环境下部署。
 
-确保系统已安装 **Python 3.11+** 与 **Chromium / Google Chrome**：
+### 1. 跨平台前置依赖安装与启动
+
+#### 📱 Android Termux 裸奔环境（推荐一键配置）
+Termux 原生 Chromium 因缺少 SwiftShader / ANGLE 会出现 `NO_GL`（无 WebGL 渲染）导致无法通过 Google BotGuard 验证。推荐使用项目内置的 **本地 CloakBrowser + Glibc-Runner 裸奔方案**：
 
 ```bash
-# 1. 克隆项目仓库
+# 1. 安装 Termux 基础运行依赖与 Glibc 运行层
+pkg update && pkg install -y python git glibc glibc-runner patchelf-glibc
+
+# 2. 克隆项目仓库
 git clone https://github.com/chrysoljq/aistudio-api.git
 cd aistudio-api
 
-# 2. 安装依赖（推荐使用 uv 或 pip）
+# 3. 安装 Python 依赖并配置项目本地缓存（强制在项目目录 .cloakbrowser 缓存浏览器防环境不匹配）
+export CLOAKBROWSER_CACHE_DIR="$(pwd)/.cloakbrowser"
 pip install -r requirements.txt
-# 或者使用 uv: uv pip install -r requirements.txt
 
-# 3. 启动 API 服务（默认端口 8080，首次会自动探测并拉起本地 Chromium）
+# 4. 启动服务（优先自动拉取并使用项目目录 .cloakbrowser 中的反指纹内核）
 python3 main.py server --port 8080
 ```
 
-> **提示**：如果在无桌面环境的 Linux 服务器或 Termux 上运行，服务会自动探测环境变量与系统路径中的 Chromium（如 `chromium-browser` 或 `google-chrome`），以无头模式运行。也可以通过 `AISTUDIO_BROWSER_EXECUTABLE` 手动指定浏览器可执行文件路径。
+#### 🐧 Linux (Ubuntu / Debian / CentOS / Arch)
+```bash
+# 1. 安装基础依赖库
+# Ubuntu / Debian:
+sudo apt-get update && sudo apt-get install -y \
+    libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+    libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 \
+    libpango-1.0-0 libcairo2
 
+# 2. 克隆并安装 Python 依赖
+git clone https://github.com/chrysoljq/aistudio-api.git
+cd aistudio-api
+export CLOAKBROWSER_CACHE_DIR="$(pwd)/.cloakbrowser"
+pip install -r requirements.txt
+
+# 3. 启动 API 服务
+python3 main.py server --port 8080
+```
+
+#### 🍎 macOS (Apple Silicon M1-M4 / Intel)
+```bash
+git clone https://github.com/chrysoljq/aistudio-api.git
+cd aistudio-api
+export CLOAKBROWSER_CACHE_DIR="$(pwd)/.cloakbrowser"
+pip install -r requirements.txt
+python3 main.py server --port 8080
+```
+
+#### 🪟 Windows (PowerShell)
+```powershell
+git clone https://github.com/chrysoljq/aistudio-api.git
+cd aistudio-api
+$env:CLOAKBROWSER_CACHE_DIR = "$PWD\.cloakbrowser"
+pip install -r requirements.txt
+python main.py server --port 8080
+```
+
+> **浏览器优先级说明**：服务启动时，将优先搜索**项目根目录下的 `.cloakbrowser` 缓存**；若不存在则回退至用户目录 `~/.cloakbrowser` 或系统安装的 Chromium/Chrome 二进制。您也可通过 `AISTUDIO_BROWSER_EXECUTABLE` 环境变量显式指定路径。
 ### 2. Docker 部署
 
 ```bash
