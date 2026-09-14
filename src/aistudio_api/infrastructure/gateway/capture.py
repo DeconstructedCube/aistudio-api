@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -38,7 +39,7 @@ class RequestCaptureService:
         self._session = session
         self._snapshot_cache = snapshot_cache
         self._templates: dict[str, CapturedRequest] = {}
-
+        self._lock = asyncio.Lock()
     def clear_templates(self) -> None:
         """清空捕获的请求模板（账号切换或强制刷新时调用）。"""
         self._templates.clear()
@@ -83,19 +84,24 @@ class RequestCaptureService:
         if model in self._templates:
             return self._templates[model]
 
-        captured = await self._session.capture_template(model)
-        headers_dict = captured.get("headers")
-        headers = {
-            str(k): str(v)
-            for k, v in (headers_dict.items() if isinstance(headers_dict, dict) else [])
-        }
-        template = CapturedRequest(
-            url=str(captured.get("url") or ""),
-            headers=headers,
-            body=str(captured.get("body") or ""),
-        )
-        logger.info("Hook 模板已就绪: model=%s", model)
-        return template
+        async with self._lock:
+            if model in self._templates:
+                return self._templates[model]
+
+            captured = await self._session.capture_template(model)
+            headers_dict = captured.get("headers")
+            headers = {
+                str(k): str(v)
+                for k, v in (headers_dict.items() if isinstance(headers_dict, dict) else [])
+            }
+            template = CapturedRequest(
+                url=str(captured.get("url") or ""),
+                headers=headers,
+                body=str(captured.get("body") or ""),
+            )
+            self._templates[model] = template
+            logger.info("Hook 模板已就绪并缓存: model=%s", model)
+            return template
 
     def _build_capture_content(
         self, prompt: str, images: list[str] | None

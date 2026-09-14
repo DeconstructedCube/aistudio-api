@@ -20,7 +20,7 @@ dependencies = [
   "python-multipart>=0.0.9",
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
-  "pydantic-core==2.41.5",
+  "pydantic-core==2.41.5; sys_platform == 'android'",
 ]
 
 [project.optional-dependencies]
@@ -59,7 +59,12 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
-
 [[tool.uv.index]]
 name = "tur"
 url = "https://termux-user-repository.github.io/pypi/"
+explicit = true
+
+[tool.uv.sources]
+pydantic-core = [
+  { index = "tur", marker = "sys_platform == 'android'" },
+]

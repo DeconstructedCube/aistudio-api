@@ -35,6 +35,8 @@ class RequestReplayService:
                 return await self._session.send_hooked_request(
                     body=body,
                     timeout_ms=timeout * 1000,
+                    url=captured.url if captured else None,
+                    headers=headers if captured else None,
                 )
 
             import httpx

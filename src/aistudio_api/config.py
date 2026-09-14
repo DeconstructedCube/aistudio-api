@@ -155,8 +155,8 @@ class Settings:
     accounts_dir: str = os.getenv("AISTUDIO_ACCOUNTS_DIR", "")
     # 账号轮询配置
     account_rotation_mode: str = os.getenv(
-        "AISTUDIO_ACCOUNT_ROTATION_MODE", "round_robin"
-    )  # round_robin, lru, least_rl
+        "AISTUDIO_ACCOUNT_ROTATION_MODE", "sticky"
+    )  # sticky, round_robin, lru, least_rl
     account_cooldown_seconds: int = int(
         os.getenv("AISTUDIO_ACCOUNT_COOLDOWN_SECONDS", "60")
     )

@@ -1,0 +1,227 @@
+"""Unit tests for account rotation, concurrency protections, and per-model rate limiting."""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from aistudio_api.application.account_rotator import (
+    AccountRotator,
+    AccountStats,
+    RotationMode,
+    get_pacific_date_key,
+)
+from aistudio_api.application.api_service_common import (
+    parse_cooldown_from_error,
+    try_switch_account,
+)
+from aistudio_api.domain.errors import UsageLimitExceeded
+from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
+from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
+from aistudio_api.infrastructure.gateway.capture import CapturedRequest, RequestCaptureService
+from aistudio_api.infrastructure.gateway.session import BrowserSession
+
+
+@pytest.mark.anyio
+async def test_capture_service_concurrency_and_caching():
+    """并发请求抓取模板时，模板捕获只执行 1 次，其余直接命中缓存。"""
+    mock_session = MagicMock(spec=BrowserSession)
+    mock_session.generate_snapshot = AsyncMock(return_value="mock_snap")
+    
+    call_count = 0
+
+    async def fake_capture_template(model: str):
+        nonlocal call_count
+        call_count += 1
+        await asyncio.sleep(0.05)
+        return {
+            "url": "https://example.com/generate",
+            "headers": {"content-type": "application/json"},
+            "body": '["models/gemini-2.5-flash",[[[[null,"old"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"orig_snap"]',
+        }
+    mock_session.capture_template = AsyncMock(side_effect=fake_capture_template)
+    cache = SnapshotCache(ttl=3600, max_size=100)
+    service = RequestCaptureService(session=mock_session, snapshot_cache=cache)
+
+    # 5 个并发请求同时请求同一个 model
+    tasks = [
+        service.capture(prompt=f"hi {i}", model="gemini-2.5-flash")
+        for i in range(5)
+    ]
+    results = await asyncio.gather(*tasks)
+
+    # capture_template 应当只被执行 1 次
+    assert call_count == 1
+    assert len(results) == 5
+    for res in results:
+        assert isinstance(res, CapturedRequest)
+        assert res.url == "https://example.com/generate"
+
+    # 再次请求，直接命中缓存，不会增加调用次数
+    res6 = await service.capture(prompt="hi again", model="gemini-2.5-flash")
+    assert call_count == 1
+    assert res6 is not None
+
+
+@pytest.mark.anyio
+async def test_account_stats_per_model_cooldown():
+    """测试账号在特定模型上的 429 冷却与隔离。"""
+    stats = AccountStats(account_id="acc_1")
+    assert stats.is_available("gemini-2.5-pro")
+    assert stats.is_available("gemini-2.5-flash")
+
+    # 对 pro 模型限流
+    stats.record_rate_limited(model="gemini-2.5-pro", cooldown_seconds=10)
+    assert not stats.is_available("gemini-2.5-pro")
+    # flash 模型依然可用！
+    assert stats.is_available("gemini-2.5-flash")
+    assert stats.get_cooldown_remaining("gemini-2.5-pro") > 0
+    assert stats.get_cooldown_remaining("gemini-2.5-flash") == 0
+
+    # 成功请求清除偶发冷却
+    stats.record_success(model="gemini-2.5-pro")
+    assert stats.is_available("gemini-2.5-pro")
+
+
+@pytest.mark.anyio
+async def test_account_stats_pacific_midnight_reset():
+    """测试美西跨天日限额自动恢复。"""
+    stats = AccountStats(account_id="acc_1")
+    stats.model_cooldowns["gemini-2.5-pro"] = time.time() + 3600
+    stats.model_rate_limited_dates["gemini-2.5-pro"] = "2020-01-01"  # 过去的日期
+
+    assert stats.is_available("gemini-2.5-pro")
+    assert "gemini-2.5-pro" not in stats.model_rate_limited_dates
+
+
+@pytest.mark.anyio
+async def test_rotator_sticky_mode():
+    """测试 Sticky 模式：默认逮着当前号薅，直到限流才切换。"""
+    store = MagicMock(spec=AccountStore)
+    acc1 = AccountMeta(id="acc_1", name="Account 1", email="acc1@example.com", created_at="2026-01-01")
+    acc2 = AccountMeta(id="acc_2", name="Account 2", email="acc2@example.com", created_at="2026-01-01")
+    store.list_accounts.return_value = [acc1, acc2]
+
+    rotator = AccountRotator(account_store=store, mode=RotationMode.STICKY)
+
+    # 初始获取账号，获取 acc1
+    next_acc = await rotator.get_next_account(model="gemini-2.5-pro", current_account_id=acc1.id)
+    assert next_acc.id == "acc_1"
+
+    # 请求 flash 模型，继续复用 acc1 (sticky)
+    next_acc = await rotator.get_next_account(model="gemini-2.5-flash", current_account_id=acc1.id)
+    assert next_acc.id == "acc_1"
+
+    # acc1 在 pro 模型上发生 429
+    rotator.record_rate_limited("acc_1", model="gemini-2.5-pro", cooldown_seconds=60)
+
+    # 请求 flash 模型，acc1 依然可用，继续复用 acc1！
+    next_acc = await rotator.get_next_account(model="gemini-2.5-flash", current_account_id=acc1.id)
+    assert next_acc.id == "acc_1"
+
+    # 请求 pro 模型，acc1 不可用，自动切换到 acc2！
+    next_acc = await rotator.get_next_account(model="gemini-2.5-pro", current_account_id=acc1.id)
+    assert next_acc.id == "acc_2"
+
+    # 随后请求 flash 或 pro，均以 acc2 为 sticky 目标
+    next_acc = await rotator.get_next_account(model="gemini-2.5-flash", current_account_id=acc2.id)
+    assert next_acc.id == "acc_2"
+
+
+@pytest.mark.anyio
+async def test_try_switch_account_avalanche_protection():
+    """测试并发多个 429 时，_switch_lock 防止级联切号。"""
+    from aistudio_api.api.state import runtime_state
+
+    mock_rotator = MagicMock(spec=AccountRotator)
+    mock_acc_service = MagicMock()
+    mock_client = MagicMock()
+    mock_client._session = MagicMock()
+
+    acc1 = AccountMeta(id="acc_1", name="Acc 1", email="acc1@test.com", created_at="2026-01-01")
+    acc2 = AccountMeta(id="acc_2", name="Acc 2", email="acc2@test.com", created_at="2026-01-01")
+
+    active_acc = acc1
+    mock_acc_service.get_active_account.side_effect = lambda: active_acc
+
+    stats_map = {
+        "acc_1": AccountStats(account_id="acc_1"),
+        "acc_2": AccountStats(account_id="acc_2"),
+    }
+    mock_rotator._stats = stats_map
+
+    activate_count = 0
+
+    async def fake_activate(acc_id, *args, **kwargs):
+        nonlocal active_acc, activate_count
+        activate_count += 1
+        await asyncio.sleep(0.05)
+        active_acc = acc2 if acc_id == "acc_2" else acc1
+        return active_acc
+
+    mock_acc_service.activate_account = AsyncMock(side_effect=fake_activate)
+    mock_rotator.get_next_account = AsyncMock(return_value=acc2)
+
+    with patch.object(runtime_state, "rotator", mock_rotator), \
+         patch.object(runtime_state, "account_service", mock_acc_service), \
+         patch.object(runtime_state, "client", mock_client):
+
+        # 3 个并发协程同时遇到 429 并尝试切号
+        tasks = [
+            try_switch_account(model="gemini-2.5-pro", failed_account_id="acc_1")
+            for _ in range(3)
+        ]
+        results = await asyncio.gather(*tasks)
+
+        assert all(results)
+        # 只应该发生 1 次实质性的 activate_account 调用
+        assert activate_count == 1
+
+
+@pytest.mark.anyio
+def test_parse_cooldown_from_error():
+    """测试 429 报错解析分钟限制 vs 每日配额。"""
+    assert parse_cooldown_from_error(Exception("Rate limit reached: 15 RPM")) == 60
+    assert parse_cooldown_from_error(Exception("Quota limit exceeded: PerDay")) == 86400
+    assert parse_cooldown_from_error(Exception("Daily quota exhausted")) == 86400
+
+@pytest.mark.anyio
+async def test_goto_aistudio_net_err_aborted_tolerance():
+    """当 page.goto 遭遇 net::ERR_ABORTED 但已在 aistudio 时，视为有效抵达并容错。"""
+    from aistudio_api.infrastructure.browser.cdp_client import CDPPage
+
+    page = MagicMock(spec=CDPPage)
+    page.url = "https://aistudio.google.com/prompts/new_chat"
+    page.goto = AsyncMock(side_effect=RuntimeError("Navigation failed: net::ERR_ABORTED"))
+    page.evaluate = AsyncMock(side_effect=lambda expr, *a, **kw: "https://aistudio.google.com/prompts/new_chat" if "location.href" in expr else (True if "default_MakerSuite" in expr else None))
+    page.wait_for_timeout = AsyncMock()
+
+    session = BrowserSession(port=9222)
+    session._verify_account_identity = AsyncMock()
+    session._save_cookies = AsyncMock()
+
+    # 应该正常完成，不抛出 net::ERR_ABORTED 异常
+    await session._goto_aistudio(page)
+    assert session._verify_account_identity.called
+
+
+@pytest.mark.anyio
+async def test_ensure_botguard_available_regions_fast_fail():
+    """检测到 available-regions 时立刻抛出 RuntimeError，无需等待 20s 超时。"""
+    from aistudio_api.infrastructure.browser.cdp_client import CDPPage
+
+    page = MagicMock(spec=CDPPage)
+    page.url = "https://aistudio.google.com/available-regions"
+    page.is_closed = MagicMock(return_value=False)
+    page.evaluate = AsyncMock(return_value=False)
+
+    session = BrowserSession(port=9222)
+    session._page = page
+    session.ensure_context = AsyncMock(return_value=page)
+    session._install_hooks = AsyncMock()
+
+    with pytest.raises(RuntimeError, match="地区限制"):
+        await session.ensure_botguard_service()

@@ -331,16 +331,15 @@ class CDPPage:
             pass
         finally:
             unsub()
-
-        # Update actual URL from window.location
-        try:
-            actual_url = await self.evaluate(
-                "() => window.location.href", timeout_s=5.0
-            )
-            if actual_url is not None:
-                self._last_url = str(actual_url)
-        except Exception:
-            pass
+            # Update actual URL from window.location
+            try:
+                actual_url = await self.evaluate(
+                    "() => window.location.href", timeout_s=5.0
+                )
+                if actual_url is not None:
+                    self._last_url = str(actual_url)
+            except Exception:
+                pass
     async def title(self) -> str:
         """Get document title."""
         try:

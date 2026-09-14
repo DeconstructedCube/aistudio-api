@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 
@@ -17,10 +17,10 @@ logger = logging.getLogger("aistudio.rotator")
 class RotationMode(str, Enum):
     """轮询模式。"""
 
+    STICKY = "sticky"  # 默认逮着一个号薅直到429
     ROUND_ROBIN = "round_robin"  # 顺序轮询
     LEAST_RECENTLY_USED = "lru"  # 最久未用
     LEAST_RATE_LIMITED = "least_rl"  # 最少限流
-
 
 def get_pacific_date_key(ts: float | None = None) -> str:
     """获取美西太平洋时间（America/Los_Angeles）日期键值 YYYY-MM-DD。"""
@@ -47,36 +47,85 @@ class AccountStats:
     errors: int = 0
     last_used: float = 0.0  # timestamp
     last_rate_limited: float = 0.0  # timestamp
-    cooldown_until: float = 0.0  # timestamp, 429 后冷却期
+    cooldown_until: float = 0.0  # timestamp, 全局 429 冷却期
     rate_limited_date_la: str | None = None
+    model_cooldowns: dict[str, float] = field(default_factory=dict)
+    model_rate_limited_dates: dict[str, str] = field(default_factory=dict)
+    model_requests: dict[str, int] = field(default_factory=dict)
+    model_rate_limited: dict[str, int] = field(default_factory=dict)
 
-    def is_available(self) -> bool:
-        """检查账号是否可用（不在冷却期，或已过美西午夜自动解封）。"""
+    def is_available(self, model: str | None = None) -> bool:
+        """检查账号是否可用（指定模型或全局可用）。"""
+        now = time.time()
+        current_la = get_pacific_date_key()
+
+        # 检查全局冷却与美西日限额
         if self.rate_limited_date_la:
-            current_la = get_pacific_date_key()
             if self.rate_limited_date_la < current_la:
                 self.rate_limited_date_la = None
                 self.cooldown_until = 0.0
-                return True
-        return time.time() >= self.cooldown_until
 
-    def record_success(self) -> None:
+        if now < self.cooldown_until:
+            return False
+
+        if model:
+            # 清理美西过期的模型冷却
+            limit_date = self.model_rate_limited_dates.get(model)
+            if limit_date and limit_date < current_la:
+                self.model_rate_limited_dates.pop(model, None)
+                self.model_cooldowns.pop(model, None)
+
+            cd = self.model_cooldowns.get(model, 0.0)
+            return now >= cd
+
+        return True
+
+    def get_cooldown_remaining(self, model: str | None = None) -> float:
+        now = time.time()
+        if not self.is_available(model):
+            global_cd = max(0.0, self.cooldown_until - now)
+            if model:
+                model_cd = max(0.0, self.model_cooldowns.get(model, 0.0) - now)
+                return max(global_cd, model_cd)
+            return global_cd
+        return 0.0
+
+    def record_success(self, model: str | None = None) -> None:
+        now = time.time()
         self.requests += 1
         self.success += 1
-        self.last_used = time.time()
+        self.last_used = now
+        if model:
+            self.model_requests[model] = self.model_requests.get(model, 0) + 1
+            self.model_cooldowns.pop(model, None)
+            self.model_rate_limited_dates.pop(model, None)
 
-    def record_rate_limited(self, cooldown_seconds: int = 60) -> None:
+    def record_rate_limited(
+        self, model: str | None = None, cooldown_seconds: int = 60
+    ) -> None:
+        now = time.time()
         self.requests += 1
         self.rate_limited += 1
-        self.last_rate_limited = time.time()
-        self.rate_limited_date_la = get_pacific_date_key()
-        self.cooldown_until = time.time() + cooldown_seconds
+        self.last_rate_limited = now
+        la_date = get_pacific_date_key()
 
-    def record_error(self) -> None:
+        if model:
+            self.model_requests[model] = self.model_requests.get(model, 0) + 1
+            self.model_rate_limited[model] = (
+                self.model_rate_limited.get(model, 0) + 1
+            )
+            self.model_cooldowns[model] = now + cooldown_seconds
+            self.model_rate_limited_dates[model] = la_date
+        else:
+            self.rate_limited_date_la = la_date
+            self.cooldown_until = now + cooldown_seconds
+
+    def record_error(self, model: str | None = None) -> None:
         self.requests += 1
         self.errors += 1
         self.last_used = time.time()
-
+        if model:
+            self.model_requests[model] = self.model_requests.get(model, 0) + 1
 
 class AccountRotator:
     """多账号轮询管理器。
@@ -144,19 +193,26 @@ class AccountRotator:
                 else None,
                 "is_available": stats.is_available(),
                 "cooldown_remaining": max(0, int(stats.cooldown_until - time.time())),
+                "model_cooldowns": {
+                    m: max(0, int(cd - time.time()))
+                    for m, cd in stats.model_cooldowns.items()
+                },
+                "model_requests": dict(stats.model_requests),
+                "model_rate_limited": dict(stats.model_rate_limited),
             }
         return result
 
-    def _get_available_accounts(self) -> list[tuple[AccountMeta, AccountStats]]:
+    def _get_available_accounts(
+        self, model: str | None = None
+    ) -> list[tuple[AccountMeta, AccountStats]]:
         """获取所有可用的账号（不在冷却期）。"""
         accounts = self._store.list_accounts()
         available = []
         for account in accounts:
             stats = self._stats.get(account.id, AccountStats(account_id=account.id))
-            if stats.is_available():
+            if stats.is_available(model):
                 available.append((account, stats))
         return available
-
     def _pick_round_robin(
         self, available: list[tuple[AccountMeta, AccountStats]]
     ) -> tuple[AccountMeta, AccountStats] | None:
@@ -196,10 +252,14 @@ class AccountRotator:
             return None
         return min(available, key=lambda x: x[1].rate_limited)
 
-    async def get_next_account(self) -> AccountMeta | None:
+    async def get_next_account(
+        self,
+        model: str | None = None,
+        current_account_id: str | None = None,
+    ) -> AccountMeta | None:
         """获取下一个可用的账号。"""
         async with self._lock:
-            available = self._get_available_accounts()
+            available = self._get_available_accounts(model)
 
             if not available:
                 # 所有账号都在冷却期，找一个冷却时间最短的
@@ -212,18 +272,28 @@ class AccountRotator:
                         (a, self._stats.get(a.id, AccountStats(account_id=a.id)))
                         for a in all_accounts
                     ],
-                    key=lambda x: x[1].cooldown_until,
+                    key=lambda x: x[1].get_cooldown_remaining(model),
                 )
                 account, stats = earliest
-                wait_time = max(0, stats.cooldown_until - time.time())
+                wait_time = stats.get_cooldown_remaining(model)
                 logger.warning(
-                    "所有账号都在冷却期，等待 %.1fs 使用 %s", wait_time, account.name
+                    "所有账号对模型 %s 均在冷却期，等待 %.1fs 使用 %s",
+                    model or "all",
+                    wait_time,
+                    account.name,
                 )
-                await asyncio.sleep(wait_time)
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
                 return account
 
             # 根据模式选择
-            if self._mode == RotationMode.ROUND_ROBIN:
+            if self._mode == RotationMode.STICKY:
+                if current_account_id:
+                    for a, _ in available:
+                        if a.id == current_account_id:
+                            return a
+                pick = self._pick_least_rl(available) or available[0]
+            elif self._mode == RotationMode.ROUND_ROBIN:
                 pick = self._pick_round_robin(available)
             elif self._mode == RotationMode.LEAST_RECENTLY_USED:
                 pick = self._pick_lru(available)
@@ -236,15 +306,18 @@ class AccountRotator:
                 return None
 
             account, stats = pick
-            logger.info("轮询选择账号: %s (mode=%s)", account.name, self._mode)
+            logger.info(
+                "轮询选择账号: %s (mode=%s, model=%s)", account.name, self._mode, model
+            )
             return account
-
     async def get_next_account_with_stats(
         self,
+        model: str | None = None,
+        current_account_id: str | None = None,
     ) -> tuple[AccountMeta, AccountStats] | None:
         """获取下一个可用的账号及其统计。"""
         async with self._lock:
-            available = self._get_available_accounts()
+            available = self._get_available_accounts(model)
             if not available:
                 all_accounts = self._store.list_accounts()
                 if not all_accounts:
@@ -254,14 +327,21 @@ class AccountRotator:
                         (a, self._stats.get(a.id, AccountStats(account_id=a.id)))
                         for a in all_accounts
                     ],
-                    key=lambda x: x[1].cooldown_until,
+                    key=lambda x: x[1].get_cooldown_remaining(model),
                 )
                 account, stats = earliest
-                wait_time = max(0, stats.cooldown_until - time.time())
-                await asyncio.sleep(wait_time)
+                wait_time = stats.get_cooldown_remaining(model)
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
                 return account, stats
 
-            if self._mode == RotationMode.ROUND_ROBIN:
+            if self._mode == RotationMode.STICKY:
+                if current_account_id:
+                    for a, s in available:
+                        if a.id == current_account_id:
+                            return a, s
+                pick = self._pick_least_rl(available) or available[0]
+            elif self._mode == RotationMode.ROUND_ROBIN:
                 pick = self._pick_round_robin(available)
             elif self._mode == RotationMode.LEAST_RECENTLY_USED:
                 pick = self._pick_lru(available)
@@ -271,25 +351,39 @@ class AccountRotator:
                 pick = available[0]
             return pick
 
-    def record_success(self, account_id: str) -> None:
+    def record_success(self, account_id: str, model: str | None = None) -> None:
         """记录成功请求。"""
         if account_id not in self._stats:
             self._stats[account_id] = AccountStats(account_id=account_id)
-        self._stats[account_id].record_success()
+        self._stats[account_id].record_success(model)
 
-    def record_rate_limited(self, account_id: str) -> None:
+    def record_rate_limited(
+        self,
+        account_id: str,
+        model: str | None = None,
+        cooldown_seconds: int | None = None,
+    ) -> None:
         """记录 429 限流。"""
         if account_id not in self._stats:
             self._stats[account_id] = AccountStats(account_id=account_id)
-        self._stats[account_id].record_rate_limited(self._cooldown_seconds)
-        logger.warning("账号 %s 被限流，冷却 %ds", account_id, self._cooldown_seconds)
+        cd = (
+            cooldown_seconds
+            if cooldown_seconds is not None
+            else self._cooldown_seconds
+        )
+        self._stats[account_id].record_rate_limited(model, cd)
+        logger.warning(
+            "账号 %s (model=%s) 被限流，冷却 %ds",
+            account_id,
+            model or "all",
+            cd,
+        )
 
-    def record_error(self, account_id: str) -> None:
+    def record_error(self, account_id: str, model: str | None = None) -> None:
         """记录错误。"""
         if account_id not in self._stats:
             self._stats[account_id] = AccountStats(account_id=account_id)
-        self._stats[account_id].record_error()
-
+        self._stats[account_id].record_error(model)
     def add_account(self, account_id: str) -> None:
         """添加新账号时初始化统计。"""
         if account_id not in self._stats:

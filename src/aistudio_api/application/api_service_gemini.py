@@ -19,6 +19,7 @@ from aistudio_api.application.api_service_common import (
     MAX_RETRIES,
     ensure_active_account,
     logger,
+    parse_cooldown_from_error,
     record_rotator_event,
     require_busy_lock,
     try_switch_account,
@@ -52,7 +53,7 @@ async def handle_gemini_generate_content(
     last_error = None
     for attempt in range(MAX_RETRIES):
         async with busy_lock:
-            await ensure_active_account(attempt)
+            await ensure_active_account(attempt, model=model_path)
             normalized = None
             try:
                 normalized = normalize_gemini_request(req, model_path)
@@ -78,7 +79,7 @@ async def handle_gemini_generate_content(
                     sanitize_plain_text=False,
                 )
 
-                record_rotator_event("success")
+                record_rotator_event("success", model=normalized.model)
                 runtime_state.record(normalized.model, "success", output.usage)
                 return GeminiGenerateContentResponse(
                     candidates=[
@@ -105,30 +106,42 @@ async def handle_gemini_generate_content(
                     400, detail={"message": str(exc), "type": "bad_request"}
                 ) from exc
             except UsageLimitExceeded as exc:
-                runtime_state.record(model_path, "rate_limited")
+                target_model = normalized.model if normalized else model_path
+                runtime_state.record(target_model, "rate_limited")
                 last_error = exc
+                cooldown = parse_cooldown_from_error(exc)
+                account_svc = runtime_state.account_service
+                active_acc = account_svc.get_active_account() if account_svc else None
+                failed_id = active_acc.id if active_acc else None
 
-                record_rotator_event("rate_limited")
-                if await try_switch_account():
+                record_rotator_event(
+                    "rate_limited", model=target_model, cooldown_seconds=cooldown
+                )
+                if await try_switch_account(
+                    model=target_model, failed_account_id=failed_id
+                ):
                     logger.info(
-                        "Gemini 429 限流，已切换账号，重试 %d/%d",
+                        "Gemini 429 限流: model=%s，已切换账号，重试 %d/%d",
+                        target_model,
                         attempt + 1,
                         MAX_RETRIES,
                     )
                     continue
-                logger.warning("Gemini 429 限流，无法切换账号")
+                logger.warning("Gemini 429 限流: model=%s，无可切账号", target_model)
                 raise HTTPException(
                     429, detail={"message": str(exc), "type": "rate_limit_exceeded"}
                 ) from exc
             except AistudioError as exc:
-                runtime_state.record(model_path, "errors")
-                record_rotator_event("error")
+                target_model = normalized.model if normalized else model_path
+                runtime_state.record(target_model, "errors")
+                record_rotator_event("error", model=target_model)
                 raise HTTPException(
                     500, detail={"message": str(exc), "type": "server_error"}
                 ) from exc
             except Exception as exc:
-                runtime_state.record(model_path, "errors")
-                record_rotator_event("error")
+                target_model = normalized.model if normalized else model_path
+                runtime_state.record(target_model, "errors")
+                record_rotator_event("error", model=target_model)
                 logger.error("Gemini error: %s", exc, exc_info=True)
                 raise HTTPException(
                     500, detail={"message": str(exc), "type": "server_error"}
@@ -163,7 +176,7 @@ def _build_gemini_streaming_response(
         async with busy_lock:
             normalized = None
             try:
-                await ensure_active_account(0)
+                await ensure_active_account(0, model=model_path)
                 normalized = normalize_gemini_request(req, model_path)
                 logger.info(
                     "Gemini stream: model=%s, contents=%s",
@@ -295,13 +308,26 @@ def _build_gemini_streaming_response(
                             elif event_type == "usage":
                                 final_usage = text if isinstance(text, dict) else None
                         break
-                    except UsageLimitExceeded:
-                        if normalized is not None:
-                            runtime_state.record(normalized.model, "rate_limited")
-                        record_rotator_event("rate_limited")
-                        if not has_yielded_data and await try_switch_account():
+                    except UsageLimitExceeded as exc:
+                        target_model = normalized.model if normalized else model_path
+                        runtime_state.record(target_model, "rate_limited")
+                        cooldown = parse_cooldown_from_error(exc)
+                        account_svc = runtime_state.account_service
+                        active_acc = (
+                            account_svc.get_active_account() if account_svc else None
+                        )
+                        failed_id = active_acc.id if active_acc else None
+                        record_rotator_event(
+                            "rate_limited",
+                            model=target_model,
+                            cooldown_seconds=cooldown,
+                        )
+                        if not has_yielded_data and await try_switch_account(
+                            model=target_model, failed_account_id=failed_id
+                        ):
                             logger.warning(
-                                "Gemini stream 429 限流，已切换账号，重试 %d/%d",
+                                "Gemini stream 429 限流: model=%s，已切换账号，重试 %d/%d",
+                                target_model,
                                 stream_attempt + 1,
                                 MAX_RETRIES,
                             )
@@ -324,7 +350,7 @@ def _build_gemini_streaming_response(
                             client.clear_snapshot_cache()
                             continue
                         raise
-                record_rotator_event("success")
+                record_rotator_event("success", model=normalized.model if normalized else model_path)
                 if normalized is not None:
                     runtime_state.record(normalized.model, "success", final_usage)
                 if final_usage:
@@ -345,7 +371,7 @@ def _build_gemini_streaming_response(
             except Exception as exc:
                 logger.error("Gemini stream error: %s", exc, exc_info=True)
                 if not isinstance(exc, UsageLimitExceeded):
-                    record_rotator_event("error")
+                    record_rotator_event("error", model=normalized.model if normalized else model_path)
                 if normalized is not None:
                     runtime_state.record(normalized.model, "errors")
                 yield (

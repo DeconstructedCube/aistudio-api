@@ -210,9 +210,9 @@ class BrowserSession:
         self._templates: dict[str, dict[str, object]] = {}
         self._bootstrap_template: dict[str, object] | None = None
         self._lock = asyncio.Lock()
+        self._botguard_lock = asyncio.Lock()
         self._in_flight: int = 0
         self._switching: bool = False
-
     @asynccontextmanager
     async def request_scope(self):
         """追踪正在进行的请求，防止切号时进程被强杀造成断流。"""
@@ -270,68 +270,83 @@ class BrowserSession:
         if await page.evaluate("() => !!window.__bg_service"):
             return page
 
-        t0 = time.time()
-        captured: dict[str, object] = {}
-        original_text: str = ""
+        async with self._botguard_lock:
+            if await page.evaluate("() => !!window.__bg_service"):
+                return page
 
-        def on_req(req: dict[str, object]) -> None:
-            url = str(req.get("url") or "")
-            if "GenerateContent" not in url or "Count" in url or captured:
-                return
-            body = str(req.get("post_data") or "")
-            if not body:
-                return
-            captured["url"] = url
-            captured["headers"] = req.get("headers") or {}
-            captured["body"] = body
-        unsub = page.on_request(on_req)
-        await page.evaluate(DIALOG_CLEANUP_JS)
-
-        try:
-            original_text = ""
-            try:
-                await page.wait_for_selector("textarea", timeout_s=20.0)
-            except Exception:
-                dbg_url = page.url
-                dbg_title = await page.title()
-                raw_dbg_body = await page.evaluate(
-                    "() => document.body?.innerText?.substring(0, 300) || ''"
-                )
-                dbg_body = str(raw_dbg_body or "")
+            current_url = page.url or ""
+            if "available-regions" in current_url:
                 raise RuntimeError(
-                    f"textarea not found while capturing BotGuardService; url={dbg_url}, title={dbg_title}, body={dbg_body[:200]}"
+                    "Google AI Studio 地区限制: 访问被重定向至 available-regions"
                 )
-            original_text = str(
-                (await page.evaluate("() => document.querySelector('textarea')?.value || ''")) or ""
-            )
-            await page.fill("textarea", BOTGUARD_BOOTSTRAP_PROMPT)
-            await page.wait_for_timeout(800)
+
+            t0 = time.time()
+            captured: dict[str, object] = {}
+            original_text: str = ""
+
+            def on_req(req: dict[str, object]) -> None:
+                url = str(req.get("url") or "")
+                if "GenerateContent" not in url or "Count" in url or captured:
+                    return
+                body = str(req.get("post_data") or "")
+                if not body:
+                    return
+                captured["url"] = url
+                captured["headers"] = req.get("headers") or {}
+                captured["body"] = body
+
+            unsub = page.on_request(on_req)
             await page.evaluate(DIALOG_CLEANUP_JS)
 
-            if not await self._click_run_button(page):
-                raise RuntimeError(
-                    "failed to trigger send while capturing BotGuardService"
-                )
-
-            for i in range(45):
-                await page.wait_for_timeout(1000)
-                if await page.evaluate("() => !!window.__bg_service"):
-                    await self._wait_until_idle(page)
-                    if captured and self._bootstrap_template is None:
-                        self._bootstrap_template = dict(captured)
-                    await page.fill("textarea", original_text)
-                    log.debug(
-                        f"[timing] botguard captured after {i + 1}s, total {time.time() - t0:.1f}s"
-                    )
-                    return page
-
-            raise RuntimeError("BotGuardService capture timeout")
-        finally:
-            unsub()
             try:
-                await page.fill("textarea", original_text)
-            except Exception:
-                pass
+                original_text = ""
+                try:
+                    await page.wait_for_selector("textarea", timeout_s=20.0)
+                except Exception:
+                    dbg_url = page.url
+                    if "available-regions" in (dbg_url or ""):
+                        raise RuntimeError(
+                            "Google AI Studio 地区限制: 访问被重定向至 available-regions"
+                        )
+                    dbg_title = await page.title()
+                    raw_dbg_body = await page.evaluate(
+                        "() => document.body?.innerText?.substring(0, 300) || ''"
+                    )
+                    dbg_body = str(raw_dbg_body or "")
+                    raise RuntimeError(
+                        f"textarea not found while capturing BotGuardService; url={dbg_url}, title={dbg_title}, body={dbg_body[:200]}"
+                    )
+                original_text = str(
+                    (await page.evaluate("() => document.querySelector('textarea')?.value || ''")) or ""
+                )
+                await page.fill("textarea", BOTGUARD_BOOTSTRAP_PROMPT)
+                await page.wait_for_timeout(800)
+                await page.evaluate(DIALOG_CLEANUP_JS)
+
+                if not await self._click_run_button(page):
+                    raise RuntimeError(
+                        "failed to trigger send while capturing BotGuardService"
+                    )
+
+                for i in range(45):
+                    await page.wait_for_timeout(1000)
+                    if await page.evaluate("() => !!window.__bg_service"):
+                        await self._wait_until_idle(page)
+                        if captured and self._bootstrap_template is None:
+                            self._bootstrap_template = dict(captured)
+                        await page.fill("textarea", original_text)
+                        log.debug(
+                            f"[timing] botguard captured after {i + 1}s, total {time.time() - t0:.1f}s"
+                        )
+                        return page
+
+                raise RuntimeError("BotGuardService capture timeout")
+            finally:
+                unsub()
+                try:
+                    await page.fill("textarea", original_text)
+                except Exception:
+                    pass
 
     async def import_cookies(
         self, cookie_string: str, auth_file: str | None = None
@@ -509,12 +524,25 @@ class BrowserSession:
         )
 
     async def send_hooked_request(
-        self, *, body: str, timeout_ms: int
+        self,
+        *,
+        body: str,
+        timeout_ms: int,
+        url: str | None = None,
+        headers: dict[str, str] | None = None,
     ) -> tuple[int, bytes]:
         """Replay request via XHR inside the browser context."""
         async with self.request_scope():
             page = await self.ensure_botguard_service()
-            captured_url, captured_headers = self._get_captured_info()
+            if url and headers:
+                captured_url = url
+                captured_headers = {
+                    k: v
+                    for k, v in headers.items()
+                    if k.lower() not in ("host", "content-length")
+                }
+            else:
+                captured_url, captured_headers = self._get_captured_info()
 
             timeout_s = timeout_ms / 1000
             result = await page.evaluate(
@@ -560,10 +588,21 @@ class BrowserSession:
         *,
         body: str,
         timeout_ms: int,
+        url: str | None = None,
+        headers: dict[str, str] | None = None,
     ) -> AsyncGenerator[tuple[str, object], None]:
         """Send a streaming request, yielding ('status', int) and ('chunk', bytes) events."""
         async with self.request_scope():
-            page, captured_url, captured_headers = await self._prepare_streaming()
+            if url and headers:
+                page = await self.ensure_botguard_service()
+                captured_url = url
+                captured_headers = {
+                    k: v
+                    for k, v in headers.items()
+                    if k.lower() not in ("host", "content-length")
+                }
+            else:
+                page, captured_url, captured_headers = await self._prepare_streaming()
             timeout_s = timeout_ms / 1000
             rid = uuid.uuid4().hex[:8]
 
@@ -755,8 +794,39 @@ class BrowserSession:
         target_urls = self._get_aistudio_url()
         for url in target_urls:
             try:
-                await page.goto(url, wait_until="domcontentloaded", timeout_s=20.0)
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout_s=20.0)
+                except RuntimeError as nav_exc:
+                    if "net::ERR_ABORTED" in str(nav_exc):
+                        curr = page.url or ""
+                        try:
+                            eval_url = await page.evaluate(
+                                "() => window.location.href", timeout_s=2.0
+                            )
+                            if eval_url:
+                                curr = str(eval_url)
+                        except Exception:
+                            pass
+                        if "aistudio.google.com" in curr:
+                            log.debug(
+                                "page.goto encountered net::ERR_ABORTED but already on aistudio: %s",
+                                curr,
+                            )
+                        else:
+                            raise
+                    else:
+                        raise
+
                 current_url = page.url or ""
+                try:
+                    eval_url = await page.evaluate(
+                        "() => window.location.href", timeout_s=2.0
+                    )
+                    if eval_url:
+                        current_url = str(eval_url)
+                except Exception:
+                    pass
+
                 if "available-regions" in current_url:
                     raise RuntimeError(
                         f"Google AI Studio 地区限制 (IP 漏了/不支持): {current_url}"
