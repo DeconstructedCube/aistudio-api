@@ -375,3 +375,38 @@ def resolve_model_defaults(
             resolved = replace(resolved, default_tools=filtered)
 
     return resolved
+
+
+def get_configured_api_key_items(
+    config_path: str | os.PathLike[str] | None = None,
+) -> list[dict[str, str]]:
+    """获取 config.yaml 中配置的结构化 API Key 列表（含备注名与创建时间）。"""
+    resolved_path = _resolve_config_path(config_path)
+    config = _load_yaml_config(resolved_path)
+    raw_keys = config.get("api_keys")
+    items: list[dict[str, str]] = []
+    if isinstance(raw_keys, list):
+        for k in raw_keys:
+            if isinstance(k, dict):
+                key_val = str(k.get("key") or "").strip()
+                name_val = str(k.get("name") or "API Key").strip()
+                created_val = str(k.get("created_at") or "").strip()
+                if key_val:
+                    items.append({"key": key_val, "name": name_val, "created_at": created_val})
+            elif isinstance(k, str) and k.strip():
+                items.append({"key": k.strip(), "name": "API Key", "created_at": ""})
+    elif isinstance(raw_keys, str):
+        for line in raw_keys.splitlines():
+            for part in line.split(","):
+                s = part.strip()
+                if s:
+                    items.append({"key": s, "name": "API Key", "created_at": ""})
+    return items
+
+
+def get_configured_api_keys(
+    config_path: str | os.PathLike[str] | None = None,
+) -> frozenset[str]:
+    """获取 config.yaml 中配置的所有有效 API Key 集合。"""
+    items = get_configured_api_key_items(config_path)
+    return frozenset(item["key"] for item in items if item.get("key"))

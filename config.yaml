@@ -1,3 +1,7 @@
+# API 客户端调用鉴权密钥列表 (用于外部客户端调用 /v1beta/... 接口鉴权)
+# 留空 [] 表示对外 API 免 Key 开放调用；配置密钥后客户端必须携带对应 Key 访问。
+api_keys: []
+
 model_defaults:
   # profiles: 按模型名规则匹配，适合整类模型共用默认配置
   profiles:

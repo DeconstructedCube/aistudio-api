@@ -78,7 +78,7 @@ class AccountMeta:
     created_at: str
     last_used: str | None = None
     auth_user: str = "0"
-
+    cookie_id: str | None = None
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
@@ -91,6 +91,7 @@ class AccountMeta:
             created_at=str(data.get("created_at") or ""),
             last_used=str(data["last_used"]) if data.get("last_used") is not None else None,
             auth_user=str(data.get("auth_user") or "0"),
+            cookie_id=str(data["cookie_id"]) if data.get("cookie_id") is not None else None,
         )
 
 @dataclass
@@ -242,6 +243,7 @@ class AccountStore:
         storage_state: dict[str, object],
         account_id: str | None = None,
         auth_user: str = "0",
+        cookie_id: str | None = None,
     ) -> AccountMeta:
         """保存新账号。"""
         registry = self._load_registry()
@@ -264,6 +266,7 @@ class AccountStore:
             created_at=created_at,
             last_used=now,
             auth_user=auth_user,
+            cookie_id=cookie_id,
         )
         account_dir = self._accounts_dir / account_id
         account_dir.mkdir(parents=True, exist_ok=True)

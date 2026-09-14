@@ -4,15 +4,13 @@ Google AI Studio API reverse proxy. Exposes Google Gemini native API protocol.
 
 [中文文档](./README.md)
 
-## Features
-
-- Gemini API protocol compatibility
-- Dynamic model discovery
-- Cookie-based multi-account polling
-- Tools: Google Search, Maps, Code Execution, URL Context, Function Calling
-- Thinking process output
-- Image generation
-- Chrome DevTools Protocol based headless browser session
+- Native Gemini API protocol compatibility (Thinking, Multimodal, Function Calling, and Image Generation)
+- Dynamic model discovery synchronized with Google AI Studio
+- Multi-account Cookie intelligent rotation scheduling with per-model independent cooldowns
+- Automatic infinite downward account probing for multi-login sessions (`u/0`, `u/1`...)
+- Official tools support: Google Search, Google Maps, Code Execution Sandbox, URL Context
+- Modern Web Management Console (Account pool, real-time stats, online rule hot reloading, and auth guards)
+- Lightweight headless browser environment driven by pure-Python asynchronous CDP
 
 > 💡 **Memory footprint (measured)**: the pure-Python service layer runs at ~30–85 MB; with the bundled CloakBrowser (Chromium) enabled, the full daemon idles at ~500–650 MB. On Termux make sure the device has at least 1 GB of free RAM.
 
@@ -71,32 +69,63 @@ Docker Compose:
 docker compose up -d
 ```
 
-## Configuration
+## Web Management Console & Configuration
 
-Web interface available at `http://localhost:8080` for account and rotation management.
+Access `http://localhost:8080` to enter the Web Management Console:
 
-Environment variables:
+- **Dashboard**: Real-time stats per model with independent request volumes, success rates, 429 rate limit events, and integration quick-start snippets.
+- **Account Management**: Support for importing Google cookies, infinite automatic probe for multi-login accounts (`u/0`, `u/1`...), per-model rate limit and cooldown visibility, manual activation, renaming, and secure deletion.
+- **Rotation Policies**: Four intelligent rotation strategies:
+  - `sticky`: Stick to the active account until a 429 rate limit occurs (recommended default).
+  - `round_robin`: Sequential round-robin dispatch, automatically skipping accounts in cooldown.
+  - `lru`: Least recently used first to balance load across all accounts.
+  - `least_rl`: Prioritize healthy accounts with the fewest rate-limited requests.
+- **Model Rules & Configuration**: Inspect runtime parameters and edit `config.yaml` online with zero-downtime hot reloading for tools and safety filters.
+- **Authentication & Security**: Dedicated `/login` page and client-side route guards, automatically redirecting unauthorized access when `AISTUDIO_WEB_PASSWORD` is set; API client access keys can be assigned and managed directly in `config.yaml` or through the Web UI.
 
-- `AISTUDIO_PORT`: 8080
-- `AISTUDIO_API_KEYS`: API keys separated by comma
-- `AISTUDIO_PROXY`: HTTP or SOCKS5 proxy
-- `AISTUDIO_BROWSER_EXECUTABLE`: Path to Chromium executable
-- `AISTUDIO_ACCOUNT_ROTATION_MODE`: round_robin, lru, least_rl
+### Environment Variables
 
-Config file `config.yaml` controls default model behaviors.
+| Variable | Description | Default |
+|---|---|---|
+| `AISTUDIO_WEB_PASSWORD` | Web Management Console login password (also supports `AISTUDIO_ADMIN_PASSWORD`) | None (auth disabled) |
+| `AISTUDIO_PROXY` | HTTP / SOCKS5 outbound proxy address | None (direct) |
+| `AISTUDIO_BROWSER_EXECUTABLE` | Path to Chromium executable | Auto-detected |
+| `AISTUDIO_ACCOUNT_ROTATION_MODE` | Account rotation mode (`sticky`, `round_robin`, `lru`, `least_rl`) | `sticky` |
+| `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | Default cooldown seconds after account 429 rate limit | `60` |
+| `AISTUDIO_MAX_CONCURRENCY` | Maximum concurrent browser requests semaphore | `3` |
+| `AISTUDIO_SNAPSHOT_CACHE_TTL` | BotGuard snapshot cache TTL in seconds | `3600` |
+
+Model default behaviors and tools are defined in `config.yaml`.
+
+### Frontend Development & Build
+
+The Web Console source code resides in `web/` (built with Vite + Vue 3 + TypeScript):
+
+```bash
+cd web
+bun install          # Install dependencies
+bun run dev          # Start Vite dev server (port 3000, proxies to 8080 API)
+bun run type-check   # Run TypeScript type check
+bun run lint         # Run ESLint code quality checks
+bun run build        # Build and sync static assets to src/aistudio_api/static
+```
 
 ## Usage
 
-Authentication via `x-goog-api-key` header, `x-api-key` header, `Authorization: Bearer` or `?key=` URL parameter.
+Supported authentication methods:
+- URL parameter `?key=YOUR_API_KEY`
+- Header `x-goog-api-key: YOUR_API_KEY`
+- Header `x-api-key: YOUR_API_KEY`
+- Header `Authorization: Bearer YOUR_API_KEY`
 
-### Endpoints
+### Endpoints (cURL)
 
-List models:
+**List Models**:
 ```bash
 curl http://localhost:8080/v1beta/models -H "x-goog-api-key: your-api-key"
 ```
 
-Generate text:
+**Text Generation (Non-streaming)**:
 ```bash
 curl http://localhost:8080/v1beta/models/gemini-3.7-flash:generateContent \
   -H "x-goog-api-key: your-api-key" \
@@ -104,20 +133,41 @@ curl http://localhost:8080/v1beta/models/gemini-3.7-flash:generateContent \
   -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'
 ```
 
-Streaming generation requires `?alt=sse` parameter and `streamGenerateContent` endpoint.
+**Streaming Generation (Server-Sent Events)**:
+```bash
+curl http://localhost:8080/v1beta/models/gemini-3.7-flash:streamGenerateContent?alt=sse \
+  -H "x-goog-api-key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'
+```
 
-### Python SDK
+### Official Python SDK (google-genai)
 
+Install dependency:
 ```bash
 pip install google-genai
 ```
 
+Streaming and non-streaming usage example:
 ```python
 from google import genai
 
 client = genai.Client(
     api_key="your-api-key",
     http_options={
+        "api_version": "v1beta",
+        "base_url": "http://localhost:8080",
+    },
+)
+
+# Streaming generation
+response = client.models.generate_content_stream(
+    model="gemini-3.7-flash",
+    contents="Hello from Gemini"
+)
+for chunk in response:
+    print(chunk.text, end="", flush=True)
+```
         "api_version": "v1beta",
         "base_url": "http://localhost:8080",
     },

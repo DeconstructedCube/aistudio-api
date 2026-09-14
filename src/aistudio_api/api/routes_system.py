@@ -132,3 +132,233 @@ async def force_next_account(
             "email": result.email,
         },
     }
+
+
+# ========== 系统与模型配置 API ==========
+
+
+class ConfigYamlUpdateRequest(BaseModel):
+    yaml_content: str
+
+
+@protected_router.get("/config")
+async def get_system_config() -> dict[str, object]:
+    """获取系统运行配置与 config.yaml 内容。"""
+    from pathlib import Path
+    from aistudio_api.config import settings
+
+    config_yaml_path = Path(__file__).resolve().parents[3] / "config.yaml"
+    yaml_content = ""
+    if config_yaml_path.exists():
+        try:
+            yaml_content = config_yaml_path.read_text(encoding="utf-8")
+        except Exception:
+            pass
+
+    return {
+        "port": settings.port,
+        "browser_port": settings.browser_port,
+        "browser_headless": settings.browser_headless,
+        "proxy_configured": bool(settings.proxy_url),
+        "auth_enabled": settings.auth_enabled,
+        "max_concurrency": settings.max_concurrency,
+        "account_rotation_mode": settings.account_rotation_mode,
+        "account_cooldown_seconds": settings.account_cooldown_seconds,
+        "snapshot_cache_ttl": settings.snapshot_cache_ttl,
+        "yaml_content": yaml_content,
+    }
+
+
+@protected_router.put("/config/yaml")
+async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
+    """更新 config.yaml 文件内容并热重载默认配置。"""
+    import yaml
+    from pathlib import Path
+
+    try:
+        parsed = yaml.safe_load(req.yaml_content)
+        if parsed is not None and not isinstance(parsed, dict):
+            raise HTTPException(400, detail="YAML 顶层必须为字典结构")
+    except yaml.YAMLError as e:
+        raise HTTPException(400, detail=f"YAML 语法格式错误: {e}")
+
+    config_yaml_path = Path(__file__).resolve().parents[3] / "config.yaml"
+    try:
+        config_yaml_path.write_text(req.yaml_content, encoding="utf-8")
+        from aistudio_api.infrastructure.gateway.model_defaults import (
+            _compiled_model_overrides,
+            _compiled_profiles,
+        )
+
+        _compiled_profiles.cache_clear()
+        _compiled_model_overrides.cache_clear()
+        return {"ok": True, "message": "配置已保存并重载"}
+    except Exception as e:
+        raise HTTPException(500, detail=f"写入配置文件失败: {e}")
+
+
+# ========== API Key 备注与密钥管理 ==========
+
+
+class ApiKeyItemModel(BaseModel):
+    name: str = "API Key"
+    key: str = ""
+    created_at: str | None = None
+
+
+class CreateApiKeyRequest(BaseModel):
+    name: str = "API Key"
+    key: str | None = None
+
+
+class UpdateApiKeyRequest(BaseModel):
+    name: str
+
+
+@protected_router.get("/api-keys", response_model=list[ApiKeyItemModel])
+async def list_api_keys() -> list[ApiKeyItemModel]:
+    """获取 config.yaml 中配置的 API Keys 列表。"""
+    from aistudio_api.infrastructure.gateway.model_defaults import get_configured_api_key_items
+
+    items = get_configured_api_key_items()
+    return [
+        ApiKeyItemModel(
+            name=item.get("name") or "API Key",
+            key=item.get("key") or "",
+            created_at=item.get("created_at") or None,
+        )
+        for item in items
+    ]
+
+
+@protected_router.post("/api-keys", response_model=ApiKeyItemModel)
+async def create_api_key(req: CreateApiKeyRequest) -> ApiKeyItemModel:
+    """在 config.yaml 中添加新的 API Key。"""
+    import secrets
+    import yaml
+    from datetime import datetime, UTC
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        _compiled_model_overrides,
+        _compiled_profiles,
+        _resolve_config_path,
+    )
+
+    new_key = req.key.strip() if req.key and req.key.strip() else f"sk-aistudio-{secrets.token_hex(16)}"
+    created_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    name = req.name.strip() if req.name.strip() else "API Key"
+
+    config_path = _resolve_config_path(None)
+    content = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    parsed = yaml.safe_load(content) or {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+
+    raw_keys = parsed.get("api_keys")
+    new_list: list[dict[str, str]] = []
+    if isinstance(raw_keys, list):
+        for item in raw_keys:
+            if isinstance(item, dict):
+                new_list.append({
+                    "name": str(item.get("name") or "API Key"),
+                    "key": str(item.get("key") or ""),
+                    "created_at": str(item.get("created_at") or ""),
+                })
+            elif isinstance(item, str) and item.strip():
+                new_list.append({"name": "API Key", "key": item.strip(), "created_at": ""})
+
+    new_list.append({"name": name, "key": new_key, "created_at": created_at})
+    parsed["api_keys"] = new_list
+
+    config_path.write_text(yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    _compiled_profiles.cache_clear()
+    _compiled_model_overrides.cache_clear()
+
+    return ApiKeyItemModel(name=name, key=new_key, created_at=created_at)
+
+
+@protected_router.delete("/api-keys/{key_value}")
+async def delete_api_key(key_value: str) -> dict[str, bool]:
+    """在 config.yaml 中删除指定 API Key。"""
+    import yaml
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        _compiled_model_overrides,
+        _compiled_profiles,
+        _resolve_config_path,
+    )
+
+    config_path = _resolve_config_path(None)
+    content = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    parsed = yaml.safe_load(content) or {}
+    if not isinstance(parsed, dict):
+        raise HTTPException(404, detail="未找到 API Key")
+
+    raw_keys = parsed.get("api_keys")
+    new_list: list[dict[str, str]] = []
+    found = False
+    if isinstance(raw_keys, list):
+        for item in raw_keys:
+            item_key = str(item.get("key") if isinstance(item, dict) else item).strip()
+            if item_key == key_value:
+                found = True
+                continue
+            if isinstance(item, dict):
+                new_list.append({
+                    "name": str(item.get("name") or "API Key"),
+                    "key": item_key,
+                    "created_at": str(item.get("created_at") or ""),
+                })
+            elif item_key:
+                new_list.append({"name": "API Key", "key": item_key, "created_at": ""})
+
+    if not found:
+        raise HTTPException(404, detail="未找到该 API Key")
+
+    parsed["api_keys"] = new_list
+    config_path.write_text(yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    _compiled_profiles.cache_clear()
+    _compiled_model_overrides.cache_clear()
+
+    return {"ok": True}
+
+
+@protected_router.put("/api-keys/{key_value}", response_model=ApiKeyItemModel)
+async def update_api_key_name(key_value: str, req: UpdateApiKeyRequest) -> ApiKeyItemModel:
+    """在 config.yaml 中更新指定 API Key 的备注名。"""
+    import yaml
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        _compiled_model_overrides,
+        _compiled_profiles,
+        _resolve_config_path,
+    )
+
+    config_path = _resolve_config_path(None)
+    content = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+    parsed = yaml.safe_load(content) or {}
+    if not isinstance(parsed, dict):
+        raise HTTPException(404, detail="未找到 API Key")
+
+    raw_keys = parsed.get("api_keys")
+    new_list: list[dict[str, str]] = []
+    updated_item: ApiKeyItemModel | None = None
+    new_name = req.name.strip() if req.name.strip() else "API Key"
+
+    if isinstance(raw_keys, list):
+        for item in raw_keys:
+            item_key = str(item.get("key") if isinstance(item, dict) else item).strip()
+            created = str(item.get("created_at") if isinstance(item, dict) else "")
+            if item_key == key_value:
+                updated_item = ApiKeyItemModel(name=new_name, key=item_key, created_at=created or None)
+                new_list.append({"name": new_name, "key": item_key, "created_at": created})
+            else:
+                name_val = str(item.get("name") if isinstance(item, dict) else "API Key")
+                new_list.append({"name": name_val, "key": item_key, "created_at": created})
+
+    if not updated_item:
+        raise HTTPException(404, detail="未找到该 API Key")
+
+    parsed["api_keys"] = new_list
+    config_path.write_text(yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    _compiled_profiles.cache_clear()
+    _compiled_model_overrides.cache_clear()
+
+    return updated_item

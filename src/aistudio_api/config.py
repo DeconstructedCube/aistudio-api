@@ -56,13 +56,10 @@ def _parse_api_keys(raw: str | None) -> tuple[str, ...]:
     return tuple(keys)
 
 
-def _load_api_keys() -> frozenset[str]:
-    values: list[str] = []
-    for name in ("AISTUDIO_API_KEY", "AISTUDIO_API_KEYS"):
-        for key in _parse_api_keys(os.getenv(name)):
-            if key not in values:
-                values.append(key)
-    return frozenset(values)
+def _load_web_password() -> str | None:
+    return os.getenv("AISTUDIO_WEB_PASSWORD") or os.getenv("AISTUDIO_ADMIN_PASSWORD")
+
+
 
 
 _AUTH_SEARCH_ROOTS = [
@@ -138,7 +135,8 @@ class Settings:
     auth_file: str | None = discover_auth_file()
     tmp_dir: str = os.getenv("AISTUDIO_TMP_DIR", tempfile.gettempdir())
     proxy_url: str | None = discover_proxy_url()
-    api_keys: frozenset[str] = _load_api_keys()
+    web_password: str | None = _load_web_password()
+    api_keys: frozenset[str] = frozenset()
     timeout_replay: int = int(os.getenv("AISTUDIO_TIMEOUT_REPLAY", "120"))
     timeout_stream: int = int(os.getenv("AISTUDIO_TIMEOUT_STREAM", "120"))
     timeout_capture: int = int(os.getenv("AISTUDIO_TIMEOUT_CAPTURE", "30"))
@@ -153,10 +151,9 @@ class Settings:
         "AISTUDIO_DUMP_RAW_RESPONSE_DIR", tempfile.gettempdir()
     )
     accounts_dir: str = os.getenv("AISTUDIO_ACCOUNTS_DIR", "")
-    # 账号轮询配置
     account_rotation_mode: str = os.getenv(
         "AISTUDIO_ACCOUNT_ROTATION_MODE", "sticky"
-    )  # sticky, round_robin, lru, least_rl
+    )
     account_cooldown_seconds: int = int(
         os.getenv("AISTUDIO_ACCOUNT_COOLDOWN_SECONDS", "60")
     )
@@ -165,7 +162,6 @@ class Settings:
 
     @property
     def auth_enabled(self) -> bool:
-        return bool(self.api_keys)
-
-
+        """网页管理端鉴权是否开启。"""
+        return bool(self.web_password)
 settings = Settings()

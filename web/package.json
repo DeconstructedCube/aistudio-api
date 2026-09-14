@@ -1,0 +1,38 @@
+{
+  "name": "aistudio-api-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --bun vite",
+    "build": "bun --bun x vue-tsc -b && bun --bun vite build",
+    "type-check": "bun --bun x vue-tsc -b",
+    "lint": "bun --bun x eslint src --max-warnings 0",
+    "preview": "bun --bun vite preview"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "lucide-vue-next": "^0.475.0",
+    "pinia": "^3.0.1",
+    "tailwind-merge": "^3.0.2",
+    "vue": "^3.5.13",
+    "vue-router": "^4.5.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@rollup/rollup-android-arm64": "^4.63.3",
+    "@rollup/rollup-linux-arm64-gnu": "^4.63.3",
+    "@types/node": "^22.13.5",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^10.10.0",
+    "eslint-plugin-vue": "^10.11.0",
+    "globals": "^17.12.0",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.70.0",
+    "vite": "^6.2.0",
+    "vue-tsc": "^2.2.8"
+  }
+}

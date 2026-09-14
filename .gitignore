@@ -30,4 +30,7 @@ cache/
 db/
 *.log
 *.pid
+node_modules/
+web/node_modules/
+web/dist/
 

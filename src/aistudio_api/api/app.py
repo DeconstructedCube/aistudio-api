@@ -7,12 +7,11 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
-from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 
-from .dependencies import require_api_key
+from .dependencies import require_api_key, require_web_auth
 from .routes_accounts import router as accounts_router
 from .routes_gemini import router as gemini_router
 from .routes_models import router as models_router
@@ -98,27 +97,23 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AI Studio API", lifespan=lifespan)
 app.include_router(system_public_router)
-app.include_router(system_protected_router, dependencies=[Depends(require_api_key)])
+app.include_router(system_protected_router, dependencies=[Depends(require_web_auth)])
+app.include_router(accounts_router, dependencies=[Depends(require_web_auth)])
 app.include_router(gemini_router, dependencies=[Depends(require_api_key)])
 app.include_router(models_router, dependencies=[Depends(require_api_key)])
-app.include_router(accounts_router, dependencies=[Depends(require_api_key)])
 
-# 挂载静态文件
-import os
+# 挂载前端静态资源与 SPA 路由支持
+from pathlib import Path
+from fastapi.responses import FileResponse
 
-static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
-if os.path.isdir(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+static_dir = Path(__file__).resolve().parents[1] / "static"
+index_html_path = static_dir / "index.html"
 
-
-@app.get("/")
-async def root():
-    return RedirectResponse(url="/static/index.html")
-
-
-@app.get("/login")
-async def login_page():
-    return RedirectResponse(url="/static/login.html")
+if static_dir.is_dir():
+    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    assets_dir = static_dir / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
 
 @app.get("/auth/check")
@@ -129,6 +124,15 @@ async def auth_check():
     return {"auth_enabled": settings.auth_enabled}
 
 
+@app.get("/")
+@app.get("/login")
+@app.get("/accounts")
+@app.get("/settings")
+async def serve_spa():
+    """为前端 SPA 提供统一入口页面。"""
+    if index_html_path.is_file():
+        return FileResponse(index_html_path)
+    return {"message": "AI Studio API Web UI"}
 def main():
     from aistudio_api.config import settings
 
