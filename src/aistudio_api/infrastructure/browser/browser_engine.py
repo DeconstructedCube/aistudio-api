@@ -89,38 +89,72 @@ def find_chromium_executable() -> str:
             for match in reversed(cloak_matches):
                 if os.path.isfile(match) and (os.access(match, os.X_OK) or platform.system() == "Windows"):
                     return _resolve_local_chrome(match)
-    # 3. Playwright cached Chromium (~/.cache/ms-playwright/chromium-*/chrome-linux/chrome)
-    pw_matches = sorted(
-        glob.glob(
-            os.path.expanduser("~/.cache/ms-playwright/chromium-*/chrome-linux/chrome"),
-            recursive=True,
-        )
-    )
-    if pw_matches:
-        for match in reversed(pw_matches):
-            if os.path.isfile(match) and os.access(match, os.X_OK):
-                return _resolve_local_chrome(match)
-
     # 4. Standard binary names in PATH
-    for name in ("chromium-browser", "chromium", "google-chrome", "chrome"):
+    for name in (
+        "google-chrome-stable",
+        "google-chrome",
+        "chromium-browser",
+        "chromium",
+        "chrome",
+        "msedge",
+        "brave-browser",
+        "brave",
+    ):
         p = shutil.which(name)
         if p and os.access(p, os.X_OK):
             return p
 
-    # 5. Termux / Linux standard system paths
-    for p in (
-        "/data/data/com.termux/files/usr/bin/chromium-browser",
-        "/usr/bin/chromium-browser",
-        "/usr/bin/chromium",
-        "/usr/bin/google-chrome",
-    ):
-        if os.path.isfile(p) and os.access(p, os.X_OK):
+    # 5. Standard system installation paths across platforms
+    sys_paths: list[str] = []
+    sys_name = platform.system()
+    if sys_name == "Darwin":
+        sys_paths.extend(
+            [
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                "/Applications/Chromium.app/Contents/MacOS/Chromium",
+                "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+                "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+                os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                os.path.expanduser("~/Applications/Chromium.app/Contents/MacOS/Chromium"),
+            ]
+        )
+    elif sys_name == "Windows":
+        sys_paths.extend(
+            [
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe"),
+                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                os.path.expandvars(r"%PROGRAMFILES(X86)%\Microsoft\Edge\Application\msedge.exe"),
+            ]
+        )
+    else:
+        # Linux / Docker / Termux
+        sys_paths.extend(
+            [
+                "/data/data/com.termux/files/usr/bin/chromium-browser",
+                "/usr/bin/google-chrome-stable",
+                "/usr/bin/google-chrome",
+                "/usr/bin/chromium",
+                "/usr/bin/chromium-browser",
+                "/snap/bin/chromium",
+                "/usr/local/bin/chrome",
+                "/usr/local/bin/chromium",
+            ]
+        )
+
+    for p in sys_paths:
+        if os.path.isfile(p) and (os.access(p, os.X_OK) or sys_name == "Windows"):
             return p
 
     raise FileNotFoundError(
         "Could not locate a valid Chromium executable on this system.\n"
-        "Hint: on Termux run `bash scripts/install_termux_prereqs.sh` to provision\n"
-        "the proot-distro container with CloakBrowser."
+        "Checked: CloakBrowser (.cloakbrowser / ~/.cloakbrowser), PATH, and standard system paths.\n"
+        "Set AISTUDIO_BROWSER_EXECUTABLE environment variable to specify explicit path."
     )
 
 
@@ -223,37 +257,52 @@ class ChromiumProcess:
         return self.process.poll() is None
 
     def terminate(self, timeout_s: float = 3.0) -> None:
-        """Terminate the Chromium subprocess tree.
-
-        Sends SIGTERM to the entire process group (the wrapper,
-        ``proot-distro login``, and the actual ``chrome`` binary). Falls back
-        to SIGKILL on the group if anything still lingers. Without
-        ``killpg`` the Termux proot wrapper routinely survives the signal and
-        leaves an orphan ``chrome`` behind that pins the CDP port.
-        """
+        """Terminate the Chromium subprocess tree safely across platforms."""
         import signal
 
         if self.process.poll() is not None:
             return
+
+        if platform.system() == "Windows":
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=timeout_s)
+            except subprocess.TimeoutExpired:
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(self.process.pid)],
+                        capture_output=True,
+                    )
+                except Exception:
+                    self.process.kill()
+            except Exception as e:
+                log.debug("Error terminating Chromium process on Windows: %s", e)
+            return
+
+        # POSIX (Linux, macOS, Termux, Docker)
         try:
             pgid = os.getpgid(self.process.pid)
-        except ProcessLookupError:
+        except (ProcessLookupError, AttributeError):
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=timeout_s)
+            except Exception:
+                pass
             return
         try:
             os.killpg(pgid, signal.SIGTERM)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             return
         try:
             self.process.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(pgid, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
             self.process.wait(timeout=1.0)
         except Exception as e:
             log.debug("Error terminating Chromium process: %s", e)
-
 
 def launch_chromium_process(
     port: int,
