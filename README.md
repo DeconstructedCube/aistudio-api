@@ -8,13 +8,13 @@ Google AI Studio 反向代理服务。提供原生 Gemini API 接口。
 
 - 兼容官方 Gemini API 协议规范（包含 Thinking 思维链、Multimodal 多模态、Function Calling 与图像生成）
 - 动态获取可用模型列表（与 Google 官方同步）
-- 多 Google 账号 Cookie 轮询调度与按模型独立冷却（支持 `sticky`、`round_robin`、`lru`、`least_rl`）
-- 支持单份 Cookie 自动向下探活多登录账号 (`u/0`, `u/1`...)
+- 多 Google 账号自动黏性调度与按模型独立故障转移
+- 支持单份 Cookie 自动向下探活多登录账号 u/0, u/1 批量导入
 - 支持官方工具调用（Google Search、Google Maps、代码执行沙箱等）
 - Web 管理控制台（账号管理、实时统计看板、在线规则热重载与独立鉴权）
 - 基于纯 Python 异步 CDP 驱动的轻量化无头浏览器环境
 
-内存占用参考（实测）：纯 Python 服务部分约 30~85 MB；启用内置 CloakBrowser (Chromium) 后整体常驻约 500~650 MB。在 Termux 上请确保设备剩余可用 RAM ≥ 1 GB。
+内存占用参考：纯 Python 服务约 30 - 85 MB；启用内置 CloakBrowser 后整体常驻约 500 - 650 MB。在 Termux 上需确保设备可用 RAM ≥ 1 GB。
 
 ## 系统架构与技术文档
 
@@ -80,26 +80,19 @@ docker compose up -d
 服务启动后访问 `http://localhost:8080` 进入 Web 管理控制台：
 
 - **控制面板**：实时查看各模型独立请求量、成功数、429 频率限制与最后调用时间，提供快速集成代码示例。
-- **账号管理**：支持多账号 Cookie 导入与格式解析，支持单份 Cookie 无限向下探活多登录账号并自动分化建档；支持观测每个账号按模型的独立冷却状态与手动激活切换。
-- **轮询调度策略**：支持四种轮询策略调度：
-  - `sticky`（保持固定）：优先使用当前激活账号，直到遇到 429 限流才自动轮换（默认推荐）。
-  - `round_robin`（顺序轮询）：按账号池顺序依次分发，自动跳过处于冷却期的账号。
-  - `lru`（最近最少使用）：优先调用空闲时间最长的账号，均衡各账号负载。
-  - `least_rl`（最小限流优先）：优先调用限流次数最少的健康账号，最大化服务稳定性。
-- **模型规则配置**：在线查看与编辑 `config.yaml`，保存后自动完成热重载，无需重启服务即可调整默认工具与安全过滤等级。
-- **安全鉴权**：提供独立的登录验证页面（`/login`）与路由守卫，在服务端设置 `AISTUDIO_WEB_PASSWORD` 环境变量时自动对未授权访问进行拦截；API 客户端访问密钥可在 `config.yaml` 或 Web 界面中集中分配与管理。
+- **账号管理**：支持多账号 Cookie 导入与格式解析，支持单份 Cookie 向下探活多登录账号并自动分化建档；直观展示各账号按模型的配额状态与手动激活切换。
+- **黏性调度策略**：优先使用当前激活账号，遇到 429 配额耗尽时自动故障转移至可用账号，免去频繁切号开销。
+- **模型规则配置**：在线查看与编辑 config.yaml，保存后自动完成热重载，无需重启服务即可调整默认工具与安全过滤等级。
+- **安全鉴权**：提供独立的登录验证页面 /login 与路由守卫，在服务端设置 AISTUDIO_WEB_PASSWORD 时自动对未授权访问进行拦截；API 客户端访问密钥可在 config.yaml 或 Web 界面中集中分配与管理。
 
 ### 环境变量说明
 
 | 环境变量 | 说明 | 默认值 |
 |---|---|---|
 | `AISTUDIO_PORT` | 服务监听端口 | `8080` |
-| `AISTUDIO_WEB_PASSWORD` | 网页管理控制台登录密码 (亦支持 `AISTUDIO_ADMIN_PASSWORD`) | 空（免密直接进入） |
-| `AISTUDIO_PROXY` | HTTP / SOCKS5 出口代理地址 | 空（直连） |
-| `AISTUDIO_BROWSER_EXECUTABLE` | Chromium 浏览器可执行文件绝对路径 | 自动探测 / 默认路径 |
-| `AISTUDIO_ACCOUNT_ROTATION_MODE` | 账号轮询模式 (`sticky`, `round_robin`, `lru`, `least_rl`) | `sticky` |
-| `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | 账号 429 限流后的默认冷却秒数 | `60` |
-| `AISTUDIO_MAX_CONCURRENCY` | 浏览器并发请求信号量上限 | `3` |
+| `AISTUDIO_WEB_PASSWORD` | 网页管理控制台登录密码 (亦支持 `AISTUDIO_ADMIN_PASSWORD`) | 空 |
+| `AISTUDIO_PROXY` | HTTP / SOCKS5 出口代理地址 | 空 |
+| `AISTUDIO_BROWSER_EXECUTABLE` | Chromium 浏览器可执行文件绝对路径 | 自动探测 |
 | `AISTUDIO_SNAPSHOT_CACHE_TTL` | BotGuard 快照缓存有效期（秒） | `3600` |
 
 模型默认参数与工具规则由根目录 `config.yaml` 定义。

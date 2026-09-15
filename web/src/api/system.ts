@@ -2,7 +2,7 @@ import { request } from './client.ts'
 import type {
   StatsResponse,
   RotationStatusResponse,
-  SetRotationModeRequest,
+  ClearCooldownRequest,
   SystemConfig,
   ApiKeyItem,
   CreateApiKeyRequest,
@@ -18,8 +18,8 @@ export const systemApi = {
     return request<RotationStatusResponse>('/rotation')
   },
 
-  setRotationMode(req: SetRotationModeRequest): Promise<{ ok: boolean; mode: string; cooldown_seconds: number }> {
-    return request('/rotation/mode', {
+  clearCooldown(req: ClearCooldownRequest = {}): Promise<{ ok: boolean; accounts: Record<string, unknown> }> {
+    return request('/rotation/clear-cooldown', {
       method: 'POST',
       body: JSON.stringify(req),
     })

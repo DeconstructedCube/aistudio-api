@@ -7,7 +7,7 @@ import StatCard from '@/components/ui/StatCard.vue'
 import ModelStatsTable from '@/components/dashboard/ModelStatsTable.vue'
 import {
   UserCheck,
-  RotateCw,
+  Users,
   Activity,
   AlertTriangle,
   Code2,
@@ -29,14 +29,13 @@ const activeAccountDisplay = computed(() => {
   return (acc.email || acc.name || acc.id) + sub
 })
 
-const rotationModeDisplay = computed(() => {
-  const modeMap: Record<string, string> = {
-    sticky: '保持固定 (Sticky)',
-    round_robin: '顺序轮询 (Round-Robin)',
-    lru: '最久未用 (LRU)',
-    least_rl: '最小限流 (Least-RL)',
-  }
-  return modeMap[systemStore.rotationMode] || systemStore.rotationMode
+const totalAccountsCount = computed(() => accountsStore.accounts.length)
+
+const availableAccountsCount = computed(() => {
+  if (!systemStore.rotation?.accounts) return totalAccountsCount.value
+  return Object.values(systemStore.rotation.accounts).filter(
+    (a) => a.is_available !== false
+  ).length
 })
 
 async function loadData() {
@@ -53,7 +52,7 @@ onMounted(() => {
 
 const codeSnippets = [
   {
-    title: 'cURL 调用示例 (原生 Gemini 协议)',
+    title: 'cURL 调用示例',
     lang: 'bash',
     code: `curl http://localhost:8080/v1beta/models/gemini-3.8-flash:generateContent \\
   -H "x-goog-api-key: your-api-key" \\
@@ -61,7 +60,7 @@ const codeSnippets = [
   -d '{"contents": [{"role": "user", "parts": [{"text": "Hello Gemini"}]}]}'`,
   },
   {
-    title: 'Python 官方 SDK (google-genai) 调用示例',
+    title: 'Python SDK 调用示例',
     lang: 'python',
     code: `from google import genai
 
@@ -108,12 +107,12 @@ function copyCode(code: string, index: number) {
       </StatCard>
 
       <StatCard
-        label="轮询调度策略"
-        :value="rotationModeDisplay"
+        label="可用账号"
+        :value="`${availableAccountsCount} / ${totalAccountsCount}`"
         color="default"
       >
         <template #icon>
-          <RotateCw class="w-4 h-4 text-brand-600" />
+          <Users class="w-4 h-4 text-brand-600" />
         </template>
       </StatCard>
 
@@ -129,7 +128,7 @@ function copyCode(code: string, index: number) {
       </StatCard>
 
       <StatCard
-        label="429 限流次数"
+        label="429 配额耗尽次数"
         :value="systemStore.totalRateLimited"
         :color="systemStore.totalRateLimited > 0 ? 'amber' : 'default'"
       >
@@ -150,7 +149,7 @@ function copyCode(code: string, index: number) {
       <div class="flex items-center gap-2 border-b border-gray-100 pb-3">
         <Code2 class="w-4 h-4 text-brand-600" />
         <h3 class="font-semibold text-gray-900 text-sm">
-          快速调用示例 (开发者接入)
+          快速调用示例
         </h3>
       </div>
 

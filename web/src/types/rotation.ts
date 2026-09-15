@@ -1,5 +1,3 @@
-export type RotationMode = 'sticky' | 'round_robin' | 'lru' | 'least_rl'
-
 export interface AccountRotationStats {
   requests: number
   success: number
@@ -10,19 +8,19 @@ export interface AccountRotationStats {
   is_available?: boolean
   cooldown_remaining?: number
   model_cooldowns?: Record<string, number>
+  model_rate_limited_dates?: Record<string, string>
   model_requests?: Record<string, number>
   model_rate_limited?: Record<string, number>
 }
 
 export interface RotationStatusResponse {
   enabled: boolean
-  mode: RotationMode
-  cooldown_seconds: number
+  mode: string
   accounts: Record<string, AccountRotationStats>
   message?: string
 }
 
-export interface SetRotationModeRequest {
-  mode: RotationMode
-  cooldown_seconds?: number
+export interface ClearCooldownRequest {
+  account_id?: string
+  model?: string
 }

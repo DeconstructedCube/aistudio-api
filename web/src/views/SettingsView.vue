@@ -86,13 +86,13 @@ async function handleSaveYaml() {
       <div class="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-xs">
         <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
           <Cpu class="w-4 h-4 text-emerald-600" />
-          <span>并发与缓存控制</span>
+          <span>快照与缓存控制</span>
         </div>
         <div class="text-base font-bold text-gray-900 font-mono">
-          {{ config?.max_concurrency || 3 }} 并发上限
+          TTL: {{ config?.snapshot_cache_ttl || 3600 }}s
         </div>
         <div class="text-[11px] text-gray-400 mt-1">
-          快照 TTL: {{ config?.snapshot_cache_ttl || 3600 }} 秒
+          BotGuard 快照缓存有效期
         </div>
       </div>
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -27,10 +26,8 @@ class ModelStatsItem:
     last_used: str | None = None
 
 
-@dataclass
 class RuntimeState:
     client: AIStudioClient | None = None
-    busy_lock: asyncio.Semaphore | None = None
     browser_port: int = 9222
     snapshot_cache: SnapshotCache | None = None
     account_service: AccountService | None = None
@@ -39,17 +36,25 @@ class RuntimeState:
         default_factory=lambda: defaultdict(ModelStatsItem)
     )
 
-    def record(self, model: str, event: str, usage: dict[str, object] | None = None) -> None:
+    def record(
+        self,
+        model: str,
+        result: str,
+        usage: dict[str, object] | None = None,
+    ) -> None:
         stats = self.model_stats[model]
         stats.requests += 1
-        if event == "success":
+        tz = timezone(timedelta(hours=8))
+        stats.last_used = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+
+        if result == "success":
             stats.success += 1
-        elif event == "rate_limited":
+        elif result == "rate_limited":
             stats.rate_limited += 1
-        elif event == "errors":
+        elif result == "errors":
             stats.errors += 1
-        stats.last_used = datetime.now(timezone(timedelta(hours=8))).isoformat()
-        if usage and event == "success":
+
+        if usage:
             pt = usage.get("prompt_tokens", 0)
             ct = usage.get("completion_tokens", 0)
             tt = usage.get("total_tokens", 0)

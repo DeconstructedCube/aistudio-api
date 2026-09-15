@@ -147,11 +147,11 @@ sequenceDiagram
 
 | 平台 | 运行模式 | 浏览器后端 | 内存基准 |
 | :--- | :--- | :--- | :--- |
-| **Android (Termux)** | `proot-distro` Linux 容器隔离运行 | CloakBrowser (aarch64) | 常驻约 500MB~650MB (需空闲 RAM ≥ 1GB) |
-| **Linux (x86_64 / arm64)** | 原生宿主运行 | 系统 Chrome / Chromium / CloakBrowser | 约 350MB~500MB |
-| **macOS (Apple Silicon / Intel)** | 原生宿主运行 | Google Chrome / Chromium / Edge | 约 400MB |
-| **Windows (x64)** | 原生宿主运行 | Chrome / Edge (自带 taskkill 安全终止) | 约 450MB |
-| **Docker 容器** | Debian 12 基础镜像 | 预装 headless Chromium | 约 400MB |
+| **Android (Termux)** | `proot-distro` Linux 容器隔离运行 | CloakBrowser (aarch64) | 常驻约 500 - 650 MB (需空闲 RAM ≥ 1 GB) |
+| **Linux (x86_64 / arm64)** | 原生宿主运行 | 系统 Chrome / Chromium / CloakBrowser | 约 350 - 500 MB |
+| **macOS (Apple Silicon / Intel)** | 原生宿主运行 | Google Chrome / Chromium / Edge | 约 400 MB |
+| **Windows (x64)** | 原生宿主运行 | Chrome / Edge (自带 taskkill 安全终止) | 约 450 MB |
+| **Docker 容器** | Debian 12 基础镜像 | 预装 headless Chromium | 约 400 MB |
 
 依赖管理采用环境标记隔离：
 ```toml

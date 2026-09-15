@@ -4,9 +4,6 @@ export interface SystemConfig {
   browser_headless: boolean
   proxy_configured: boolean
   auth_enabled: boolean
-  max_concurrency: number
-  account_rotation_mode: string
-  account_cooldown_seconds: number
   snapshot_cache_ttl: number
   yaml_content: string
 }

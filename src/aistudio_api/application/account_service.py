@@ -6,10 +6,8 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import asyncio
     from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
     from aistudio_api.infrastructure.gateway.session import BrowserSession
-
 from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
 logger = logging.getLogger("aistudio.account")
 
@@ -44,7 +42,7 @@ class AccountService:
         account_id: str,
         browser_session: BrowserSession,
         snapshot_cache: SnapshotCache | None,
-        busy_lock: asyncio.Semaphore | None = None,
+        _unused_lock: object = None,
         keep_snapshot_cache: bool = False,
     ) -> AccountMeta | None:
         """切换到指定账号。"""
@@ -71,11 +69,7 @@ class AccountService:
             logger.info("已切换到账号: %s (%s)", account_id, account.name)
             return account
 
-        if busy_lock is not None:
-            async with busy_lock:
-                return await _do_switch()
-        else:
-            return await _do_switch()
+        return await _do_switch()
 
     def delete_account(self, account_id: str) -> bool:
         """删除账号。"""

@@ -11,14 +11,12 @@ import pytest
 from aistudio_api.application.account_rotator import (
     AccountRotator,
     AccountStats,
-    RotationMode,
     get_pacific_date_key,
+    get_seconds_until_pacific_midnight,
 )
 from aistudio_api.application.api_service_common import (
-    parse_cooldown_from_error,
     try_switch_account,
 )
-from aistudio_api.domain.errors import UsageLimitExceeded
 from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
 from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
 from aistudio_api.infrastructure.gateway.capture import CapturedRequest, RequestCaptureService
@@ -74,7 +72,7 @@ async def test_account_stats_per_model_cooldown():
     assert stats.is_available("gemini-2.5-flash")
 
     # 对 pro 模型限流
-    stats.record_rate_limited(model="gemini-2.5-pro", cooldown_seconds=10)
+    stats.record_rate_limited(model="gemini-2.5-pro")
     assert not stats.is_available("gemini-2.5-pro")
     # flash 模型依然可用！
     assert stats.is_available("gemini-2.5-flash")
@@ -99,35 +97,40 @@ async def test_account_stats_pacific_midnight_reset():
 
 @pytest.mark.anyio
 async def test_rotator_sticky_mode():
-    """测试 Sticky 模式：默认逮着当前号薅，直到限流才切换。"""
+    """测试 Sticky 模式：默认保持当前号，直到限流才切换。"""
     store = MagicMock(spec=AccountStore)
     acc1 = AccountMeta(id="acc_1", name="Account 1", email="acc1@example.com", created_at="2026-01-01")
     acc2 = AccountMeta(id="acc_2", name="Account 2", email="acc2@example.com", created_at="2026-01-01")
     store.list_accounts.return_value = [acc1, acc2]
 
-    rotator = AccountRotator(account_store=store, mode=RotationMode.STICKY)
+    rotator = AccountRotator(account_store=store)
 
     # 初始获取账号，获取 acc1
     next_acc = await rotator.get_next_account(model="gemini-2.5-pro", current_account_id=acc1.id)
+    assert next_acc is not None
     assert next_acc.id == "acc_1"
 
     # 请求 flash 模型，继续复用 acc1 (sticky)
     next_acc = await rotator.get_next_account(model="gemini-2.5-flash", current_account_id=acc1.id)
+    assert next_acc is not None
     assert next_acc.id == "acc_1"
 
     # acc1 在 pro 模型上发生 429
-    rotator.record_rate_limited("acc_1", model="gemini-2.5-pro", cooldown_seconds=60)
+    rotator.record_rate_limited("acc_1", model="gemini-2.5-pro")
 
     # 请求 flash 模型，acc1 依然可用，继续复用 acc1！
     next_acc = await rotator.get_next_account(model="gemini-2.5-flash", current_account_id=acc1.id)
+    assert next_acc is not None
     assert next_acc.id == "acc_1"
 
     # 请求 pro 模型，acc1 不可用，自动切换到 acc2！
     next_acc = await rotator.get_next_account(model="gemini-2.5-pro", current_account_id=acc1.id)
+    assert next_acc is not None
     assert next_acc.id == "acc_2"
 
     # 随后请求 flash 或 pro，均以 acc2 为 sticky 目标
     next_acc = await rotator.get_next_account(model="gemini-2.5-flash", current_account_id=acc2.id)
+    assert next_acc is not None
     assert next_acc.id == "acc_2"
 
 
@@ -182,11 +185,11 @@ async def test_try_switch_account_avalanche_protection():
 
 
 @pytest.mark.anyio
-def test_parse_cooldown_from_error():
-    """测试 429 报错解析分钟限制 vs 每日配额。"""
-    assert parse_cooldown_from_error(Exception("Rate limit reached: 15 RPM")) == 60
-    assert parse_cooldown_from_error(Exception("Quota limit exceeded: PerDay")) == 86400
-    assert parse_cooldown_from_error(Exception("Daily quota exhausted")) == 86400
+def test_get_seconds_until_pacific_midnight():
+    """测试距离美西 0 点剩余秒数计算。"""
+    remaining = get_seconds_until_pacific_midnight()
+    assert 0 <= remaining <= 86400
+
 
 @pytest.mark.anyio
 async def test_goto_aistudio_net_err_aborted_tolerance():

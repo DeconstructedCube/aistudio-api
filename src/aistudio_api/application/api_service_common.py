@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from fastapi import HTTPException
 
 from aistudio_api.api.response_models import (
     HealthResponse,
@@ -15,17 +14,9 @@ from aistudio_api.api.response_models import (
 from aistudio_api.api.state import runtime_state
 
 logger = logging.getLogger("aistudio.server")
-MAX_RETRIES = 3
+MAX_RETRIES = 5
 
 _switch_lock = asyncio.Lock()
-
-
-def parse_cooldown_from_error(exc: Exception) -> int:
-    """根据 429 报错内容识别是分钟限制 (RPM) 还是每日配额 (RPD)。"""
-    msg = str(exc).lower()
-    if any(k in msg for k in ("perday", "daily", "day", "quota")):
-        return 86400
-    return 60
 
 
 async def try_switch_account(
@@ -76,26 +67,10 @@ async def try_switch_account(
             next_account.id,
             client._session,
             runtime_state.snapshot_cache,
-            None,  # skip lock — caller already holds it
+            None,
             keep_snapshot_cache=False,
         )
         return result is not None
-def require_busy_lock():
-    busy_lock = runtime_state.busy_lock
-    if busy_lock is None:
-        raise HTTPException(
-            503, detail={"message": "Server not ready", "type": "service_unavailable"}
-        )
-    if busy_lock.locked():
-        raise HTTPException(
-            503,
-            detail={
-                "message": "Server is busy with maximum concurrent requests",
-                "type": "service_unavailable",
-            },
-            headers={"Retry-After": "2"},
-        )
-    return busy_lock
 
 
 async def ensure_active_account(attempt: int, model: str | None = None) -> None:
@@ -116,7 +91,6 @@ async def ensure_active_account(attempt: int, model: str | None = None) -> None:
 def record_rotator_event(
     event: str,
     model: str | None = None,
-    cooldown_seconds: int | None = None,
 ) -> None:
     rotator = runtime_state.rotator
     account_service = runtime_state.account_service
@@ -126,15 +100,13 @@ def record_rotator_event(
     if event == "success":
         rotator.record_success(account.id, model=model)
     elif event == "rate_limited":
-        rotator.record_rate_limited(
-            account.id, model=model, cooldown_seconds=cooldown_seconds
-        )
+        rotator.record_rate_limited(account.id, model=model)
     elif event == "error":
         rotator.record_error(account.id, model=model)
 
+
 def health_response() -> HealthResponse:
-    busy_lock = runtime_state.busy_lock
-    return HealthResponse(status="ok", busy=busy_lock.locked() if busy_lock else False)
+    return HealthResponse(status="ok", busy=False)
 
 
 def stats_response() -> StatsResponse:

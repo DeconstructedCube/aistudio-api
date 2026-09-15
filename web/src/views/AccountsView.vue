@@ -5,10 +5,9 @@ import { useSystemStore } from '@/stores/system.ts'
 import type { AccountWithStats } from '@/types'
 import Button from '@/components/ui/Button.vue'
 import AccountTable from '@/components/accounts/AccountTable.vue'
-import RotationConfigCard from '@/components/accounts/RotationConfigCard.vue'
 import CookieImportModal from '@/components/modals/CookieImportModal.vue'
 import EditAccountModal from '@/components/modals/EditAccountModal.vue'
-import { Plus } from 'lucide-vue-next'
+import { Plus, RotateCcw, ArrowRightLeft } from 'lucide-vue-next'
 
 const accountsStore = useAccountsStore()
 const systemStore = useSystemStore()
@@ -32,6 +31,18 @@ function handleEditName(acc: AccountWithStats) {
   editingAccount.value = acc
   editModalOpen.value = true
 }
+
+async function handleClearAllCooldowns() {
+  if (confirm('确定要清除全部账号的所有模型 429 锁定吗？')) {
+    await systemStore.clearCooldown()
+    await accountsStore.fetchAll()
+  }
+}
+
+async function handleForceNext() {
+  await systemStore.forceNextAccount()
+  await accountsStore.fetchAll()
+}
 </script>
 
 <template>
@@ -40,14 +51,36 @@ function handleEditName(acc: AccountWithStats) {
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div>
         <h2 class="text-xl font-bold text-gray-900 tracking-tight">
-          账号管理与调度
+          账号管理
         </h2>
         <p class="text-xs text-gray-500 mt-0.5">
-          配置多 Google 账号 Cookie，设置轮询策略与限流冷却调度
+          管理 Google 账号凭据与各模型配额状态
         </p>
       </div>
 
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 flex-wrap">
+        <Button
+          variant="outline"
+          size="md"
+          :loading="systemStore.resettingCooldown"
+          title="清除所有账号的 429 冷却与配额耗尽标记"
+          @click="handleClearAllCooldowns"
+        >
+          <RotateCcw class="w-4 h-4" />
+          <span>重置全部锁定</span>
+        </Button>
+
+        <Button
+          variant="outline"
+          size="md"
+          :loading="systemStore.switchingNext"
+          title="手动顺延切换至下一个健康账号"
+          @click="handleForceNext"
+        >
+          <ArrowRightLeft class="w-4 h-4" />
+          <span>切至下一账号</span>
+        </Button>
+
         <Button
           variant="primary"
           size="md"
@@ -58,9 +91,6 @@ function handleEditName(acc: AccountWithStats) {
         </Button>
       </div>
     </div>
-
-    <!-- Rotation Strategy Configuration -->
-    <RotationConfigCard />
 
     <!-- Account Table -->
     <AccountTable

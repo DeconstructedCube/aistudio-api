@@ -1,18 +1,15 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { systemApi } from '@/api/system.ts'
-import type { StatsResponse, RotationMode, RotationStatusResponse } from '@/types'
+import type { StatsResponse, RotationStatusResponse, ClearCooldownRequest } from '@/types'
 import { useToastStore } from './toast.ts'
 
 export const useSystemStore = defineStore('system', () => {
   const stats = ref<StatsResponse | null>(null)
   const rotation = ref<RotationStatusResponse | null>(null)
   const loading = ref(false)
-  const savingRotation = ref(false)
+  const resettingCooldown = ref(false)
   const switchingNext = ref(false)
-
-  const rotationMode = computed<RotationMode>(() => rotation.value?.mode || 'round_robin')
-  const cooldownSeconds = computed(() => rotation.value?.cooldown_seconds ?? 60)
 
   const totalRequests = computed(() => {
     if (!stats.value?.models) return 0
@@ -53,18 +50,18 @@ export const useSystemStore = defineStore('system', () => {
     }
   }
 
-  async function saveRotation(mode: RotationMode, cooldown: number) {
+  async function clearCooldown(req: ClearCooldownRequest = {}) {
     const toast = useToastStore()
-    savingRotation.value = true
+    resettingCooldown.value = true
     try {
-      await systemApi.setRotationMode({ mode, cooldown_seconds: cooldown })
-      toast.success('轮询设置已保存')
+      await systemApi.clearCooldown(req)
+      toast.success(req.account_id ? '账号配额锁定已清除' : '所有账号配额锁定已重置')
       await fetchRotation()
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '保存失败'
+      const msg = err instanceof Error ? err.message : '重置失败'
       toast.error(msg)
     } finally {
-      savingRotation.value = false
+      resettingCooldown.value = false
     }
   }
 
@@ -89,17 +86,15 @@ export const useSystemStore = defineStore('system', () => {
     stats,
     rotation,
     loading,
-    savingRotation,
+    resettingCooldown,
     switchingNext,
-    rotationMode,
-    cooldownSeconds,
     totalRequests,
     totalRateLimited,
     totalSuccess,
     totalErrors,
     fetchStats,
     fetchRotation,
-    saveRotation,
+    clearCooldown,
     forceNextAccount,
   }
 })

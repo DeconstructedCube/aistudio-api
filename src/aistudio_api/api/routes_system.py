@@ -13,6 +13,7 @@ from aistudio_api.application.api_service import health_response, stats_response
 
 if TYPE_CHECKING:
     from aistudio_api.api.state import RuntimeState
+
 public_router = APIRouter()
 protected_router = APIRouter()
 
@@ -27,66 +28,56 @@ async def stats():
     return stats_response()
 
 
-# ========== 轮询管理 API ==========
+# ========== 调度与配额管理 API ==========
 
 
-class RotationModeRequest(BaseModel):
-    mode: str  # round_robin, lru, least_rl
-    cooldown_seconds: int | None = None
+class ClearCooldownRequest(BaseModel):
+    account_id: str | None = None
+    model: str | None = None
 
 
 @protected_router.get("/rotation")
 async def get_rotation_status(
     runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> dict[str, object]:
-    """获取轮询状态。"""
+    """获取账号黏性调度与配额状态。"""
     rotator = runtime_state.rotator
     if rotator is None:
-        return {"enabled": False, "message": "轮询器未初始化"}
+        return {"enabled": False, "mode": "sticky", "message": "调度器未初始化", "accounts": {}}
 
     return {
         "enabled": True,
-        "mode": rotator.mode.value,
-        "cooldown_seconds": rotator.cooldown_seconds,
+        "mode": "sticky",
         "accounts": rotator.get_all_stats(),
     }
 
 
-@protected_router.post("/rotation/mode")
-async def set_rotation_mode(
-    req: RotationModeRequest,
+@protected_router.post("/rotation/clear-cooldown")
+async def clear_cooldown(
+    req: ClearCooldownRequest,
     runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> dict[str, object]:
-    """设置轮询模式。"""
+    """清除指定账号或全局的 429 锁定状态。"""
     rotator = runtime_state.rotator
     if rotator is None:
-        raise HTTPException(503, detail="轮询器未初始化")
+        raise HTTPException(503, detail="调度器未初始化")
 
-    try:
-        from aistudio_api.application.account_rotator import RotationMode
+    if req.account_id:
+        rotator.clear_cooldown(req.account_id, model=req.model)
+    else:
+        rotator.clear_all_cooldowns()
 
-        rotator.mode = RotationMode(req.mode)
-        if req.cooldown_seconds is not None:
-            rotator.cooldown_seconds = req.cooldown_seconds
-        return {
-            "ok": True,
-            "mode": rotator.mode.value,
-            "cooldown_seconds": rotator.cooldown_seconds,
-        }
-    except ValueError:
-        raise HTTPException(
-            400, detail=f"无效的轮询模式: {req.mode}，可选: round_robin, lru, least_rl"
-        )
+    return {"ok": True, "accounts": rotator.get_all_stats()}
 
 
 @protected_router.get("/rotation/accounts")
 async def get_rotation_accounts(
     runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> dict[str, dict[str, object]]:
-    """获取所有账号的轮询统计。"""
+    """获取所有账号的调度与配额统计。"""
     rotator = runtime_state.rotator
     if rotator is None:
-        raise HTTPException(503, detail="轮询器未初始化")
+        raise HTTPException(503, detail="调度器未初始化")
 
     return rotator.get_all_stats()
 
@@ -98,26 +89,22 @@ async def force_next_account(
     """强制切换到下一个可用账号。"""
     rotator = runtime_state.rotator
     if rotator is None:
-        raise HTTPException(503, detail="轮询器未初始化")
+        raise HTTPException(503, detail="调度器未初始化")
 
-    # 获取下一个账号
     next_account = await rotator.get_next_account()
     if next_account is None:
         raise HTTPException(404, detail="没有可用的账号")
 
-    # 切换账号
     account_service = runtime_state.account_service
     client = runtime_state.client
-    busy_lock = runtime_state.busy_lock
 
-    if account_service is None or client is None or client._session is None or busy_lock is None:
+    if account_service is None or client is None or client._session is None:
         raise HTTPException(503, detail="服务未就绪")
 
     result = await account_service.activate_account(
         next_account.id,
         client._session,
         runtime_state.snapshot_cache,
-        busy_lock,
         keep_snapshot_cache=False,
     )
 
@@ -161,9 +148,6 @@ async def get_system_config() -> dict[str, object]:
         "browser_headless": settings.browser_headless,
         "proxy_configured": bool(settings.proxy_url),
         "auth_enabled": settings.auth_enabled,
-        "max_concurrency": settings.max_concurrency,
-        "account_rotation_mode": settings.account_rotation_mode,
-        "account_cooldown_seconds": settings.account_cooldown_seconds,
         "snapshot_cache_ttl": settings.snapshot_cache_ttl,
         "yaml_content": yaml_content,
     }
@@ -218,7 +202,9 @@ class UpdateApiKeyRequest(BaseModel):
 @protected_router.get("/api-keys", response_model=list[ApiKeyItemModel])
 async def list_api_keys() -> list[ApiKeyItemModel]:
     """获取 config.yaml 中配置的 API Keys 列表。"""
-    from aistudio_api.infrastructure.gateway.model_defaults import get_configured_api_key_items
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        get_configured_api_key_items,
+    )
 
     items = get_configured_api_key_items()
     return [
@@ -243,7 +229,11 @@ async def create_api_key(req: CreateApiKeyRequest) -> ApiKeyItemModel:
         _resolve_config_path,
     )
 
-    new_key = req.key.strip() if req.key and req.key.strip() else f"sk-aistudio-{secrets.token_hex(16)}"
+    new_key = (
+        req.key.strip()
+        if req.key and req.key.strip()
+        else f"sk-aistudio-{secrets.token_hex(16)}"
+    )
     created_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
     name = req.name.strip() if req.name.strip() else "API Key"
 
@@ -258,18 +248,24 @@ async def create_api_key(req: CreateApiKeyRequest) -> ApiKeyItemModel:
     if isinstance(raw_keys, list):
         for item in raw_keys:
             if isinstance(item, dict):
-                new_list.append({
-                    "name": str(item.get("name") or "API Key"),
-                    "key": str(item.get("key") or ""),
-                    "created_at": str(item.get("created_at") or ""),
-                })
+                new_list.append(
+                    {
+                        "name": str(item.get("name") or "API Key"),
+                        "key": str(item.get("key") or ""),
+                        "created_at": str(item.get("created_at") or ""),
+                    }
+                )
             elif isinstance(item, str) and item.strip():
-                new_list.append({"name": "API Key", "key": item.strip(), "created_at": ""})
+                new_list.append(
+                    {"name": "API Key", "key": item.strip(), "created_at": ""}
+                )
 
     new_list.append({"name": name, "key": new_key, "created_at": created_at})
     parsed["api_keys"] = new_list
 
-    config_path.write_text(yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    config_path.write_text(
+        yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
     _compiled_profiles.cache_clear()
     _compiled_model_overrides.cache_clear()
 
@@ -297,24 +293,32 @@ async def delete_api_key(key_value: str) -> dict[str, bool]:
     found = False
     if isinstance(raw_keys, list):
         for item in raw_keys:
-            item_key = str(item.get("key") if isinstance(item, dict) else item).strip()
+            item_key = str(
+                item.get("key") if isinstance(item, dict) else item
+            ).strip()
             if item_key == key_value:
                 found = True
                 continue
             if isinstance(item, dict):
-                new_list.append({
-                    "name": str(item.get("name") or "API Key"),
-                    "key": item_key,
-                    "created_at": str(item.get("created_at") or ""),
-                })
+                new_list.append(
+                    {
+                        "name": str(item.get("name") or "API Key"),
+                        "key": item_key,
+                        "created_at": str(item.get("created_at") or ""),
+                    }
+                )
             elif item_key:
-                new_list.append({"name": "API Key", "key": item_key, "created_at": ""})
+                new_list.append(
+                    {"name": "API Key", "key": item_key, "created_at": ""}
+                )
 
     if not found:
         raise HTTPException(404, detail="未找到该 API Key")
 
     parsed["api_keys"] = new_list
-    config_path.write_text(yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    config_path.write_text(
+        yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
     _compiled_profiles.cache_clear()
     _compiled_model_overrides.cache_clear()
 
@@ -322,7 +326,9 @@ async def delete_api_key(key_value: str) -> dict[str, bool]:
 
 
 @protected_router.put("/api-keys/{key_value}", response_model=ApiKeyItemModel)
-async def update_api_key_name(key_value: str, req: UpdateApiKeyRequest) -> ApiKeyItemModel:
+async def update_api_key_name(
+    key_value: str, req: UpdateApiKeyRequest
+) -> ApiKeyItemModel:
     """在 config.yaml 中更新指定 API Key 的备注名。"""
     import yaml
     from aistudio_api.infrastructure.gateway.model_defaults import (
@@ -344,20 +350,32 @@ async def update_api_key_name(key_value: str, req: UpdateApiKeyRequest) -> ApiKe
 
     if isinstance(raw_keys, list):
         for item in raw_keys:
-            item_key = str(item.get("key") if isinstance(item, dict) else item).strip()
+            item_key = str(
+                item.get("key") if isinstance(item, dict) else item
+            ).strip()
             created = str(item.get("created_at") if isinstance(item, dict) else "")
             if item_key == key_value:
-                updated_item = ApiKeyItemModel(name=new_name, key=item_key, created_at=created or None)
-                new_list.append({"name": new_name, "key": item_key, "created_at": created})
+                updated_item = ApiKeyItemModel(
+                    name=new_name, key=item_key, created_at=created or None
+                )
+                new_list.append(
+                    {"name": new_name, "key": item_key, "created_at": created}
+                )
             else:
-                name_val = str(item.get("name") if isinstance(item, dict) else "API Key")
-                new_list.append({"name": name_val, "key": item_key, "created_at": created})
+                name_val = str(
+                    item.get("name") if isinstance(item, dict) else "API Key"
+                )
+                new_list.append(
+                    {"name": name_val, "key": item_key, "created_at": created}
+                )
 
     if not updated_item:
         raise HTTPException(404, detail="未找到该 API Key")
 
     parsed["api_keys"] = new_list
-    config_path.write_text(yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    config_path.write_text(
+        yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
     _compiled_profiles.cache_clear()
     _compiled_model_overrides.cache_clear()
 

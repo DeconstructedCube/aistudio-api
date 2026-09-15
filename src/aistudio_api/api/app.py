@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 from contextlib import asynccontextmanager
-
 from fastapi import Depends, FastAPI
 from fastapi.staticfiles import StaticFiles
 
@@ -27,20 +27,14 @@ logger = logging.getLogger("aistudio.server")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    import asyncio
-
-    from aistudio_api.application.account_rotator import RotationMode, init_rotator
+    from aistudio_api.application.account_rotator import init_rotator
     from aistudio_api.application.account_service import AccountService
-    from aistudio_api.config import settings
     from aistudio_api.infrastructure.account.account_store import AccountStore
 
     client = AIStudioClient(
         port=runtime_state.browser_port,
     )
     runtime_state.client = client
-    from aistudio_api.config import settings as app_settings
-
-    runtime_state.busy_lock = asyncio.Semaphore(app_settings.max_concurrency)
 
     # 注入 snapshot 缓存引用，切号时需要清除
     from aistudio_api.infrastructure.gateway.client import _snapshot_cache
@@ -52,20 +46,13 @@ async def lifespan(app: FastAPI):
     account_service = AccountService(account_store)
     runtime_state.account_service = account_service
 
-    # 初始化账号轮询器
-    rotation_mode = getattr(settings, "account_rotation_mode", "round_robin")
-    cooldown = getattr(settings, "account_cooldown_seconds", 60)
-    rotator = init_rotator(
-        account_store,
-        mode=RotationMode(rotation_mode),
-        cooldown_seconds=cooldown,
-    )
+    # 初始化黏性账号调度器
+    rotator = init_rotator(account_store)
     runtime_state.rotator = rotator
 
     logger.info(
-        "Client initialized (port=%s, rotation=%s, accounts=%d)",
+        "Client initialized (port=%s, accounts=%d)",
         runtime_state.browser_port,
-        rotator.mode,
         len(account_store.list_accounts()),
     )
 
@@ -90,7 +77,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.debug("Error closing client: %s", e)
     runtime_state.client = None
-    runtime_state.busy_lock = None
     runtime_state.account_service = None
     runtime_state.rotator = None
 

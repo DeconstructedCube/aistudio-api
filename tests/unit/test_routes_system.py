@@ -63,3 +63,24 @@ async def test_update_config_yaml_validation():
 
         resp_non_dict = await client.put("/config/yaml", json={"yaml_content": "- item1\n- item2"})
         assert resp_non_dict.status_code == 400
+
+@pytest.mark.asyncio
+async def test_rotation_status_and_clear_cooldown():
+    from unittest.mock import MagicMock
+    from aistudio_api.api.state import runtime_state
+    from aistudio_api.application.account_rotator import AccountRotator
+
+    mock_rotator = MagicMock(spec=AccountRotator)
+    mock_rotator.get_all_stats.return_value = {"acc_1": {"requests": 1}}
+
+    runtime_state.rotator = mock_rotator
+    async with _client() as client:
+        resp = await client.get("/rotation")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["mode"] == "sticky"
+        assert "accounts" in data
+
+        resp_clear = await client.post("/rotation/clear-cooldown", json={"account_id": "acc_1"})
+        assert resp_clear.status_code == 200
+        mock_rotator.clear_cooldown.assert_called_once_with("acc_1", model=None)

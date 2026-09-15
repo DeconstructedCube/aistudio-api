@@ -107,14 +107,6 @@ def get_client() -> AIStudioClient:
         )
     return runtime_state.client
 
-
-def get_busy_lock():
-    if runtime_state.busy_lock is None:
-        raise HTTPException(
-            503, detail={"message": "Server not ready", "type": "service_unavailable"}
-        )
-    return runtime_state.busy_lock
-
 def get_account_service():
     if runtime_state.account_service is None:
         raise HTTPException(

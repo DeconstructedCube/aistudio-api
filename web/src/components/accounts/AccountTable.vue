@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import type { AccountWithStats } from '@/types'
 import { useAccountsStore } from '@/stores/accounts.ts'
+import { useSystemStore } from '@/stores/system.ts'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
 import {
@@ -16,8 +17,8 @@ import {
   Users,
   FolderMinus,
   Layers,
+  RotateCcw,
 } from 'lucide-vue-next'
-
 const props = defineProps<{
   accounts: AccountWithStats[]
   activeId: string
@@ -29,8 +30,7 @@ const emit = defineEmits<{
 }>()
 
 const accountsStore = useAccountsStore()
-
-// 展开/折叠的 Cookie 组集合
+const systemStore = useSystemStore()
 const expandedCookieIds = ref<Set<string>>(new Set())
 
 // 展开查看单个账号的模型细分状态
@@ -147,8 +147,17 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
     await accountsStore.deleteCookieGroup(group.id)
   }
 }
-</script>
 
+async function handleClearAccountCooldown(accountId: string) {
+  await systemStore.clearCooldown({ account_id: accountId })
+  await accountsStore.fetchAll()
+}
+
+async function handleClearModelCooldown(accountId: string, model: string) {
+  await systemStore.clearCooldown({ account_id: accountId, model })
+  await accountsStore.fetchAll()
+}
+</script>
 <template>
   <div class="bg-white border border-gray-200/80 rounded-2xl shadow-xs overflow-hidden space-y-0">
     <!-- Header Bar -->
@@ -360,11 +369,11 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
                     <span>激活</span>
                   </div>
                   <div
-                    v-else-if="acc.cooldown_remaining && acc.cooldown_remaining > 0"
-                    class="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200"
+                    v-else-if="acc.is_available === false"
+                    class="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200"
                   >
-                    <Clock class="w-3 h-3 animate-pulse" />
-                    <span>冷却 {{ acc.cooldown_remaining }}s</span>
+                    <Clock class="w-3 h-3" />
+                    <span>配额耗尽</span>
                   </div>
                   <div
                     v-else
@@ -372,7 +381,6 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
                   >
                     就绪
                   </div>
-
                   <!-- Action Buttons -->
                   <div class="flex items-center gap-1.5 ml-1">
                     <Button
@@ -386,10 +394,20 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
                     </Button>
 
                     <button
+                      v-if="(acc.rate_limited || 0) > 0"
+                      type="button"
+                      class="p-1 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                      title="清除该账号锁定"
+                      @click="handleClearAccountCooldown(acc.id)"
+                    >
+                      <RotateCcw class="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
                       type="button"
                       class="p-1 text-gray-400 hover:text-brand-600 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
                       :class="{ 'text-brand-600 bg-brand-50': expandedAccountIds.has(acc.id) }"
-                      title="展开/收起模型独立限流详情"
+                      title="展开/收起模型独立配额详情"
                       @click="toggleAccountModels(acc.id)"
                     >
                       <Layers class="w-3.5 h-3.5" />
@@ -406,7 +424,6 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
                   </div>
                 </div>
               </div>
-
               <!-- Level 3: Per-Model Independent Quota/Rate Limits -->
               <div
                 v-if="expandedAccountIds.has(acc.id)"
@@ -415,7 +432,7 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
                 <div class="flex items-center justify-between text-[11px] font-semibold text-gray-600">
                   <span class="flex items-center gap-1.5">
                     <Flame class="w-3.5 h-3.5 text-amber-500" />
-                    <span>各模型配额状态 (每日 00:00 PST 重置)</span>
+                    <span>各模型配额状态 (美西 0:00 自动重置)</span>
                   </span>
                   <span class="text-gray-400 font-normal">
                     最后调用: {{ formatDate(acc.last_used) }}
@@ -444,17 +461,20 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
                     </div>
 
                     <div>
-                      <span
+                      <button
                         v-if="acc.model_cooldowns && acc.model_cooldowns[String(modelKey)]"
-                        class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200"
+                        type="button"
+                        class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 cursor-pointer"
+                        title="点击解除此模型锁定"
+                        @click="handleClearModelCooldown(acc.id, String(modelKey))"
                       >
-                        冷却 ({{ acc.model_cooldowns[String(modelKey)] }}s)
-                      </span>
+                        今日耗尽 · 点击解除
+                      </button>
                       <span
                         v-else-if="acc.model_rate_limited && acc.model_rate_limited[String(modelKey)]"
                         class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700"
                       >
-                        曾限流 ({{ acc.model_rate_limited[String(modelKey)] }})
+                        曾限流: {{ acc.model_rate_limited[String(modelKey)] }}
                       </span>
                       <span
                         v-else
@@ -465,7 +485,6 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
                     </div>
                   </div>
                 </div>
-
                 <div
                   v-else
                   class="text-[11px] text-gray-400 italic py-1"
