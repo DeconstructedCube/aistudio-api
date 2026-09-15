@@ -35,9 +35,18 @@ export const useAccountsStore = defineStore('accounts', () => {
     loading.value = true
     try {
       const [accs, active, rotStats] = await Promise.all([
-        accountsApi.list().catch(() => []),
-        accountsApi.getActive().catch(() => null),
-        systemApi.getRotation().catch(() => null),
+        accountsApi.list().catch((err) => {
+          console.error('获取账号列表失败:', err)
+          return []
+        }),
+        accountsApi.getActive().catch((err) => {
+          console.debug('获取活跃账号失败或未配置:', err)
+          return null
+        }),
+        systemApi.getRotation().catch((err) => {
+          console.debug('获取轮询状态失败:', err)
+          return null
+        }),
       ])
 
       accounts.value = accs

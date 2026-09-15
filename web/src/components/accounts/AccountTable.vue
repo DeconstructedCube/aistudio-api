@@ -31,7 +31,12 @@ const emit = defineEmits<{
 
 const accountsStore = useAccountsStore()
 const systemStore = useSystemStore()
-const expandedCookieIds = ref<Set<string>>(new Set())
+// 记录被折叠的 Cookie 组 ID，默认所有组全部展开展示账号
+const collapsedCookieIds = ref<Set<string>>(new Set())
+
+function isGroupExpanded(cid: string): boolean {
+  return !collapsedCookieIds.value.has(cid)
+}
 
 // 展开查看单个账号的模型细分状态
 const expandedAccountIds = ref<Set<string>>(new Set())
@@ -52,7 +57,7 @@ const cookieGroups = computed<CookieGroup[]>(() => {
 
   for (const acc of props.accounts) {
     // 优先使用显式 cookie_id，无显式 cookie_id 时使用 created_at 前 16 位归组
-    const cid = acc.cookie_id || `cookie_${acc.created_at.slice(0, 16)}`
+    const cid = acc.cookie_id || (acc.created_at ? `cookie_${acc.created_at.slice(0, 16)}` : 'cookie_default')
     if (!map[cid]) {
       map[cid] = []
     }
@@ -73,10 +78,6 @@ const cookieGroups = computed<CookieGroup[]>(() => {
     const totalRateLimited = accList.reduce((sum, a) => sum + (a.rate_limited || 0), 0)
     const hasActive = accList.some((a) => a.id === props.activeId)
 
-    // 默认如果展开集合为空，自动展开所有组
-    if (!expandedCookieIds.value.has(cid) && expandedCookieIds.value.size === 0) {
-      expandedCookieIds.value.add(cid)
-    }
 
     const primaryEmail = accList.find(a => a.email)?.email
     const sessionTitle = primaryEmail || `Cookie 会话 #${idx + 1}`
@@ -95,29 +96,31 @@ const cookieGroups = computed<CookieGroup[]>(() => {
 })
 
 function toggleCookieGroup(cid: string) {
-  if (expandedCookieIds.value.has(cid)) {
-    expandedCookieIds.value.delete(cid)
+  const next = new Set(collapsedCookieIds.value)
+  if (next.has(cid)) {
+    next.delete(cid)
   } else {
-    expandedCookieIds.value.add(cid)
+    next.add(cid)
   }
+  collapsedCookieIds.value = next
 }
 
 function expandAll() {
-  for (const g of cookieGroups.value) {
-    expandedCookieIds.value.add(g.id)
-  }
+  collapsedCookieIds.value = new Set()
 }
 
 function collapseAll() {
-  expandedCookieIds.value.clear()
+  collapsedCookieIds.value = new Set(cookieGroups.value.map((g) => g.id))
 }
 
 function toggleAccountModels(id: string) {
-  if (expandedAccountIds.value.has(id)) {
-    expandedAccountIds.value.delete(id)
+  const next = new Set(expandedAccountIds.value)
+  if (next.has(id)) {
+    next.delete(id)
   } else {
-    expandedAccountIds.value.add(id)
+    next.add(id)
   }
+  expandedAccountIds.value = next
 }
 
 function formatDate(dateStr?: string | null): string {
@@ -217,7 +220,7 @@ async function handleClearModelCooldown(accountId: string, model: string) {
               class="p-1 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-200/60 transition-colors"
             >
               <ChevronDown
-                v-if="expandedCookieIds.has(group.id)"
+                v-if="isGroupExpanded(group.id)"
                 class="w-4 h-4"
               />
               <ChevronRight
@@ -288,7 +291,7 @@ async function handleClearModelCooldown(accountId: string, model: string) {
 
         <!-- Level 2: Sub-Accounts -->
         <div
-          v-if="expandedCookieIds.has(group.id)"
+          v-if="isGroupExpanded(group.id)"
           class="bg-gray-50/40 px-4 sm:px-6 py-3 border-t border-gray-100"
         >
           <div class="space-y-2">

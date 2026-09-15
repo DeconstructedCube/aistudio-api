@@ -157,8 +157,7 @@ sequenceDiagram
 ```toml
 dependencies = [
   "fastapi>=0.115.0",
-  "pydantic>=2.0.0",
-  "pydantic-core==2.41.5; sys_platform == 'android'",
+  "pydantic==2.12.5",
 ]
 ```
-在 Android Termux 环境下定向链接 TUR（Termux User Repository）二进制源，而在 Linux/macOS/Windows 下由 PyPI 官方解析原生 wheel，确保全平台一键构建。
+在 Android Termux 环境下定向适配 TUR（Termux User Repository）预编译二进制 wheel，而在 Linux/macOS/Windows 下由 PyPI 官方解析原生 wheel，确保全平台一键构建且免去在 Termux 编译 Rust 导致的 OOM。

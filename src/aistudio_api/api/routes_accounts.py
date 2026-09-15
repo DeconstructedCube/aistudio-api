@@ -67,7 +67,8 @@ async def list_accounts(
     account_service: AccountService | None = Depends(get_account_service_optional),
 ) -> Response | list[AccountResponse]:
     """列出所有账号或作为浏览器导航入口。"""
-    if "text/html" in request.headers.get("accept", ""):
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept and "application/json" not in accept:
         static_dir = Path(__file__).resolve().parents[1] / "static"
         index_html = static_dir / "index.html"
         if index_html.is_file():

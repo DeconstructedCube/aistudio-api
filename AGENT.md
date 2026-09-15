@@ -34,7 +34,7 @@ Python 与 Go 风格的工具链运行在 Termux 宿主（`uv` 管理虚拟环�
    uv run python3 main.py server --port 8080
    ```
    - 安装器幂等：proot 容器、apt 依赖、CloakBrowser 二进制均按"已就绪则跳过"逻辑短路；可重复运行。
-   - 不要用 `pip install -r requirements.txt`；会绕过 `pydantic-core==2.41.5` 的锁和 termux-user-repository 镜像索引，破坏 aarch64 二进制 ABI。
+   - 不要用 `pip install -r requirements.txt`；应使用 `uv sync`，其锁定的预编译二进制 wheel 可避免在 Termux 环境因编译 Rust 消耗过多内存导致 OOMKiller。
    - `scripts/cloakbrowser_termux/run-chrome.sh` 是唯一被引擎接受的启动入口；它只做 `proot-distro login aistudio-api -- /opt/cloakbrowser/chrome "$@"` 加必要的 `--bind`。不要在仓库里新增其它 Chromium 启动器（会破坏多账号的进程隔离约定）。
 3. **JavaScript / 前端工具链**：
    - 前端管理工程统一在 `web/` 独立目录中维护（基于 Vite + Vue 3 + TypeScript + Tailwind CSS）。
