@@ -13,7 +13,7 @@ build/
 /tmp/
 stream_response.txt
 .vscode/
-docs/
+!docs/BOTGUARD_VERIFICATION_CHAIN.md
 .env
 /test_*
 /capture_*
