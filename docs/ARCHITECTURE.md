@@ -42,7 +42,7 @@ flowchart TD
 
         subgraph StorageSub ["存储与缓存"]
             AccountStore["account_store.py<br/>(原子 JSON 文件凭据库)"]
-            SnapshotCache["snapshot_cache.py<br/>(内存 LRU 快照缓存)"]
+            SnapshotCache["snapshot_cache.py<br/>(内存快照与元数据缓存)"]
         end
     end
 
@@ -70,8 +70,8 @@ flowchart TD
 
 ### 2.2 应用服务层 (`src/aistudio_api/application/`)
 - **`chat_service.py`**：将客户端提交的标准 Gemini 请求解析为内部通用格式，处理 Base64 图片解析、系统指令拼装及工具调用配置；
-- **`account_rotator.py`**：模型粒度的多账号轮询管理器，支持 `sticky`（默认）、`round_robin`、`lru`、`least_rl` 四种调度模式；
-- **`api_service_common.py`**：实现全局单例级防雪崩互斥锁（`_switch_lock`），管理并发 429 故障转移与 RPM/RPD 重试循环。
+- **`account_rotator.py`**：模型粒度的多账号 Sticky 调度管理器，针对各个模型独立维护 429 配额状态；
+- **`api_service_common.py`**：实现全局防雪崩互斥锁（`_switch_lock`），管理并发 429 故障转移与账号轮换。
 
 ### 2.3 基础设施层 (`src/aistudio_api/infrastructure/`)
 - **浏览器与 CDP 子系统 (`browser/`)**：
@@ -128,7 +128,7 @@ sequenceDiagram
 ## 4. 并发控制与高可用设计
 
 ### 4.1 资源最小化单进程 Chromium
-- 为防止多开浏览器导致内存爆炸（尤其是 1GB RAM 设备），全局仅维持 **单个受控 Chromium 进程**；
+- 为防止多开浏览器导致内存超限（特别是在 1GB RAM 的移动或嵌入式设备），全局维持 **单个受控 Chromium 进程**；
 - 限制启动参数：`--renderer-process-limit=1`、`--js-flags=--max-old-space-size=128`、`--disable-gpu`；
 - 所有并发请求通过 CDP 在页面内部以多路复用 XHR（`XMLHttpRequest`）并发执行，实现极低开销的高吞吐。
 
