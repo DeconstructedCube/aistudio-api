@@ -6,15 +6,20 @@ Google AI Studio 反向代理服务。提供原生 Gemini API 接口。
 
 ## 特性
 
-- 兼容原生 Gemini API 协议规范（包含 Thinking、Multimodal、Function Calling 与图像生成）
+- 兼容官方 Gemini API 协议规范（包含 Thinking 思维链、Multimodal 多模态、Function Calling 与图像生成）
 - 动态获取可用模型列表（与 Google 官方同步）
-- 多 Google 账号 Cookie 智能轮询调度与按模型独立冷却
-- 支持单份 Cookie 自动无限向下探活多登录账号 (`u/0`, `u/1`...) 一键批量导入
+- 多 Google 账号 Cookie 轮询调度与按模型独立冷却（支持 `sticky`、`round_robin`、`lru`、`least_rl`）
+- 支持单份 Cookie 自动向下探活多登录账号 (`u/0`, `u/1`...)
 - 支持官方工具调用（Google Search、Google Maps、代码执行沙箱等）
-- 现代化 Web 管理控制台（账号管理、实时统计看板、在线规则热重载与独立鉴权）
+- Web 管理控制台（账号管理、实时统计看板、在线规则热重载与独立鉴权）
 - 基于纯 Python 异步 CDP 驱动的轻量化无头浏览器环境
 
-> 💡 **内存占用参考（实测）**：纯 Python 服务部分约 30~85 MB；启用内置 CloakBrowser (Chromium) 后整体常驻约 500~650 MB。在 Termux 上请确保设备剩余可用 RAM ≥ 1 GB。
+内存占用参考（实测）：纯 Python 服务部分约 30~85 MB；启用内置 CloakBrowser (Chromium) 后整体常驻约 500~650 MB。在 Termux 上请确保设备剩余可用 RAM ≥ 1 GB。
+
+## 系统架构与技术文档
+
+- [系统架构设计规范 (ARCHITECTURE.md)](./docs/ARCHITECTURE.md)：分层架构、并发流控管线、Wire Codec 与跨平台资源模型。
+- [BotGuard 验证机制技术规范 (BOTGUARD_VERIFICATION_CHAIN.md)](./docs/BOTGUARD_VERIFICATION_CHAIN.md)：WAA 挑战握手、Wasm 动态签名、内容哈希与服务端校验全链路。
 
 ## 安装部署
 
@@ -23,7 +28,7 @@ Google AI Studio 反向代理服务。提供原生 Gemini API 接口。
 - Python 3.10 以上版本
 - Chromium 浏览器及其运行库
 
-### Linux macOS Windows 环境
+### Linux / macOS / Windows 环境
 
 所有平台统一使用 [`uv`](https://docs.astral.sh/uv/) 作为依赖与虚拟环境管理器（与本仓库的 `uv.lock` / `pyproject.toml` 一致）。安装 `uv` 后，从源码同步即可获得受版本锁保护的可运行虚拟环境：
 
@@ -39,6 +44,7 @@ uv run python3 main.py server --port 8080
 ### Android Termux 环境
 
 在 Termux 上运行需要借助 `proot-distro` 提供必要的 Linux 运行环境。请按顺序执行以下命令进行完整安装与启动：
+
 ```bash
 pkg update
 pkg install -y python git uv proot-distro
@@ -128,7 +134,7 @@ curl http://localhost:8080/v1beta/models -H "x-goog-api-key: your-api-key"
 
 **文本生成 (非流式)**：
 ```bash
-curl http://localhost:8080/v1beta/models/gemini-3.7-flash:generateContent \
+curl http://localhost:8080/v1beta/models/gemini-3.8-flash:generateContent \
   -H "x-goog-api-key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'
@@ -136,7 +142,7 @@ curl http://localhost:8080/v1beta/models/gemini-3.7-flash:generateContent \
 
 **流式生成 (Server-Sent Events)**：
 ```bash
-curl http://localhost:8080/v1beta/models/gemini-3.7-flash:streamGenerateContent?alt=sse \
+curl http://localhost:8080/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse \
   -H "x-goog-api-key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'
@@ -163,11 +169,18 @@ client = genai.Client(
 
 # 流式输出
 response = client.models.generate_content_stream(
-    model="gemini-3.7-flash",
+    model="gemini-3.8-flash",
     contents="Hello from Gemini"
 )
 for chunk in response:
     print(chunk.text, end="", flush=True)
+
+# 非流式输出
+response = client.models.generate_content(
+    model="gemini-3.8-flash",
+    contents="Hello from Gemini"
+)
+print(response.text)
 ```
 
 ## 许可证

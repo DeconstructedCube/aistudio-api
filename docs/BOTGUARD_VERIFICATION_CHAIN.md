@@ -1,24 +1,23 @@
-# Google AI Studio / BotGuard 完整验证与运行全链路技术规范
+# Google AI Studio BotGuard 验证机制技术规范
 
-本文档详尽记录 **Google AI Studio** 官方前端与 **Google WAA (Web Attestation & Anti-abuse / BotGuard)** 反作弊系统在**正常未经 Hook / 逆向**情况下的完整运行逻辑、网络交互时序、数据协议与底层验证机制，供行为研究、协议兼容性分析与仿真调试参考。
+本文档记录 Google AI Studio 官方 Web 客户端与 Google WAA (Web Attestation & Anti-abuse / BotGuard) 服务端的交互协议、数据链路与验证逻辑。
 
 ---
 
 ## 目录
-1. [系统整体架构与参与主体](#1-系统整体架构与参与主体)
-2. [阶段一：页面加载与 Angular DI 服务初始化](#2-阶段一页面加载与-angular-di-服务初始化)
-3. [阶段二：Waa (Web Attestation) 挑战握手与 Wasm 动态加载](#3-阶段二waa-web-attestation-挑战握手与-wasm-动态加载)
-4. [阶段三：用户交互、内容哈希与 BotGuard 动态签名](#4-阶段三用户交互内容哈希与-botguard-动态签名)
-5. [阶段四：Wire Codec 组包与浏览器内原生 XHR 传输](#5-阶段四wire-codec-组包与浏览器内原生-xhr-传输)
-6. [阶段五：Google 服务端多维交叉审计与放行逻辑](#6-阶段五google-服务端多维交叉审计与放行逻辑)
-7. [生命周期管理、会话保活与异常失效](#7-生命周期管理会话保活与异常失效)
-8. [核心数据结构与报文参考](#8-核心数据结构与报文参考)
+1. [系统架构与交互拓扑](#1-系统架构与交互拓扑)
+2. [阶段一：页面加载与服务初始化](#2-阶段一页面加载与服务初始化)
+3. [阶段二：WAA 挑战握手与 Wasm 运行时加载](#3-阶段二waa-挑战握手与-wasm-运行时加载)
+4. [阶段三：请求内容哈希与快照签名](#4-阶段三请求内容哈希与快照签名)
+5. [阶段四：Wire 协议组包与浏览器 XHR 重放](#5-阶段四wire-协议组包与浏览器-xhr-重放)
+6. [阶段五：服务端校验与统一报错响应](#6-阶段五服务端校验与统一报错响应)
+7. [生命周期与会话约束](#7-生命周期与会话约束)
+8. [报文结构参考](#8-报文结构参考)
 
 ---
+## 1. 系统架构与交互拓扑
 
-## 1. 系统整体架构与参与主体
-
-在正常用户访问过程中，涉及三大核心参与主体：
+正常用户访问涉及三大参与主体：
 
 ```mermaid
 flowchart TD
@@ -194,9 +193,9 @@ GET https://www.google.com/js/bg/gBetl7I-09yp6c3Nmm4ajwTxhDHStoNbVEOK3L3hfg4.js
 
 ---
 
-## 5. 阶段四：Wire Codec 组包与浏览器内原生 XHR 传输
+## 5. 阶段四：Wire 协议组包与浏览器 XHR 重放
 
-签名成功后，Angular 前端将快照回填进 Google 内部专有的 Protobuf-over-JSON 数组结构（即 Wire Codec）：
+签名成功后，Angular 前端将快照填入 Google 内部 Protobuf-over-JSON 数组结构（Wire 格式）：
 
 ```json
 [
@@ -214,13 +213,14 @@ GET https://www.google.com/js/bg/gBetl7I-09yp6c3Nmm4ajwTxhDHStoNbVEOK3L3hfg4.js
   null
 ]
 ```
-- 索引 `0`：模型全称（如 `models/gemini-3.8-flash`）；
-- 索引 `1`：结构化会话历史与多模态数据；
-- 索引 `3`：生成控制配置（GenerationConfig：Temperature、TopP、TopK、MaxTokens 等）；
-- **索引 `4`：BotGuard 快照签名 Token（核心反爬保护字段）**。
+- 索引 `0`：模型标识（如 `models/gemini-3.8-flash`）；
+- 索引 `1`：结构化内容与多模态数据；
+- 索引 `3`：生成控制配置（GenerationConfig）；
+- **索引 `4`：BotGuard 快照签名 Token**。
 
-### 5.1 发起 XHR 通信
-浏览器通过原生 `XMLHttpRequest` 发送异步流式请求：
+### 5.1 浏览器原生 XHR 传输
+
+浏览器通过 `XMLHttpRequest` 发送异步流式请求：
 ```http
 POST https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent
 Host: alkalimakersuite-pa.clients6.google.com
@@ -233,44 +233,46 @@ Origin: https://aistudio.google.com
 Referer: https://aistudio.google.com/
 Cookie: SID=...; HSID=...; SSID=...; SAPISID=...; __Secure-1PAPISID=...
 ```
-- `xhr.withCredentials = true`：保证浏览器底层 Cookie 存储区中的完整会话 Cookie 随请求上送；
-- `X-Goog-AuthUser` 与当前 Angular 会话严格一致。
+- `xhr.withCredentials = true`：挂载浏览器底层存储的完整会话 Cookie；
+- `X-Goog-AuthUser` 与当前 Angular 路由会话严格一致。
 
 ---
 
-## 6. 阶段五：Google 服务端多维交叉审计与放行逻辑
-
-Google RPC 网关接收到 `GenerateContent` 请求后，进行链式严格审计：
+## 6. 阶段五：服务端校验与统一报错响应
+Google RPC 网关接收到 `GenerateContent` 请求后执行如下校验链：
 
 ```mermaid
 flowchart TD
-    Req["传入请求: Header + Body[4] Snapshot + Body[1] Contents"] --> Step1
+    Req["GenerateContent 请求<br/>(Header + Body)"] --> Step1
 
-    subgraph Audit ["Google RPC 网关严格审计链"]
-        Step1["步骤 1：解密 Body[4] Snapshot<br/>• 使用阶段二协商的私钥解密快照载荷"]
-        Step2["步骤 2：内容完整性校验 (Anti-Tampering)<br/>• 计算 Body[1] Contents 的 SHA-256 哈希<br/>• 验证快照内嵌的 HMAC 摘要是否完全吻合"]
-        Step3["步骤 3：账号身份交叉比对 (Identity Cross-Check)<br/>• 提取快照内嵌绑定的 GAIA 身份<br/>• 对比请求头 X-Goog-AuthUser 对应的 Cookie 会话"]
-        Step4["步骤 4：客户端运行环境真实度评分 (Attestation Score)<br/>• 检查 WebGL 渲染管线 (拒绝 SwiftShader/虚拟显卡)<br/>• 检查时钟单调性、事件时序与 Headless 特征"]
+    subgraph GatewayValidation ["服务端校验流程"]
+        Step1["1. 私钥解密 Body[4] 快照载荷"]
+        Step2["2. 校验 HMAC(Body[1] Contents 哈希)"]
+        Step3["3. 比对快照内嵌 GAIA ID 与 X-Goog-AuthUser 对应会话"]
+        Step4["4. 校验环境与运行时指纹"]
 
         Step1 -->|解密成功| Step2
-        Step2 -->|摘要一致| Step3
-        Step3 -->|身份完全一致| Step4
+        Step2 -->|哈希匹配| Step3
+        Step3 -->|身份一致| Step4
     end
 
-    Step1 -->|解密失败| Err1["抛出反作弊异常 / 拒绝连接"]
-    Step2 -->|摘要冲突| Err2["抛出 400 INVALID_ARGUMENT (数据传输被篡改)"]
-    Step3 -->|身份冲突| Err3["抛出 gRPC 7 / 403 PERMISSION_DENIED (越权或伪造)"]
-    Step4 -->|评分达标| Pass["放行请求，开启后端模型推理，分块流式返回 200 OK"]
-    Step4 -->|评分不达标| Err4["触发验证码拦截 / 降级限制"]
+    Step1 -->|解密失败| Reject["统一拒绝：HTTP 403<br/>[,[7,'The caller does not have permission']]"]
+    Step2 -->|哈希不匹配| Reject
+    Step3 -->|身份冲突| Reject
+    Step4 -->|指纹异常| Reject
+    Step4 -->|校验通过| Accept["HTTP 200 OK<br/>分块流式返回生成内容"]
 
-    style Pass fill:#d4edda,stroke:#28a745,stroke-width:2px,color:#155724
-    style Err1 fill:#f8d7da,stroke:#dc3545,stroke-width:1px,color:#721c24
-    style Err2 fill:#f8d7da,stroke:#dc3545,stroke-width:1px,color:#721c24
-    style Err3 fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#721c24
-    style Err4 fill:#fff3cd,stroke:#ffc107,stroke-width:1px,color:#856404
+    style Accept fill:#d4edda,stroke:#28a745,stroke-width:2px,color:#155724
+    style Reject fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#721c24
 ```
 
+> [!IMPORTANT]
+> **服务端统一报错行为**：
+> 无论 BotGuard 校验在哪个环节失败（快照缺失、快照过期、内容哈希不匹配、UA 冲突、还是跨 `auth_user` 身份不一致），Google 网关**一律返回 HTTP 403**（响应体为 JSON 数组 `[,[7,"The caller does not have permission"]]`，对应 gRPC 状态码 7 `PERMISSION_DENIED`），不暴露具体的内部拦截分支。
+
 ---
+
+## 7. 生命周期与会话约束
 
 > [!IMPORTANT]
 > **1. 时效性与一次性原则**

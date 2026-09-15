@@ -13,7 +13,7 @@ import {
   ChevronDown,
   ChevronRight,
   Flame,
-  FolderTree,
+  Users,
   FolderMinus,
   Layers,
 } from 'lucide-vue-next'
@@ -78,9 +78,12 @@ const cookieGroups = computed<CookieGroup[]>(() => {
       expandedCookieIds.value.add(cid)
     }
 
+    const primaryEmail = accList.find(a => a.email)?.email
+    const sessionTitle = primaryEmail || `Cookie 会话 #${idx + 1}`
+
     return {
       id: cid,
-      name: `Cookie 凭据 #${idx + 1}`,
+      name: sessionTitle,
       createdAt: earliestCreatedAt,
       accounts: accList,
       totalRequests,
@@ -148,17 +151,17 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
 
 <template>
   <div class="bg-white border border-gray-200/80 rounded-2xl shadow-xs overflow-hidden space-y-0">
-    <!-- Tree Header Bar -->
+    <!-- Header Bar -->
     <div class="px-6 py-4 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gray-50/40">
       <div>
         <div class="flex items-center gap-2">
-          <FolderTree class="w-4 h-4 text-brand-600" />
+          <Users class="w-4 h-4 text-brand-600" />
           <h3 class="font-semibold text-gray-900 text-sm">
-            Google 账号树状层级视图
+            已配置账号
           </h3>
         </div>
         <p class="text-xs text-gray-400 mt-0.5">
-          按导入的 Cookie 凭据分组，层级展开管理子登录账号 (u/0, u/1...) 与模型独立限流
+          按 Cookie 会话凭据分组管理子登录账号 (u/0, u/1...) 与模型独立配额
         </p>
       </div>
 
@@ -168,17 +171,17 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
           class="px-2.5 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
           @click="expandAll"
         >
-          全部展开
+          展开全部
         </button>
         <button
           type="button"
           class="px-2.5 py-1 text-xs font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
           @click="collapseAll"
         >
-          全部折叠
+          收起全部
         </button>
         <span class="text-xs font-mono text-gray-500 bg-white border border-gray-200 px-2.5 py-0.5 rounded-full">
-          {{ cookieGroups.length }} 组 Cookie · {{ accounts.length }} 个账号
+          {{ cookieGroups.length }} 组会话 · {{ accounts.length }} 个账号
         </span>
       </div>
     </div>
@@ -242,9 +245,9 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
                 <span>导入时间: {{ formatDate(group.createdAt) }}</span>
                 <span>·</span>
                 <span
-                  class="truncate max-w-[120px]"
+                  class="truncate max-w-[140px]"
                   :title="group.id"
-                >分组 ID: {{ group.id }}</span>
+                >会话指纹: {{ group.id.replace(/^cookie_/, '') }}</span>
               </div>
             </div>
           </div>
@@ -274,12 +277,12 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
           </div>
         </div>
 
-        <!-- Level 2: Sub-Accounts (Branch Nodes) -->
+        <!-- Level 2: Sub-Accounts -->
         <div
           v-if="expandedCookieIds.has(group.id)"
-          class="bg-gray-50/30 px-4 sm:px-6 py-2"
+          class="bg-gray-50/40 px-4 sm:px-6 py-3 border-t border-gray-100"
         >
-          <div class="relative pl-6 space-y-2 border-l-2 border-dashed border-gray-200 ml-4 my-1">
+          <div class="space-y-2">
             <div
               v-for="(acc, index) in group.accounts"
               :key="acc.id"
@@ -290,11 +293,6 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
                   : 'border-gray-200/80 hover:border-gray-300',
               ]"
             >
-              <!-- Tree Horizontal Branch Indicator Line -->
-              <div
-                class="absolute -left-6 top-5 w-6 h-px border-t-2 border-dashed border-gray-200"
-              />
-
               <!-- Sub-Account Header Bar -->
               <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div class="flex items-center gap-2.5 min-w-0">
@@ -417,7 +415,7 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
                 <div class="flex items-center justify-between text-[11px] font-semibold text-gray-600">
                   <span class="flex items-center gap-1.5">
                     <Flame class="w-3.5 h-3.5 text-amber-500" />
-                    <span>该子账号各模型独立限额状态 (美西时间每日独立重置)</span>
+                    <span>各模型配额状态 (每日 00:00 PST 重置)</span>
                   </span>
                   <span class="text-gray-400 font-normal">
                     最后调用: {{ formatDate(acc.last_used) }}

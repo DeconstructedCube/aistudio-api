@@ -55,7 +55,7 @@ const codeSnippets = [
   {
     title: 'cURL 调用示例 (原生 Gemini 协议)',
     lang: 'bash',
-    code: `curl http://localhost:8080/v1beta/models/gemini-3.7-flash:generateContent \\
+    code: `curl http://localhost:8080/v1beta/models/gemini-3.8-flash:generateContent \\
   -H "x-goog-api-key: your-api-key" \\
   -H "Content-Type: application/json" \\
   -d '{"contents": [{"role": "user", "parts": [{"text": "Hello Gemini"}]}]}'`,
@@ -74,7 +74,7 @@ client = genai.Client(
 )
 
 response = client.models.generate_content(
-    model="gemini-3.7-flash",
+    model="gemini-3.8-flash",
     contents="Hello from aistudio-api"
 )
 print(response.text)`,
