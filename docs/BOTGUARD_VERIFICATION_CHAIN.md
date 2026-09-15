@@ -18,25 +18,64 @@
 
 ## 1. 系统整体架构与参与主体
 
-在正常用户访问过程中，涉及三个主要参与端：
+在正常用户访问过程中，涉及三大核心参与主体：
 
+```mermaid
+flowchart TD
+    subgraph Browser ["用户浏览器环境 (Client Browser)"]
+        UI["Google AI Studio UI<br/>(Angular 18+ SPA)"]
+        BGSvc["BotGuardService<br/>(WAA 前端容器)"]
+        BGWasm["BotGuard Wasm Runtime<br/>(动态加载的隔离虚拟机)"]
+        UI <--> BGSvc
+        BGSvc <--> BGWasm
+    end
+
+    subgraph GoogleInfra ["Google 后端服务集群 (Google Infrastructure)"]
+        MakerSuite["MakerSuite RPC 网关<br/>alkalimakersuite-pa.clients6.google.com"]
+        WaaServer["WAA 反作弊网关<br/>waa-pa.clients6.google.com"]
+        StaticCDN["Google 静态 CDN<br/>www.google.com/js/bg/..."]
+    end
+
+    UI -- "(1) 页面资源 & GenerateContent RPC" --> MakerSuite
+    BGSvc -- "(2) 挑战初始化握手 (Waa/Ping)" --> WaaServer
+    BGWasm -- "(3) 下载与执行专属 Wasm 字节码" --> StaticCDN
 ```
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                                用户浏览器 (Client)                                │
-│                                                                                  │
-│  ┌──────────────────────┐  ┌─────────────────────┐  ┌─────────────────────────┐  │
-│  │ Google AI Studio UI  │  │   BotGuardService   │  │  BotGuard Wasm Runtime  │  │
-│  │ (Angular 18+ 重度SPA)│  │ (Waa 前端客户端容器) │  │  (动态加载的隔离虚拟机)  │  │
-│  └──────────┬───────────┘  └──────────┬──────────┘  └────────────┬────────────┘  │
-└─────────────┼─────────────────────────┼──────────────────────────┼───────────────┘
-              │                         │                          │
-              │ (1) 页面静态资源 & RPC   │ (2) 挑战初始化握手       │ (3) 下载 VM 字节码
-              ▼                         ▼                          ▼
-┌───────────────────────────┐ ┌───────────────────┐ ┌──────────────────────────────┐
-│  MakerSuite RPC 网关      │ │ Waa 反作弊网关    │ │ Google 静态资源 CDN          │
-│ alkalimakersuite-pa.      │ │ waa-pa.clients6.  │ │ www.google.com/js/bg/...     │
-│ clients6.google.com       │ │ google.com        │ │                              │
-└───────────────────────────┘ └───────────────────┘ └──────────────────────────────┘
+
+### 交互时序泳道图
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 用户 (User)
+    participant Browser as AI Studio (Angular)
+    participant WaaClient as BotGuardService (qUa)
+    participant WaaServer as WAA 网关 (waa-pa)
+    participant StaticCDN as Google CDN (Static)
+    participant Gateway as MakerSuite RPC (alkali)
+
+    Note over User,Gateway: 【阶段一 & 二：页面启动与 WAA 挑战握手】
+    User->>Browser: 访问 aistudio.google.com/u/0/prompts/new_chat
+    Browser->>Browser: Angular 引导，实例化 BotGuardService
+    Browser->>WaaClient: initialize()
+    WaaClient->>WaaServer: POST /Waa/Ping (携带 X-Goog-AuthUser: 0 & SAPISIDHASH)
+    WaaServer-->>WaaClient: 下发会话挑战 Nonce & Wasm 资源文件名
+    WaaClient->>StaticCDN: GET /js/bg/{hash}.js
+    StaticCDN-->>WaaClient: 返回动态 BotGuard 虚拟机字节码 (固化 u/0 身份)
+
+    Note over User,Gateway: 【阶段三 & 四：用户提问与动态签名】
+    User->>Browser: 输入 Prompt 并点击 "Run" (或 Ctrl+Enter)
+    Browser->>Browser: 计算 content_hash = SHA256(Prompt + Images)
+    Browser->>WaaClient: Bp(service, content_hash)
+    WaaClient->>WaaClient: Wasm 收集硬件/时钟指纹 + HMAC(内容哈希 + 身份凭据)
+    WaaClient-->>Browser: 返回加密快照 Token (!dXaldhL...)
+    Browser->>Browser: Wire Codec 组包 (body[4] = snapshot)
+    Browser->>Gateway: POST /GenerateContent (XHR withCredentials = true)
+
+    Note over Gateway: 【阶段五：服务端交叉审计与放行】
+    Gateway->>Gateway: 解密 Body[4] 快照，比对 HMAC 内容指纹
+    Gateway->>Gateway: 交叉比对快照内嵌 GAIA ID 与请求头 X-Goog-AuthUser
+    Gateway-->>Browser: 审计通过，流式返回分块推理响应 (200 OK)
+    Browser-->>User: 界面渲染并实时展示模型生成结果
 ```
 
 ---
@@ -125,7 +164,9 @@ GET https://www.google.com/js/bg/gBetl7I-09yp6c3Nmm4ajwTxhDHStoNbVEOK3L3hfg4.js
    用户在提示词输入框内输入文本（或上传图片），点击界面右下角 `Run` 按钮（或按下快捷键 `Ctrl+Enter`）。
 2. **提取并哈希会话内容**：
    UI 事件处理器搜集全部会话片段（`contents` 数组中的文字及 inline base64 图片）。为防止通信过程中内容被篡改，算法会对所有内容字符进行串联并执行 SHA-256 运算：
-   $$\text{content\_hash} = \text{SHA-256}\left(\sum \text{part.text} + \sum \text{part.inline\_data}\right)$$
+   ```text
+   content_hash = SHA256(concat(parts.text) + concat(parts.inline_data))
+   ```
    输出一个 64 位的十六进制摘要字符串（例如 `a5c2d89f...`）。
 3. **执行快照签名计算**：
    Angular 逻辑调用公共签名导出方法（混淆键名为 `Bp`）：
@@ -201,55 +242,47 @@ Cookie: SID=...; HSID=...; SSID=...; SAPISID=...; __Secure-1PAPISID=...
 
 Google RPC 网关接收到 `GenerateContent` 请求后，进行链式严格审计：
 
-```
-[传入请求: Header + Body[4] Snapshot + Body[1] Contents]
-                        │
-                        ▼
-┌────────────────────────────────────────────────────────┐
-│ 步骤 1：解密 Body[4] Snapshot                         │
-│ • 使用阶段二协商的 WAA 私钥解密快照载荷               │
-│ • 解密失败 ──► 抛出反作弊异常 / 拒绝连接              │
-└───────────────────────┬────────────────────────────────┘
-                        │
-                        ▼
-┌────────────────────────────────────────────────────────┐
-│ 步骤 2：内容完整性校验 (Anti-Tampering)                │
-│ • 计算当前 Body[1] Contents 的 SHA-256                │
-│ • 验证快照内嵌的 HMAC 内容摘要是否吻合                │
-│ • 不吻合 ──► 抛出 INVALID_ARGUMENT (数据在传输中被改) │
-└───────────────────────┬────────────────────────────────┘
-                        │
-                        ▼
-┌────────────────────────────────────────────────────────┐
-│ 步骤 3：账号身份交叉比对 (Identity Cross-Check)        │
-│ • 提取快照内嵌的 GAIA ID / authuser                    │
-│ • 对比请求头 X-Goog-AuthUser 解析得到的 Cookie 用户    │
-│ • 不一致 ──► 抛出 gRPC 7 (403 PERMISSION_DENIED)       │
-└───────────────────────┬────────────────────────────────┘
-                        │
-                        ▼
-┌────────────────────────────────────────────────────────┐
-│ 步骤 4：客户端运行环境真实度评分 (Attestation Score)   │
-│ • 检查 WebGL Renderer: 拒绝 SwiftShader / llvmpipe    │
-│ • 检查时钟单调性、事件时序与 Headless 特征            │
-│ • 评分达标 ──► 开启后端模型推理，分块流式返回 200 OK  │
-└────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    Req["传入请求: Header + Body[4] Snapshot + Body[1] Contents"] --> Step1
+
+    subgraph Audit ["Google RPC 网关严格审计链"]
+        Step1["步骤 1：解密 Body[4] Snapshot<br/>• 使用阶段二协商的私钥解密快照载荷"]
+        Step2["步骤 2：内容完整性校验 (Anti-Tampering)<br/>• 计算 Body[1] Contents 的 SHA-256 哈希<br/>• 验证快照内嵌的 HMAC 摘要是否完全吻合"]
+        Step3["步骤 3：账号身份交叉比对 (Identity Cross-Check)<br/>• 提取快照内嵌绑定的 GAIA 身份<br/>• 对比请求头 X-Goog-AuthUser 对应的 Cookie 会话"]
+        Step4["步骤 4：客户端运行环境真实度评分 (Attestation Score)<br/>• 检查 WebGL 渲染管线 (拒绝 SwiftShader/虚拟显卡)<br/>• 检查时钟单调性、事件时序与 Headless 特征"]
+
+        Step1 -->|解密成功| Step2
+        Step2 -->|摘要一致| Step3
+        Step3 -->|身份完全一致| Step4
+    end
+
+    Step1 -->|解密失败| Err1["抛出反作弊异常 / 拒绝连接"]
+    Step2 -->|摘要冲突| Err2["抛出 400 INVALID_ARGUMENT (数据传输被篡改)"]
+    Step3 -->|身份冲突| Err3["抛出 gRPC 7 / 403 PERMISSION_DENIED (越权或伪造)"]
+    Step4 -->|评分达标| Pass["放行请求，开启后端模型推理，分块流式返回 200 OK"]
+    Step4 -->|评分不达标| Err4["触发验证码拦截 / 降级限制"]
+
+    style Pass fill:#d4edda,stroke:#28a745,stroke-width:2px,color:#155724
+    style Err1 fill:#f8d7da,stroke:#dc3545,stroke-width:1px,color:#721c24
+    style Err2 fill:#f8d7da,stroke:#dc3545,stroke-width:1px,color:#721c24
+    style Err3 fill:#f8d7da,stroke:#dc3545,stroke-width:2px,color:#721c24
+    style Err4 fill:#fff3cd,stroke:#ffc107,stroke-width:1px,color:#856404
 ```
 
 ---
 
-## 7. 生命周期管理、会话保活与异常失效
+> [!IMPORTANT]
+> **1. 时效性与一次性原则**
+> 每次生成的快照签名 `!` 字符串包含微秒时间戳与挑战 Nonce，仅允许在生成后的短时间内使用，不可跨请求无限制重复重放；提示词变更时必须传入新内容哈希重新由 Wasm 生成新签名。
 
-1. **时效性与一次性原则**：
-   - 每次生成的快照签名 `!` 字符串包含时间戳与挑战 Nonce，仅允许在生成后的短时间内使用，不可跨请求无限制重复重放；
-   - 提示词变更时必须传入新内容哈希重新由 Wasm 生成新签名。
-2. **后台挂起与保活（Visibility Change）**：
-   - 当浏览器标签页切入后台（`document.visibilityState === "hidden"`）超过一定时长后，BotGuard 虚拟机进入挂起状态；
-   - 用户重新切回页面（`document.visibilityState === "visible"`）时，`document.addEventListener("visibilitychange")` 自动触发 `service.A.CE()` 进行轻量恢复；若超时严重则触发 `service.initialize()` 重新向 `waa-pa` 拉取新挑战。
-3. **多账号切换约束**：
-   - 同一物理 Session 下的多个子账号（`u/0`、`u/1`、`u/2`）拥有独立的身份上下文；
-   - 切换账号时，由于旧 Wasm 虚拟机内部固化的 GAIA 身份无法热更新，必须通过 Angular 路由重载（`page.goto('/u/N/...')`）触发新一轮的依赖注入与 WAA 挑战握手。
+> [!NOTE]
+> **2. 后台挂起与保活（Visibility Change）**
+> 当浏览器标签页切入后台（`document.visibilityState === "hidden"`）超过一定时长后，BotGuard 虚拟机进入挂起状态；用户重新切回页面（`document.visibilityState === "visible"`）时，`document.addEventListener("visibilitychange")` 自动触发 `service.A.CE()` 进行轻量恢复；若超时严重则触发 `service.initialize()` 重新向 `waa-pa` 拉取新挑战。
 
+> [!WARNING]
+> **3. 多账号切换约束**
+> 同一物理 Session 下的多个子账号（`u/0`、`u/1`、`u/2`）拥有独立的身份上下文；切换账号时，由于旧 Wasm 虚拟机内部固化的 GAIA 身份无法热更新，必须通过 Angular 路由重载（`page.goto('/u/N/...')`）触发新一轮的依赖注入与 WAA 挑战握手。
 ---
 
 ## 8. 核心数据结构与报文参考
@@ -258,9 +291,10 @@ Google RPC 网关接收到 `GenerateContent` 请求后，进行链式严格审�
 ```text
 Authorization: SAPISIDHASH <TS>_<HASH1> SAPISID1PHASH <TS>_<HASH2> SAPISID3PHASH <TS>_<HASH3>
 ```
-其中：
-$$\text{HASH} = \text{SHA-1}\left(\text{timestamp} + \text{" "} + \text{SAPISID\_VALUE} + \text{" "} + \text{"https://aistudio.google.com"}\right)$$
-
+计算公式：
+```text
+HASH = SHA1(timestamp + " " + SAPISID_VALUE + " https://aistudio.google.com")
+```
 ### 8.2 快照签名 Token 特征
 - 前缀：固定以感叹号 `!` 开头；
 - 编码：高熵 URL-Safe Base64；
