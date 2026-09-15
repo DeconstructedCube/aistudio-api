@@ -1,36 +1,42 @@
 # aistudio-api
 
-Google AI Studio API reverse proxy. Exposes Google Gemini native API protocol.
+Google AI Studio API reverse proxy providing native Google Gemini API interfaces.
 
 [中文文档](./README.md)
 
+---
+
 ## Features
 
-- Native Gemini API protocol compatibility (Thinking, Multimodal, Function Calling, and Image Generation)
-- Dynamic model discovery synchronized with Google AI Studio
-- Multi-account sticky rotation with per-model independent failover
-- Automatic downward account probing for multi-login sessions (u/0, u/1...)
-- Official tools support: Google Search, Google Maps, Code Execution Sandbox, URL Context
-- Web Management Console (Account pool, real-time stats, online rule hot reloading, and auth guards)
-- Lightweight headless browser environment driven by pure-Python asynchronous CDP
+- **Protocol Compatibility**: Full compatibility with official Gemini API specifications (`/v1beta/...`), including Thinking process, Multimodal input, Function Calling, and Image Generation.
+- **Dynamic Model Discovery**: Automatically synchronizes and discovers available models from upstream Google AI Studio.
+- **Account Scheduling & Failover**: Multi-account sticky rotation with per-model 429 quota isolation and automatic failover.
+- **Multi-Account Probing**: Automatically probes and extracts multi-login sub-accounts (`u/0`, `u/1`...) from a single session Cookie.
+- **Built-in Tools**: Supports Google Search, Google Maps, and Code Execution Sandbox.
+- **Web Management Console**: Lightweight dashboard for account management, real-time metrics, and live `config.yaml` editing with hot reloading.
+- **Native Lightweight CDP**: Direct Chrome DevTools Protocol communication via asynchronous pure-Python WebSockets, without Playwright, Puppeteer, or Node.js.
 
-Memory footprint reference: pure-Python service layer runs at 30 - 85 MB; with the bundled CloakBrowser enabled, the daemon runs at 500 - 650 MB. On Termux ensure the device has at least 1 GB of free RAM.
+> **Memory Footprint**: Python service runs at ~30 - 85 MB RAM; with managed Chromium active, total memory stays around 500 - 650 MB. On Android Termux, ≥ 1 GB free RAM is recommended.
 
-## System Architecture & Technical Specifications
+---
 
-- [System Architecture Specification (ARCHITECTURE.md)](./docs/ARCHITECTURE.md): Layered clean architecture, concurrency pipeline, wire codec, and cross-platform resource model.
-- [BotGuard Verification Chain Specification (BOTGUARD_VERIFICATION_CHAIN.md)](./docs/BOTGUARD_VERIFICATION_CHAIN.md): WAA challenge handshake, Wasm dynamic signature evaluation, content hashing, and server-side verification pipeline.
+## Technical Specifications
 
-## Installation
+- [System Architecture Specification (ARCHITECTURE.md)](./docs/ARCHITECTURE.md): Layered architecture, request lifecycle, wire codec, and concurrency control.
+- [BotGuard Verification Chain (BOTGUARD_VERIFICATION_CHAIN.md)](./docs/BOTGUARD_VERIFICATION_CHAIN.md): WAA challenge handshake, Wasm dynamic signature, content hashing, and upstream validation pipeline.
+
+---
+
+## Installation & Quick Start
 
 ### Prerequisites
 
-- Python 3.10 or higher
-- Chromium browser and required runtime libraries
+- Python 3.10+
+- Chromium / Google Chrome browser installed on host
 
 ### Linux / macOS / Windows
 
-All platforms install through [`uv`](https://docs.astral.sh/uv/), which honours the pinned `uv.lock` / `pyproject.toml`. After installing `uv`, a single `uv sync` produces the version-locked virtual environment:
+Dependencies and lockfiles are managed using [`uv`](https://docs.astral.sh/uv/):
 
 ```bash
 git clone https://github.com/DeconstructedCube/aistudio-api.git
@@ -39,11 +45,11 @@ uv sync
 uv run python3 main.py server --port 8080
 ```
 
-> Please ensure you use `uv sync` to install dependencies. Do not use `pip install -r requirements.txt`, as it will cause aarch64 prebuilt package version mismatches.
+> **Note**: Always use `uv sync` rather than `pip install` to ensure prebuilt platform wheels are correctly resolved.
 
 ### Android Termux
 
-Running on Termux requires `proot-distro` to provide a standard Linux environment. Execute the following commands to install and start the service:
+On Termux, Chromium runs inside a lightweight `proot-distro` Linux container. Run the following to set up and start:
 
 ```bash
 pkg update
@@ -55,8 +61,7 @@ bash scripts/install_termux_prereqs.sh --project-root "$PWD"
 uv run python3 main.py server --port 8080
 ```
 
-> The `install_termux_prereqs.sh` script will automatically set up a dedicated `aistudio-api` container and download the required browser on its first run (this may take a few minutes depending on your network).
-> For troubleshooting (e.g., port collisions, container errors), please check project Issues or discussions.
+> The initial run of `install_termux_prereqs.sh` will set up the container and download the browser runtime automatically.
 
 ### Docker
 
@@ -75,57 +80,43 @@ Docker Compose:
 docker compose up -d
 ```
 
-## Web Management Console & Configuration
+---
 
-Access `http://localhost:8080` to enter the Web Management Console:
+## Configuration
 
-- **Dashboard**: Real-time stats per model with independent request volumes, success rates, 429 rate limit events, and integration quick-start snippets.
-- **Account Management**: Support for importing Google cookies, automatic probing for multi-login accounts, per-model quota status visibility, and manual activation.
-- **Sticky Rotation**: Retains the active account until a 429 quota exhaustion event occurs, automatically failing over to the next healthy account.
-- **Model Rules**: Inspect and edit config.yaml online with zero-downtime hot reloading.
-- **Security**: Dedicated /login view and route guards protecting web endpoints when AISTUDIO_WEB_PASSWORD is set.
+Access `http://localhost:8080` once the service is running:
+
+- **Dashboard**: Overview of service health, per-model request stats, rate-limit indicators, and integration code snippets.
+- **Accounts**: Import Cookie credentials, view sub-account statuses, and manually activate or reset quotas.
+- **Settings**: View and edit `config.yaml` rules with instant hot reload on save.
+- **Authentication**: Set `AISTUDIO_WEB_PASSWORD` to enable login authentication for the Web Console.
 
 ### Environment Variables
 
 | Variable | Description | Default |
 |---|---|---|
-| `AISTUDIO_PORT` | Service listening port | `8080` |
-| `AISTUDIO_WEB_PASSWORD` | Web Management Console login password (also supports `AISTUDIO_ADMIN_PASSWORD`) | None |
-| `AISTUDIO_PROXY` | HTTP / SOCKS5 outbound proxy address | None |
+| `AISTUDIO_PORT` | Service port | `8080` |
+| `AISTUDIO_WEB_PASSWORD` | Web Console login password (also supports `AISTUDIO_ADMIN_PASSWORD`) | None (auth disabled) |
+| `AISTUDIO_PROXY` | HTTP / SOCKS5 outbound proxy | None |
 | `AISTUDIO_BROWSER_EXECUTABLE` | Path to Chromium executable | Auto-detected |
 | `AISTUDIO_SNAPSHOT_CACHE_TTL` | BotGuard snapshot cache TTL in seconds | `3600` |
 
-Model default behaviors and tools are defined in `config.yaml`.
-
-### Frontend Development & Build
-
-The Web Console source code resides in `web/` (built with Vite + Vue 3 + TypeScript):
-
-```bash
-cd web
-bun install          # Install dependencies
-bun run dev          # Start Vite dev server (port 3000, proxies to 8080 API)
-bun run type-check   # Run TypeScript type check
-bun run lint         # Run ESLint code quality checks
-bun run build        # Build and sync static assets to src/aistudio_api/static
-```
+---
 
 ## API Usage
 
-Supported authentication methods:
-- URL parameter `?key=YOUR_API_KEY`
-- Header `x-goog-api-key: YOUR_API_KEY`
-- Header `x-api-key: YOUR_API_KEY`
-- Header `Authorization: Bearer YOUR_API_KEY`
+Supported authentication headers/parameters:
+- Query param: `?key=YOUR_API_KEY`
+- Headers: `x-goog-api-key: YOUR_API_KEY`, `x-api-key: YOUR_API_KEY`, or `Authorization: Bearer YOUR_API_KEY`
 
-### Endpoints (cURL)
+### cURL
 
 **List Models**:
 ```bash
 curl http://localhost:8080/v1beta/models -H "x-goog-api-key: your-api-key"
 ```
 
-**Text Generation (Non-streaming)**:
+**Generate Content**:
 ```bash
 curl http://localhost:8080/v1beta/models/gemini-3.8-flash:generateContent \
   -H "x-goog-api-key: your-api-key" \
@@ -133,7 +124,7 @@ curl http://localhost:8080/v1beta/models/gemini-3.8-flash:generateContent \
   -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'
 ```
 
-**Streaming Generation (Server-Sent Events)**:
+**Streaming (SSE)**:
 ```bash
 curl http://localhost:8080/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse \
   -H "x-goog-api-key: your-api-key" \
@@ -141,14 +132,8 @@ curl http://localhost:8080/v1beta/models/gemini-3.8-flash:streamGenerateContent?
   -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'
 ```
 
-### Official Python SDK (google-genai)
+### Python SDK (`google-genai`)
 
-Install dependency:
-```bash
-pip install google-genai
-```
-
-Streaming and non-streaming usage example:
 ```python
 from google import genai
 
@@ -160,7 +145,7 @@ client = genai.Client(
     },
 )
 
-# Streaming generation
+# Stream
 response = client.models.generate_content_stream(
     model="gemini-3.8-flash",
     contents="Hello from Gemini"
@@ -168,13 +153,30 @@ response = client.models.generate_content_stream(
 for chunk in response:
     print(chunk.text, end="", flush=True)
 
-# Non-streaming generation
+# Non-stream
 response = client.models.generate_content(
     model="gemini-3.8-flash",
     contents="Hello from Gemini"
 )
 print(response.text)
 ```
+
+---
+
+## Frontend Development
+
+The Web Console lives in `web/` (built with Vite + Vue 3 + TypeScript):
+
+```bash
+cd web
+bun install          # Install dependencies
+bun run dev          # Start local Vite dev server (localhost:3000 -> 8080)
+bun run type-check   # Type-check TypeScript
+bun run lint         # Lint code
+bun run build        # Build production bundle into src/aistudio_api/static
+```
+
+---
 
 ## License
 

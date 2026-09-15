@@ -173,7 +173,7 @@ async function handleClearModelCooldown(accountId: string, model: string) {
           </h3>
         </div>
         <p class="text-xs text-gray-400 mt-0.5">
-          按 Cookie 会话凭据分组管理子登录账号 (u/0, u/1...) 与模型独立配额
+          查看已导入的 Google 账号列表及各模型调用状态
         </p>
       </div>
 

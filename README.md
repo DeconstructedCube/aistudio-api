@@ -1,36 +1,42 @@
 # aistudio-api
 
-Google AI Studio 反向代理服务。提供原生 Gemini API 接口。
+Google AI Studio 反向代理服务，提供原生的 Google Gemini API 协议接口。
 
 [English](./README_EN.md)
 
-## 特性
+---
 
-- 兼容官方 Gemini API 协议规范（包含 Thinking 思维链、Multimodal 多模态、Function Calling 与图像生成）
-- 动态获取可用模型列表（与 Google 官方同步）
-- 多 Google 账号自动黏性调度与按模型独立故障转移
-- 支持单份 Cookie 自动向下探活多登录账号 u/0, u/1 批量导入
-- 支持官方工具调用（Google Search、Google Maps、代码执行沙箱等）
-- Web 管理控制台（账号管理、实时统计看板、在线规则热重载与独立鉴权）
-- 基于纯 Python 异步 CDP 驱动的轻量化无头浏览器环境
+## 功能特性
 
-内存占用参考：纯 Python 服务约 30 - 85 MB；启用内置 CloakBrowser 后整体常驻约 500 - 650 MB。在 Termux 上需确保设备可用 RAM ≥ 1 GB。
+- **协议兼容**：支持官方 Gemini API 规范（`/v1beta/...`），涵盖 Thinking 思维链、Multimodal 多模态输入、Function Calling 工具调用与图像生成。
+- **模型同步**：自动从 Google 上游同步并动态获取最新可用模型列表。
+- **账号调度与容灾**：多账号 Sticky 黏性调度，按模型独立记录 429 配额状态与自动故障转移。
+- **Cookie 批量探活**：支持导入单份包含多个登录身份的 Cookie，自动递归探活子账号（`u/0`, `u/1`...）并分化建档。
+- **内置工具支持**：支持 Google Search 联网搜索、Google Maps、代码执行沙箱等官方扩展工具。
+- **Web 控制台**：内置轻量 Web 仪表盘，支持账号导入管理、实时调用监控、在线编辑 `config.yaml` 并热重载。
+- **原生轻量 CDP**：纯 Python 异步 WebSocket 直连 Chrome DevTools Protocol，无需 Node.js、Playwright 或外置驱动。
 
-## 系统架构与技术文档
+> **内存占用参考**：纯 Python 服务常驻约 30 - 85 MB；启用内置 Chromium 后常驻约 500 - 650 MB。在 Android Termux 运行建议可用 RAM ≥ 1 GB。
 
-- [系统架构设计规范 (ARCHITECTURE.md)](./docs/ARCHITECTURE.md)：分层架构、并发流控管线、Wire Codec 与跨平台资源模型。
-- [BotGuard 验证机制技术规范 (BOTGUARD_VERIFICATION_CHAIN.md)](./docs/BOTGUARD_VERIFICATION_CHAIN.md)：WAA 挑战握手、Wasm 动态签名、内容哈希与服务端校验全链路。
+---
 
-## 安装部署
+## 技术文档
 
-### 前置依赖
+- [系统架构设计 (ARCHITECTURE.md)](./docs/ARCHITECTURE.md)：分层设计、请求生命周期、Wire Codec 编解码与并发控制模型。
+- [BotGuard 验证链路机制 (BOTGUARD_VERIFICATION_CHAIN.md)](./docs/BOTGUARD_VERIFICATION_CHAIN.md)：WAA 挑战握手、Wasm 动态签名、内容哈希与服务端校验全链路。
 
-- Python 3.10 以上版本
-- Chromium 浏览器及其运行库
+---
 
-### Linux / macOS / Windows 环境
+## 安装与启动
 
-所有平台统一使用 [`uv`](https://docs.astral.sh/uv/) 作为依赖与虚拟环境管理器（与本仓库的 `uv.lock` / `pyproject.toml` 一致）。安装 `uv` 后，从源码同步即可获得受版本锁保护的可运行虚拟环境：
+### 前置要求
+
+- Python 3.10+
+- 系统安装有 Chromium / Chrome 浏览器
+
+### Linux / macOS / Windows
+
+项目依赖与版本锁定使用 [`uv`](https://docs.astral.sh/uv/) 管理：
 
 ```bash
 git clone https://github.com/DeconstructedCube/aistudio-api.git
@@ -39,11 +45,11 @@ uv sync
 uv run python3 main.py server --port 8080
 ```
 
-> 请务必使用 `uv sync` 安装依赖，不要使用 `pip install -r requirements.txt`，否则会导致 aarch64 预编译包版本不匹配。
+> **注意**：请使用 `uv sync` 同步依赖，避免使用 `pip install` 导致平台预编译二进制包不匹配。
 
-### Android Termux 环境
+### Android Termux
 
-在 Termux 上运行需要借助 `proot-distro` 提供必要的 Linux 运行环境。请按顺序执行以下命令进行完整安装与启动：
+Termux 环境下浏览器运行在 `proot-distro` Linux 容器内，执行以下命令完成环境安装与启动：
 
 ```bash
 pkg update
@@ -55,10 +61,9 @@ bash scripts/install_termux_prereqs.sh --project-root "$PWD"
 uv run python3 main.py server --port 8080
 ```
 
-> 首次运行 `install_termux_prereqs.sh` 时会自动配置一个名为 `aistudio-api` 的专属容器并下载浏览器，过程视网络情况可能需要几分钟。
-> 常见问题排查（如端口冲突、容器报错等）请查阅项目 Issues 或讨论区。
+> 首次执行 `install_termux_prereqs.sh` 时会自动创建专属容器并准备浏览器运行时。
 
-### Docker 环境
+### Docker 部署
 
 ```bash
 docker run -d \
@@ -69,63 +74,49 @@ docker run -d \
   ghcr.io/chrysoljq/aistudio-api:latest
 ```
 
-通过 docker compose 启动：
+使用 Docker Compose：
 
 ```bash
 docker compose up -d
 ```
 
-## Web 控制面板与配置
+---
 
-服务启动后访问 `http://localhost:8080` 进入 Web 管理控制台：
+## 配置说明
 
-- **控制面板**：实时查看各模型独立请求量、成功数、429 频率限制与最后调用时间，提供快速集成代码示例。
-- **账号管理**：支持多账号 Cookie 导入与格式解析，支持单份 Cookie 向下探活多登录账号并自动分化建档；直观展示各账号按模型的配额状态与手动激活切换。
-- **黏性调度策略**：优先使用当前激活账号，遇到 429 配额耗尽时自动故障转移至可用账号，免去频繁切号开销。
-- **模型规则配置**：在线查看与编辑 config.yaml，保存后自动完成热重载，无需重启服务即可调整默认工具与安全过滤等级。
-- **安全鉴权**：提供独立的登录验证页面 /login 与路由守卫，在服务端设置 AISTUDIO_WEB_PASSWORD 时自动对未授权访问进行拦截；API 客户端访问密钥可在 config.yaml 或 Web 界面中集中分配与管理。
+服务启动后可访问 `http://localhost:8080` 进入 Web 控制台：
 
-### 环境变量说明
+- **概览面板**：查看服务运行状态、各模型调用量、429 频控指标及调用代码示例。
+- **账号管理**：导入 Cookie 凭据、查看子账号状态、手动切换或重置 429 锁定。
+- **系统设置**：在线编辑 `config.yaml` 规则，保存后自动完成热重载。
+- **访问控制**：设置 `AISTUDIO_WEB_PASSWORD` 后自动启用控制台登录鉴权。
 
-| 环境变量 | 说明 | 默认值 |
+### 环境变量
+
+| 变量名 | 说明 | 默认值 |
 |---|---|---|
 | `AISTUDIO_PORT` | 服务监听端口 | `8080` |
-| `AISTUDIO_WEB_PASSWORD` | 网页管理控制台登录密码 (亦支持 `AISTUDIO_ADMIN_PASSWORD`) | 空 |
+| `AISTUDIO_WEB_PASSWORD` | 控制台登录密码（亦支持 `AISTUDIO_ADMIN_PASSWORD`） | 空（不启用鉴权） |
 | `AISTUDIO_PROXY` | HTTP / SOCKS5 出口代理地址 | 空 |
-| `AISTUDIO_BROWSER_EXECUTABLE` | Chromium 浏览器可执行文件绝对路径 | 自动探测 |
-| `AISTUDIO_SNAPSHOT_CACHE_TTL` | BotGuard 快照缓存有效期（秒） | `3600` |
+| `AISTUDIO_BROWSER_EXECUTABLE` | Chromium 可执行文件路径 | 自动探测 |
+| `AISTUDIO_SNAPSHOT_CACHE_TTL` | BotGuard 快照缓存有效时长（秒） | `3600` |
 
-模型默认参数与工具规则由根目录 `config.yaml` 定义。
+---
 
-### 前端开发与构建
+## API 调用示例
 
-Web 控制台源码位于 `web/` 目录（基于 Vite + Vue 3 + TypeScript 构建），如需进行前端二次开发：
+支持以下鉴权方式：
+- Query 参数：`?key=YOUR_API_KEY`
+- 请求头：`x-goog-api-key: YOUR_API_KEY`、`x-api-key: YOUR_API_KEY` 或 `Authorization: Bearer YOUR_API_KEY`
 
-```bash
-cd web
-bun install          # 安装依赖
-bun run dev          # 启动开发服务器 (端口 3000，自动反代 8080 API)
-bun run type-check   # 执行 TypeScript 类型检查
-bun run lint         # 执行 ESLint 代码质量检查
-bun run build        # 生产构建并同步产物至 src/aistudio_api/static
-```
-
-## 接口调用
-
-支持的鉴权方式：
-- URL 参数 `?key=YOUR_API_KEY`
-- 请求头 `x-goog-api-key: YOUR_API_KEY`
-- 请求头 `x-api-key: YOUR_API_KEY`
-- 请求头 `Authorization: Bearer YOUR_API_KEY`
-
-### 基础路由 (cURL)
+### cURL
 
 **获取模型列表**：
 ```bash
 curl http://localhost:8080/v1beta/models -H "x-goog-api-key: your-api-key"
 ```
 
-**文本生成 (非流式)**：
+**文本生成**：
 ```bash
 curl http://localhost:8080/v1beta/models/gemini-3.8-flash:generateContent \
   -H "x-goog-api-key: your-api-key" \
@@ -133,7 +124,7 @@ curl http://localhost:8080/v1beta/models/gemini-3.8-flash:generateContent \
   -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'
 ```
 
-**流式生成 (Server-Sent Events)**：
+**流式生成 (SSE)**：
 ```bash
 curl http://localhost:8080/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse \
   -H "x-goog-api-key: your-api-key" \
@@ -141,14 +132,8 @@ curl http://localhost:8080/v1beta/models/gemini-3.8-flash:streamGenerateContent?
   -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'
 ```
 
-### 官方 Python SDK (google-genai)
+### Python SDK (`google-genai`)
 
-安装依赖：
-```bash
-pip install google-genai
-```
-
-流式与非流式调用示例：
 ```python
 from google import genai
 
@@ -160,7 +145,7 @@ client = genai.Client(
     },
 )
 
-# 流式输出
+# 流式调用
 response = client.models.generate_content_stream(
     model="gemini-3.8-flash",
     contents="Hello from Gemini"
@@ -168,13 +153,30 @@ response = client.models.generate_content_stream(
 for chunk in response:
     print(chunk.text, end="", flush=True)
 
-# 非流式输出
+# 非流式调用
 response = client.models.generate_content(
     model="gemini-3.8-flash",
     contents="Hello from Gemini"
 )
 print(response.text)
 ```
+
+---
+
+## 前端构建与二次开发
+
+Web 控制台位于 `web/` 目录（基于 Vite + Vue 3 + TypeScript）：
+
+```bash
+cd web
+bun install          # 安装依赖
+bun run dev          # 启动本地开发服务 (localhost:3000，反向代理 8080)
+bun run type-check   # TypeScript 类型检查
+bun run lint         # ESLint 代码检查
+bun run build        # 生产构建并输出到 src/aistudio_api/static
+```
+
+---
 
 ## 许可证
 
