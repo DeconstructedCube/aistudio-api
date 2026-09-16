@@ -47,7 +47,6 @@ model_defaults:
       # - code_execution
       default_tools:
         - google_search
-      # safety_settings 取值范围 1..5
       # 1 = 最严格拦截
       # 5 = 关闭
       safety_settings:

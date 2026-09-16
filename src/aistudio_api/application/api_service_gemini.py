@@ -138,6 +138,7 @@ async def handle_gemini_generate_content(
             target_model = normalized.model if normalized else model_path
             runtime_state.record(target_model, "errors")
             record_rotator_event("error", model=target_model)
+            logger.warning("Gemini error: %s", exc)
             raise HTTPException(
                 500, detail={"message": str(exc), "type": "server_error"}
             ) from exc
@@ -145,7 +146,8 @@ async def handle_gemini_generate_content(
             target_model = normalized.model if normalized else model_path
             runtime_state.record(target_model, "errors")
             record_rotator_event("error", model=target_model)
-            logger.error("Gemini error: %s", exc, exc_info=True)
+            logger.error("Gemini unexpected error: %s", exc)
+            logger.debug("Gemini error details:", exc_info=True)
             raise HTTPException(
                 500, detail={"message": str(exc), "type": "server_error"}
             ) from exc
@@ -368,14 +370,15 @@ def _build_gemini_streaming_response(
                 )
             yield "data: [DONE]\n\n"
         except Exception as exc:
-            logger.error("Gemini stream error: %s", exc, exc_info=True)
+            target_model = normalized.model if normalized else model_path
             if not isinstance(exc, UsageLimitExceeded):
-                record_rotator_event(
-                    "error",
-                    model=normalized.model if normalized else model_path,
-                )
-            if normalized is not None:
-                runtime_state.record(normalized.model, "errors")
+                record_rotator_event("error", model=target_model)
+            runtime_state.record(target_model, "errors")
+            if isinstance(exc, AistudioError):
+                logger.warning("Gemini stream error: %s", exc)
+            else:
+                logger.error("Gemini stream unexpected error: %s", exc)
+                logger.debug("Gemini stream error details:", exc_info=True)
             yield (
                 "data: "
                 + json.dumps(

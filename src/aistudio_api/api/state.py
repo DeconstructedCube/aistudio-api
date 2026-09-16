@@ -26,6 +26,7 @@ class ModelStatsItem:
     last_used: str | None = None
 
 
+@dataclass
 class RuntimeState:
     client: AIStudioClient | None = None
     browser_port: int = 9222

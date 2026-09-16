@@ -64,7 +64,7 @@ class RequestCaptureService:
         snapshot = await self._session.generate_snapshot(snapshot_contents)
         body = modify_body(
             template.body,
-            model=template.model or model,
+            model=model,
             prompt=prompt,
             contents=rewritten_contents,
             snapshot=snapshot,

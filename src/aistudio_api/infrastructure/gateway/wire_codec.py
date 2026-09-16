@@ -126,6 +126,7 @@ class AistudioWireCodec:
     SNAPSHOT_INDEX = 4
     SYSTEM_INSTRUCTION_INDEX = 5
     TOOLS_INDEX = 6
+    TOOL_CONFIG_INDEX = 7
     REQUEST_FLAG_INDEX = 10
     CACHED_CONTENT_INDEX = 11
     TIMEZONE_INDEX = 13
@@ -148,6 +149,9 @@ class AistudioWireCodec:
                 else None
             ),
             tools=body[self.TOOLS_INDEX] if len(body) > self.TOOLS_INDEX else None,
+            tool_config=body[self.TOOL_CONFIG_INDEX]
+            if len(body) > self.TOOL_CONFIG_INDEX
+            else None,
             request_flag=body[self.REQUEST_FLAG_INDEX]
             if len(body) > self.REQUEST_FLAG_INDEX
             else None,
@@ -176,7 +180,10 @@ class AistudioWireCodec:
             request.system_instruction.to_wire() if request.system_instruction else None
         )
         body[self.TOOLS_INDEX] = request.tools
-        body[self.REQUEST_FLAG_INDEX] = request.request_flag
+        body[self.TOOL_CONFIG_INDEX] = request.tool_config
+        body[self.REQUEST_FLAG_INDEX] = (
+            request.request_flag if request.request_flag is not None else 1
+        )
         body[self.CACHED_CONTENT_INDEX] = request.cached_content
         body[self.TIMEZONE_INDEX] = request.location
 
@@ -197,8 +204,7 @@ class AistudioWireCodec:
                     [None, None, os.getenv("AISTUDIO_TIMEZONE", "Asia/Tokyo")]
                 ]
             else:
-                body = body[:11]
-
+                body = body[:12]
         return json.dumps(body, separators=(",", ":"), ensure_ascii=False)
 
     def rewrite(
@@ -280,7 +286,6 @@ class AistudioWireCodec:
             if request.tools:
                 request.generation_config.response_mime_type = None
                 request.generation_config.response_schema = None
-
         return self.encode(request)
 
     def _build_user_content(

@@ -38,7 +38,7 @@ def test_parse_response_chunk_and_classify_chunk():
 
     ctype, text = classify_chunk(raw[0][1])
     assert ctype == "thinking"
-    assert 'standard Chinese greeting meaning "Hello."' in text
+    assert isinstance(text, str) and 'standard Chinese greeting meaning "Hello."' in text
 
 
 def test_stream_parser_extracts_real_chunks():

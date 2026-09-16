@@ -76,10 +76,10 @@ INSTALL_HOOKS_JS = r"""
 """
 
 DIALOG_CLEANUP_JS = """(() => {
-    document.querySelectorAll('button').forEach((button) => {
-        const text = (button.textContent || '').trim().toLowerCase();
-        if (['dismiss', 'close', 'accept', 'ok', 'agree', 'got it'].includes(text)) {
-            button.click();
+    document.querySelectorAll('button, mat-card, a, [role="button"]').forEach((el) => {
+        const text = (el.textContent || el.innerText || '').trim().toLowerCase();
+        if (['dismiss', 'close', 'accept', 'ok', 'agree', 'got it', 'start building', 'code and chat'].some(w => text.includes(w))) {
+            try { el.click(); } catch(e) {}
         }
     });
     document.querySelectorAll('.cdk-overlay-backdrop').forEach((node) => node.remove());
@@ -130,7 +130,11 @@ STREAMING_INIT_JS = """(args) => {
 
     if (!window.__stream_next) window.__stream_next = {};
     window.__stream_next[rid] = function(timeoutMs) {
-        if (state.events.length) return Promise.resolve(state.events.shift());
+        if (state.events.length) {
+            var batch = state.events.slice();
+            state.events.length = 0;
+            return Promise.resolve({type: 'batch', events: batch});
+        }
         return new Promise((resolve) => {
             let done = false;
             const timer = setTimeout(() => {
@@ -143,7 +147,13 @@ STREAMING_INIT_JS = """(args) => {
                 if (done) return;
                 done = true;
                 clearTimeout(timer);
-                resolve(event);
+                if (state.events.length) {
+                    var batch = [event].concat(state.events);
+                    state.events.length = 0;
+                    resolve({type: 'batch', events: batch});
+                } else {
+                    resolve(event);
+                }
             };
             state.waiter = finish;
         });
@@ -158,8 +168,9 @@ STREAMING_INIT_JS = """(args) => {
 
     var xhr = new XMLHttpRequest();
     xhr.open('POST', args.url);
-    var h = args.headers;
+    var h = args.headers || {};
     for (var k in h) {
+        if (k.toLowerCase() === 'authorization') continue;
         xhr.setRequestHeader(k, h[k]);
     }
     xhr.withCredentials = true;
@@ -189,11 +200,55 @@ STREAMING_INIT_JS = """(args) => {
     };
 
     state.xhr = xhr;
-    xhr.send(args.body);
+    function getCookie(name) {
+        var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+        return m ? decodeURIComponent(m[1]) : '';
+    }
+    var sapisid = getCookie('SAPISID') || getCookie('__Secure-1PAPISID') || getCookie('__Secure-3PAPISID');
+    if (sapisid && window.crypto && window.crypto.subtle) {
+        var sapisid1p = getCookie('__Secure-1PAPISID') || sapisid;
+        var sapisid3p = getCookie('__Secure-3PAPISID') || sapisid;
+        var ts = Math.floor(Date.now() / 1000);
+        var origin = 'https://aistudio.google.com';
+        function sha1(str) {
+            return crypto.subtle.digest('SHA-1', new TextEncoder().encode(str)).then(function(buf) {
+                return Array.from(new Uint8Array(buf)).map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
+            });
+        }
+        Promise.all([
+            sha1(ts + ' ' + sapisid + ' ' + origin),
+            sha1(ts + ' ' + sapisid1p + ' ' + origin),
+            sha1(ts + ' ' + sapisid3p + ' ' + origin)
+        ]).then(function(res) {
+            var auth = 'SAPISIDHASH ' + ts + '_' + res[0] + ' SAPISID1PHASH ' + ts + '_' + res[1] + ' SAPISID3PHASH ' + ts + '_' + res[2];
+            xhr.setRequestHeader('Authorization', auth);
+            xhr.send(args.body);
+        }).catch(function() {
+            var fallbackAuth = h['Authorization'] || h['authorization'];
+            if (fallbackAuth) xhr.setRequestHeader('Authorization', fallbackAuth);
+            xhr.send(args.body);
+        });
+    } else {
+        var fallbackAuth = h['Authorization'] || h['authorization'];
+        if (fallbackAuth) xhr.setRequestHeader('Authorization', fallbackAuth);
+        xhr.send(args.body);
+    }
 }"""
 
 BOTGUARD_BOOTSTRAP_PROMPT = "say '1'"
 TEMPLATE_CAPTURE_PROMPT = "say 't'"
+
+DEFAULT_BOOTSTRAP_TEMPLATE = {
+    "url": "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent",
+    "headers": {
+        "Content-Type": "application/json+protobuf",
+        "X-User-Agent": "grpc-web-javascript/0.1",
+        "X-Goog-Api-Key": "AIzaSyDdP816MREB3SkjZO04QXbjsigfcI0GWOs",
+        "X-Goog-AuthUser": "0",
+        "Referer": "https://aistudio.google.com/",
+    },
+    "body": '["models/gemini-3.7-flash",[[[[null,"hi"]],"user"]],[[null,null,7,5],[null,null,8,5],[null,null,9,5],[null,null,10,5]],[null,null,null,65536,1,0.95,64,null,null,null,null,null,null,1,null,null,[1,null,null,2]],"!snap",null,null,null,null,null,1,null]',
+}
 
 
 class BrowserSession:
@@ -208,9 +263,10 @@ class BrowserSession:
         self._page: CDPPage | None = None
         self._snap_key: str | None = None
         self._templates: dict[str, dict[str, object]] = {}
-        self._bootstrap_template: dict[str, object] | None = None
+        self._bootstrap_template: dict[str, object] | None = dict(DEFAULT_BOOTSTRAP_TEMPLATE)
         self._lock = asyncio.Lock()
         self._botguard_lock = asyncio.Lock()
+        self._template_lock = asyncio.Lock()
         self._in_flight: int = 0
         self._switching: bool = False
     @asynccontextmanager
@@ -297,7 +353,16 @@ class BrowserSession:
 
             unsub = page.on_request(on_req)
             await page.evaluate(DIALOG_CLEANUP_JS)
-
+            await page.evaluate(
+                """(() => {
+                    const clickable = Array.from(document.querySelectorAll('button, mat-card, a, [role="button"]'));
+                    const target = clickable.find(el => (el.innerText || el.textContent || '').includes('Code and Chat'));
+                    if (target) { target.click(); return; }
+                    const startBtn = clickable.find(el => (el.innerText || el.textContent || '').includes('Start building'));
+                    if (startBtn) { startBtn.click(); return; }
+                })()"""
+            )
+            await page.wait_for_timeout(1000)
             try:
                 original_text = ""
                 try:
@@ -407,12 +472,15 @@ class BrowserSession:
         if model in self._templates:
             return self._templates[model]
 
-        page = await self.ensure_botguard_service()
-        if self._bootstrap_template:
-            bootstrap = dict(self._bootstrap_template)
-            self._templates[model] = bootstrap
-            return bootstrap
+        async with self._template_lock:
+            if model in self._templates:
+                return self._templates[model]
 
+            page = await self.ensure_botguard_service()
+            if self._bootstrap_template:
+                bootstrap = dict(self._bootstrap_template)
+                self._templates[model] = bootstrap
+                return bootstrap
         captured: dict[str, object] = {}
         last_response: dict[str, object] | None = None
 
@@ -550,8 +618,9 @@ class BrowserSession:
                     return new Promise((resolve) => {
                         var xhr = new XMLHttpRequest();
                         xhr.open('POST', args.url);
-                        var h = args.headers;
+                        var h = args.headers || {};
                         for (var k in h) {
+                            if (k.toLowerCase() === 'authorization') continue;
                             xhr.setRequestHeader(k, h[k]);
                         }
                         xhr.withCredentials = true;
@@ -565,7 +634,39 @@ class BrowserSession:
                         xhr.ontimeout = function() {
                             resolve({status: 0, body: 'timeout'});
                         };
-                        xhr.send(args.body);
+                        function getCookie(name) {
+                            var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+                            return m ? decodeURIComponent(m[1]) : '';
+                        }
+                        var sapisid = getCookie('SAPISID') || getCookie('__Secure-1PAPISID') || getCookie('__Secure-3PAPISID');
+                        if (sapisid && window.crypto && window.crypto.subtle) {
+                            var sapisid1p = getCookie('__Secure-1PAPISID') || sapisid;
+                            var sapisid3p = getCookie('__Secure-3PAPISID') || sapisid;
+                            var ts = Math.floor(Date.now() / 1000);
+                            var origin = 'https://aistudio.google.com';
+                            function sha1(str) {
+                                return crypto.subtle.digest('SHA-1', new TextEncoder().encode(str)).then(function(buf) {
+                                    return Array.from(new Uint8Array(buf)).map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
+                                });
+                            }
+                            Promise.all([
+                                sha1(ts + ' ' + sapisid + ' ' + origin),
+                                sha1(ts + ' ' + sapisid1p + ' ' + origin),
+                                sha1(ts + ' ' + sapisid3p + ' ' + origin)
+                            ]).then(function(res) {
+                                var auth = 'SAPISIDHASH ' + ts + '_' + res[0] + ' SAPISID1PHASH ' + ts + '_' + res[1] + ' SAPISID3PHASH ' + ts + '_' + res[2];
+                                xhr.setRequestHeader('Authorization', auth);
+                                xhr.send(args.body);
+                            }).catch(function() {
+                                var fallbackAuth = h['Authorization'] || h['authorization'];
+                                if (fallbackAuth) xhr.setRequestHeader('Authorization', fallbackAuth);
+                                xhr.send(args.body);
+                            });
+                        } else {
+                            var fallbackAuth = h['Authorization'] || h['authorization'];
+                            if (fallbackAuth) xhr.setRequestHeader('Authorization', fallbackAuth);
+                            xhr.send(args.body);
+                        }
                     });
                 }""",
                 {
@@ -623,30 +724,44 @@ class BrowserSession:
             try:
                 while asyncio.get_running_loop().time() < deadline:
                     raw_event = await page.evaluate(
-                        "(rid) => window.__stream_next[rid](250)", rid
+                        "(rid) => window.__stream_next && window.__stream_next[rid] ? window.__stream_next[rid](250) : {type: 'error', message: 'stream_session_lost'}",
+                        rid,
                     )
                     if not raw_event or not isinstance(raw_event, dict):
                         await asyncio.sleep(0.05)
                         continue
 
-                    event: dict[str, object] = raw_event
-                    event_type = str(event.get("type") or "")
-                    if event_type == "idle":
-                        continue
-                    if event_type == "status":
-                        status = int(str(event.get("status") or 0))
-                        yield ("status", status)
-                        status_sent = True
-                        continue
-                    if event_type == "chunk":
-                        text = str(event.get("text") or "")
-                        if text:
-                            yield ("chunk", text.encode("utf-8"))
-                        continue
-                    if event_type == "error":
-                        message = str(event.get("message") or "unknown error")
-                        raise RuntimeError(f"streaming request failed: {message}")
-                    if event_type in ("done", "aborted"):
+                    event_type = str(raw_event.get("type") or "")
+                    events_to_process = []
+                    if event_type == "batch":
+                        raw_list = raw_event.get("events")
+                        if isinstance(raw_list, list):
+                            events_to_process = [e for e in raw_list if isinstance(e, dict)]
+                    else:
+                        events_to_process = [raw_event]
+
+                    is_terminal = False
+                    for event in events_to_process:
+                        etype = str(event.get("type") or "")
+                        if etype == "idle":
+                            continue
+                        if etype == "status":
+                            status = int(str(event.get("status") or 0))
+                            yield ("status", status)
+                            status_sent = True
+                            continue
+                        if etype == "chunk":
+                            text = str(event.get("text") or "")
+                            if text:
+                                yield ("chunk", text.encode("utf-8"))
+                            continue
+                        if etype == "error":
+                            message = str(event.get("message") or "unknown error")
+                            raise RuntimeError(f"streaming request failed: {message}")
+                        if etype in ("done", "aborted"):
+                            is_terminal = True
+                            break
+                    if is_terminal:
                         break
                 if not status_sent:
                     raise RuntimeError("streaming request timeout: no response status")
@@ -881,6 +996,23 @@ class BrowserSession:
         )
 
     async def _click_run_button(self, page: CDPPage) -> bool:
+        clicked = await page.evaluate(
+            """(() => {
+                const buttons = Array.from(document.querySelectorAll('button'));
+                const runBtn = buttons.find(b => {
+                    const t = (b.innerText || b.textContent || '').trim();
+                    return t === 'Run' || t.startsWith('Run\\n') || t.startsWith('Run Ctrl');
+                });
+                if (runBtn) {
+                    runBtn.click();
+                    return true;
+                }
+                return false;
+            })()"""
+        )
+        if clicked:
+            return True
+
         if await page.send_control_enter("textarea"):
             return True
 

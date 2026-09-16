@@ -9,6 +9,7 @@ import re
 import time
 import uuid
 from collections.abc import Iterable
+from typing import Any
 
 logger = logging.getLogger("aistudio.cookie_parser")
 
@@ -235,7 +236,7 @@ def build_google_cookie_list(
     return cookies
 
 
-def parse_cookie_string(raw: object) -> dict[str, object]:
+def parse_cookie_string(raw: object) -> dict[str, Any]:
     """将任意格式 cookie 解析为 storage state dict，包含 cookies 和 origins 字段。"""
     cookie_dict = parse_raw_cookies(raw)
     return {

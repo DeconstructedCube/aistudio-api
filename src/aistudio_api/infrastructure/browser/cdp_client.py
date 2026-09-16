@@ -531,7 +531,9 @@ class CDPPage:
         res = await self.cdp.send("Network.getCookies")
         raw_cookies = res.get("cookies")
         return raw_cookies if isinstance(raw_cookies, list) else []
-    async def set_cookies(self, cookies: list[dict[str, object]]) -> None:
+    async def set_cookies(
+        self, cookies: list[dict[str, object]] | list[dict[str, str]]
+    ) -> None:
         """Inject cookies via CDP Network domain."""
         if not cookies:
             return

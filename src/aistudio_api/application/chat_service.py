@@ -6,11 +6,10 @@ import base64
 import os
 import tempfile
 import uuid
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aistudio_api.api.schemas import GeminiGenerateContentRequest, GeminiTool
-
 
 from aistudio_api.infrastructure.gateway.model_defaults import resolve_model_defaults
 from aistudio_api.infrastructure.gateway.wire_codec import build_tools_from_names
@@ -40,12 +39,12 @@ class NormalizedGeminiRequest:
     max_tokens: int | None = None
     generation_config_overrides: dict[str, object] | None = None
 
-    def __getitem__(self, key: str) -> object:
+    def __getitem__(self, key: str) -> Any:
         if hasattr(self, key):
             return getattr(self, key)
         raise KeyError(key)
 
-    def get(self, key: str, default: object = None) -> object:
+    def get(self, key: str, default: Any = None) -> Any:
         return getattr(self, key, default)
 
 SCHEMA_TYPE_CODES = {
@@ -416,21 +415,13 @@ def normalize_gemini_request(
                 )
                 seen_builtin.update(builtin_tool_names)
 
-    # 注入 config.yaml 的 default_tools（内置工具，如 google_search）。
-    #   req.tools is None → 客户端没传 tools，注入（原行为）
-    #   req.tools 非空    → 客户端带了自定义工具，也合并 default_tools
-    #                       （之前被跳过，导致模型想用内置工具时不可用）
-    #   req.tools == []   → 客户端明确禁用所有工具，跳过（保留"空数组=禁用"语义）
-    if model_defaults.default_tools and not (
-        req.tools is not None and len(req.tools) == 0
-    ):
+    # 仅当客户端未传 tools 时注入 config.yaml 的 default_tools。
+    # 若客户端显式声明了 tools（如自定义函数声明），绝不自动混入 Google Search 等内置工具，
+    # 避免触发 Google MakerSuite "Please enable tool_config.include_server_side_tool_invocations" 400 报错。
+    if req.tools is None and model_defaults.default_tools:
         default_tool_names = _filter_default_tools_for_model(
             model_defaults.default_tools,
             is_image_model=model_defaults.is_image_model,
-        )
-        # 去重：跳过请求已显式声明的内置工具，并按覆盖关系去掉被复合工具覆盖的窄工具
-        default_tool_names = _drop_covered_builtin_tools(
-            default_tool_names, seen_builtin
         )
         injected = (
             build_tools_from_names(
@@ -441,10 +432,7 @@ def normalize_gemini_request(
             if default_tool_names
             else []
         )
-        if tools is None:
-            tools = injected
-        else:
-            tools.extend(injected)
+        tools = injected if injected else None
 
     generation_config = req.generationConfig
     generation_config_overrides = {

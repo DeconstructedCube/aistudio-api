@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from aistudio_api.infrastructure.browser.cdp_client import (
     BLOCKED_URL_PATTERNS,
-    CDPClient,
     CDPConnection,
     CDPError,
     CDPPage,

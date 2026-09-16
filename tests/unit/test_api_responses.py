@@ -1,7 +1,3 @@
-import json
-
-import pytest
-
 from aistudio_api.api.responses import (
     to_gemini_parts,
     to_gemini_usage_metadata,

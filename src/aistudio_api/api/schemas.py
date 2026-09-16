@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+from typing import Any
 from pydantic import BaseModel
 
 
@@ -30,13 +31,12 @@ class GeminiContent(BaseModel):
 
 
 class GeminiTool(BaseModel):
-    codeExecution: dict[str, object] | None = None
-    googleSearch: dict[str, object] | None = None
-    googleSearchRetrieval: dict[str, object] | None = None
-    googleMaps: dict[str, object] | None = None
-    urlContext: dict[str, object] | None = None
-    functionDeclarations: list[dict[str, object]] | None = None
-
+    codeExecution: dict[str, Any] | None = None
+    googleSearch: dict[str, Any] | None = None
+    googleSearchRetrieval: dict[str, Any] | None = None
+    googleMaps: dict[str, Any] | None = None
+    urlContext: dict[str, Any] | None = None
+    functionDeclarations: list[dict[str, Any]] | None = None
 
 class GeminiGenerationConfig(BaseModel):
     stopSequences: list[str] | None = None

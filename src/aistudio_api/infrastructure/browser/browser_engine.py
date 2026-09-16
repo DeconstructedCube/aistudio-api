@@ -190,6 +190,11 @@ def build_chromium_args(
         "--js-flags=--max-old-space-size=128",
         "--disk-cache-size=16777216",
         "--media-cache-size=1",
+        "--disable-extensions",
+        "--disable-component-extensions-with-background-pages",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-ipc-flooding-protection",
+        "--memory-pressure-off",
         "--disable-background-networking",
         "--disable-sync",
         "--disable-speech-api",
@@ -198,7 +203,6 @@ def build_chromium_args(
         "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
         "--disable-features=Translate,OptimizationHints,MediaRouter,DialLocalDiscovery,PreloadMediaEngagementData,CertificateTransparencyComponentUpdater,SitePerProcess,AudioServiceOutOfProcess",
     ]
-
     if user_data_dir:
         args.append(f"--user-data-dir={user_data_dir}")
 

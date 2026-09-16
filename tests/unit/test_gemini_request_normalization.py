@@ -97,25 +97,26 @@ def test_normalize_gemini_request_maps_official_image_generation_fields():
 
 
 def test_normalize_gemini_request_encodes_function_declarations_to_wire_tools():
-    req = GeminiGenerateContentRequest(
-        contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])],
-        tools=[
-            {
-                "functionDeclarations": [
-                    {
-                        "name": "getWeather",
-                        "description": "gets the weather for a requested city",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {"city": {"type": "string"}},
-                            "propertyOrdering": ["city"],
-                        },
-                    }
-                ]
-            }
-        ],
+    req = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+            "tools": [
+                {
+                    "functionDeclarations": [
+                        {
+                            "name": "getWeather",
+                            "description": "gets the weather for a requested city",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"city": {"type": "string"}},
+                                "propertyOrdering": ["city"],
+                            },
+                        }
+                    ]
+                }
+            ],
+        }
     )
-
     normalized = normalize_gemini_request(req, "models/gemma-4-31b-it")
 
     assert normalized["tools"] == [
@@ -129,7 +130,6 @@ def test_normalize_gemini_request_encodes_function_declarations_to_wire_tools():
                 ]
             ],
         ],
-        [None, None, None, [None, [[]]]],
     ]
 
 
@@ -144,18 +144,19 @@ def test_normalize_gemini_request_applies_gemma_default_tools():
 
 
 def test_normalize_gemini_request_encodes_builtin_tools_to_wire():
-    req = GeminiGenerateContentRequest(
-        contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])],
-        tools=[
-            {
-                "googleSearch": {},
-                "googleMaps": {},
-                "urlContext": {},
-                "codeExecution": {},
-            }
-        ],
+    req = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+            "tools": [
+                {
+                    "googleSearch": {},
+                    "googleMaps": {},
+                    "urlContext": {},
+                    "codeExecution": {},
+                }
+            ],
+        }
     )
-
     normalized = normalize_gemini_request(req, "models/gemini-3.5-flash")
 
     assert normalized["tools"] == [
@@ -167,15 +168,16 @@ def test_normalize_gemini_request_encodes_builtin_tools_to_wire():
 
 
 def test_normalize_gemini_request_rejects_gemma_unsupported_builtin_tool():
-    req = GeminiGenerateContentRequest(
-        contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])],
-        tools=[
-            {
-                "googleMaps": {},
-            }
-        ],
+    req = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+            "tools": [
+                {
+                    "googleMaps": {},
+                }
+            ],
+        }
     )
-
     with pytest.raises(ValueError, match="not allowed"):
         normalize_gemini_request(req, "models/gemma-4-31b-it")
 

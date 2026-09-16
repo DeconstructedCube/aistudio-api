@@ -11,7 +11,6 @@ import pytest
 from aistudio_api.application.account_rotator import (
     AccountRotator,
     AccountStats,
-    get_pacific_date_key,
     get_seconds_until_pacific_midnight,
 )
 from aistudio_api.application.api_service_common import (
@@ -228,3 +227,87 @@ async def test_ensure_botguard_available_regions_fast_fail():
 
     with pytest.raises(RuntimeError, match="地区限制"):
         await session.ensure_botguard_service()
+
+@pytest.mark.anyio
+async def test_runtime_state_record_model_stats():
+    """测试 RuntimeState.record 正确更新 stats，不抛出 TypeError 'Field' object is not subscriptable。"""
+    from aistudio_api.api.state import RuntimeState
+
+    state = RuntimeState()
+    state.record("models/gemini-3.8-flash", "errors")
+    state.record("models/gemini-3.8-flash", "success", {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30})
+    state.record("models/gemini-3.8-flash", "rate_limited")
+
+    item = state.model_stats["models/gemini-3.8-flash"]
+    assert item.requests == 3
+    assert item.errors == 1
+    assert item.success == 1
+    assert item.rate_limited == 1
+    assert item.total_tokens == 30
+    assert item.last_used is not None
+
+
+@pytest.mark.anyio
+async def test_capture_model_preservation_when_template_differs():
+    """测试当 Hook 拦截模板为 3.7-flash 时，请求 3.8-flash 不会被模板模型覆盖。"""
+    mock_session = MagicMock(spec=BrowserSession)
+    mock_session.generate_snapshot = AsyncMock(return_value="!mock_snap")
+    mock_session.capture_template = AsyncMock(return_value={
+        "url": "https://example.com/generate",
+        "headers": {"content-type": "application/json"},
+        "body": '["models/gemini-3.7-flash",[[[[null,"template prompt"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"old_snap"]',
+    })
+    cache = SnapshotCache()
+    service = RequestCaptureService(session=mock_session, snapshot_cache=cache)
+
+    captured = await service.capture(
+        prompt="Hello",
+        model="models/gemini-3.8-flash",
+    )
+    assert captured is not None
+    # 确认 captured.model 是用户请求的模型，而不是模板的 gemini-3.7-flash
+    assert captured.model == "models/gemini-3.8-flash"
+    import json
+    body = json.loads(captured.body)
+    assert body[0] == "models/gemini-3.8-flash"
+
+
+@pytest.mark.anyio
+async def test_browser_session_send_streaming_batch_events():
+    """测试流式回放支持批量事件以提升并发吞吐。"""
+    from aistudio_api.infrastructure.browser.cdp_client import CDPPage
+
+    page = MagicMock(spec=CDPPage)
+    page.url = "https://aistudio.google.com/prompts/new_chat"
+    page.is_closed = MagicMock(return_value=False)
+
+    batch_events = {
+        "type": "batch",
+        "events": [
+            {"type": "status", "status": 200},
+            {"type": "chunk", "text": "hello "},
+            {"type": "chunk", "text": "world"},
+            {"type": "done"},
+        ],
+    }
+    async def fake_eval(expr, *args, **kwargs):
+        if "default_MakerSuite" in expr or "window.__bg_hooked" in expr:
+            return "already_hooked"
+        if "window.__bg_service" in expr:
+            return True
+        if "window.__stream_next" in expr:
+            return batch_events
+        return None
+
+    page.evaluate = AsyncMock(side_effect=fake_eval)
+    session = BrowserSession(port=9222)
+    session._page = page
+    session._templates["test"] = {"url": "https://example.com", "headers": {}}
+
+    results = []
+    async for tag, data in session.send_streaming_request(body="[]", timeout_ms=5000):
+        results.append((tag, data))
+
+    assert ("status", 200) in results
+    assert ("chunk", b"hello ") in results
+    assert ("chunk", b"world") in results

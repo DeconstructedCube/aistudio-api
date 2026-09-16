@@ -72,9 +72,9 @@ class AIStudioClient:
         self._streaming_gateway = StreamingGateway(session=self._session)
 
     async def warmup(self) -> None:
-        """预热浏览器后端并加载 AI Studio 页面。"""
+        """预热浏览器后端并加载 AI Studio 页面及捕获 BotGuard 服务。"""
         if self._session is not None:
-            await self._session.ensure_context()
+            await self._session.ensure_botguard_service()
             logger.info("浏览器预热完成")
 
     async def switch_auth(self, auth_file: str | None) -> None:

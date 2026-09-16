@@ -46,3 +46,6 @@ def main():
         str(browser_port_val),
     ]
     server_main()
+
+if __name__ == "__main__":
+    main()

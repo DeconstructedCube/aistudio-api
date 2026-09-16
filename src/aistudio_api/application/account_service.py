@@ -60,11 +60,13 @@ class AccountService:
 
             await browser_session.switch_auth(str(auth_path))
             await browser_session.ensure_context()
-
-            if not keep_snapshot_cache and snapshot_cache is not None:
-                snapshot_cache.clear()
-                logger.info("已清除 snapshot 缓存")
-
+            if not keep_snapshot_cache:
+                if snapshot_cache is not None:
+                    snapshot_cache.clear()
+                from aistudio_api.api.state import runtime_state
+                if runtime_state.client is not None:
+                    runtime_state.client.clear_snapshot_cache()
+                logger.info("已清除 snapshot 与模板缓存")
             self._store.set_active_account(account_id)
             logger.info("已切换到账号: %s (%s)", account_id, account.name)
             return account
