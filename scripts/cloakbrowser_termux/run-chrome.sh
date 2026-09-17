@@ -7,7 +7,7 @@
 #   that by running chrome inside a proot-distro Linux container, which
 #   provides the full glibc stack.
 #
-# Layout (created by scripts/install_termux_prereqs.sh):
+# Layout (created by scripts/setup-browser.sh):
 #   <project_root>/.cloakbrowser/chromium-<ver>/chrome + icudtl.dat + *.pak
 #   <proot-rootfs>/usr/bin/chrome dependencies installed via apt
 #

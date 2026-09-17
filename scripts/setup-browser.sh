@@ -214,4 +214,8 @@ else
     setup_desktop
 fi
 
+if command -v ruff >/dev/null 2>&1 && [[ -d "${PROJECT_ROOT}/.venv/bin" && ! -e "${PROJECT_ROOT}/.venv/bin/ruff" ]]; then
+    ln -sf "$(command -v ruff)" "${PROJECT_ROOT}/.venv/bin/ruff"
+fi
+
 log "Browser setup check complete."
