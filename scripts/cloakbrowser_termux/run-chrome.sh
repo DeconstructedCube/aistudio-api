@@ -43,7 +43,7 @@ if [[ -z "${CHROME_BIN}" || ! -f "${CHROME_BIN}" ]]; then
 [run-chrome] No CloakBrowser binary found in ${CLOAK_ROOT}.
 
 Install it once:
-    bash scripts/install_termux_prereqs.sh --project-root "${CLOAKBROWSER_PROJECT_DIR}"
+    bash scripts/setup-browser.sh --project-root "${CLOAKBROWSER_PROJECT_DIR}"
 EOF
     exit 127
 fi
@@ -59,7 +59,7 @@ fi
 if ! { proot-distro list 2>&1 1>/dev/null || true; } | grep -qE "[[:space:]]\\*?[[:space:]]*${AISTUDIO_PROOT_NAME}([[:space:]]|$)"; then
     cat >&2 <<EOF
 [run-chrome] proot container '${AISTUDIO_PROOT_NAME}' is missing. Install once:
-    bash scripts/install_termux_prereqs.sh --project-root "${CLOAKBROWSER_PROJECT_DIR}"
+    bash scripts/setup-browser.sh --project-root "${CLOAKBROWSER_PROJECT_DIR}"
 EOF
     exit 127
 fi

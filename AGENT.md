@@ -31,17 +31,14 @@ Python 工具链运行在 Termux 宿主（通过 `uv` 管理虚拟环境）；Ch
 ### 2.1 环境准备与启动流程
 
 ```bash
-# 1. 宿主环境准备（仅需执行一次）
-pkg update
-pkg install -y python git uv proot-distro
-
-# 2. 同步依赖
+# 1. 宿主依赖环境配置与同步
+bash scripts/setup-env.sh
 uv sync
 
-# 3. 准备 proot 容器与 CloakBrowser 运行时
-bash scripts/install_termux_prereqs.sh --project-root "$PWD"
+# 2. 准备受控浏览器运行时（仅首次执行）
+bash scripts/setup-browser.sh
 
-# 4. 启动服务
+# 3. 启动服务
 uv run python3 main.py server --port 8080
 ```
 
@@ -60,7 +57,7 @@ uv run python3 main.py server --port 8080
 | 现象 | 原因 | 处理方案 |
 |---|---|---|
 | `[Errno 98] address already in use` | 端口被占用或上一次服务未完全退出 | 执行 `pkill -f 'main.py server'` 后重试，或指定 `--port <other_port>` |
-| `Chromium CDP endpoint on port N not ready` | proot 容器未启动或缺少 apt 依赖 | 重新运行 `bash scripts/install_termux_prereqs.sh --project-root "$PWD"` |
+| `Chromium CDP endpoint on port N not ready` | proot 容器未启动或缺少 apt 依赖 | 重新运行 `bash scripts/setup-browser.sh` |
 | `proot-distro login: container 'aistudio-api' is missing` | 容器尚未创建或被改名 | 运行安装脚本创建容器，或通过 `AISTUDIO_PROOT_NAME` 指定现有容器 |
 | `pydantic-core` 报 `GLIBC_X.Y not found` | 使用了系统 pip 安装而非 `uv` | 清理 `.venv/` 后重新执行 `uv sync` |
 
@@ -83,12 +80,17 @@ uv run python3 main.py server --port 8080
 
 | 工具 / 阶段 | 命令 | 判定标准 |
 |---|---|---|
+| **Python 代码风格与 Lint** | `ruff check .` | 0 errors |
 | **Python 类型检查** | `bun x pyright` | 0 errors |
 | **Python 单元测试** | `uv run pytest` | 全部通过 |
 | **前端代码规范** | `cd web && bun run lint` | 0 errors, 0 warnings |
 | **前端类型检查** | `cd web && bun run type-check` | 0 errors |
 | **前端生产构建** | `cd web && bun run build` | 构建成功并更新 static 产物 |
 
+> [!NOTE]
+> **跨平台原生二进制依赖与开发工具**：
+> - `pydantic-core` 等生产核心依赖通过 `uv.lock` 显式注入 TUR 的 prebuilt Android wheel，实现全平台统一通过 `uv sync` 秒级安装且不触发源码构建。
+> - `ruff` 作为开发阶段的 Lint 工具，在 `pyproject.toml` 的 dev 依赖中配置了平台标记 `ruff>=0.8.0; sys_platform != 'android'`；桌面平台（Linux / macOS / Windows）执行 `uv sync --extra dev` 时直接自 PyPI 下载预编译 wheel。而在 Android Termux 环境下，TUR 并未打包 ruff 的 PyPI wheel，开发者可通过 Termux 原生包管理器 `pkg install -y ruff` 直接获得编译好的 aarch64 native 二进制，普通用户生产运行无需安装。
 > [!TIP]
 > **避免无效重跑**：若在当前交互轮次中未发生代码或配置文件的实质性变动，无需重复执行全量类型与测试套件检查。
 ---

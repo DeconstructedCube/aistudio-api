@@ -117,19 +117,16 @@ uv run python3 main.py server --port 8080
 On Termux, Chromium runs inside a lightweight `proot-distro` Ubuntu container to resolve Glibc/Bionic compatibility:
 
 ```bash
-# 1. Install prerequisites in Termux
-pkg update
-pkg install -y python git uv proot-distro
-
-# 2. Clone repository and sync Python environment
+# 1. Setup environment and sync dependencies
 git clone https://github.com/DeconstructedCube/aistudio-api.git
 cd aistudio-api
+bash scripts/setup-env.sh
 uv sync
 
-# 3. Setup proot container and CloakBrowser (run once)
-bash scripts/install_termux_prereqs.sh --project-root "$PWD"
+# 2. Setup managed browser runtime (run once)
+bash scripts/setup-browser.sh
 
-# 4. Start server
+# 3. Start server
 uv run python3 main.py server --port 8080
 ```
 
@@ -344,6 +341,9 @@ bun run build        # Build production assets into src/aistudio_api/static
 Python quality checks and tests:
 
 ```bash
+# Run code style & lint check
+ruff check .
+
 # Run static type checking
 bun x pyright
 

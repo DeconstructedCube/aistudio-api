@@ -117,22 +117,18 @@ uv run python3 main.py server --port 8080
 Termux 环境下由于 Bionic 与 Glibc ABI 差异，浏览器运行在轻量 `proot-distro` 容器内：
 
 ```bash
-# 1. 安装 Termux 基础包
-pkg update
-pkg install -y python git uv proot-distro
-
-# 2. 克隆仓库并安装 Python 依赖
+# 1. 准备依赖环境与安装
 git clone https://github.com/DeconstructedCube/aistudio-api.git
 cd aistudio-api
+bash scripts/setup-env.sh
 uv sync
 
-# 3. 初始化 proot 容器与 CloakBrowser 运行时（仅首次执行）
-bash scripts/install_termux_prereqs.sh --project-root "$PWD"
+# 2. 准备受控浏览器运行时（仅首次执行）
+bash scripts/setup-browser.sh
 
-# 4. 启动服务
+# 3. 启动服务
 uv run python3 main.py server --port 8080
 ```
-
 ### Docker 部署
 
 使用官方 Docker 镜像直接启动：
@@ -345,7 +341,10 @@ bun run build        # 生产构建，产物输出至 src/aistudio_api/static
 Python 端质量检查与测试：
 
 ```bash
-# 执行类型检查
+# 执行代码风格与 Lint 检查
+ruff check .
+
+# 执行静态类型检查
 bun x pyright
 
 # 执行单元测试套件
