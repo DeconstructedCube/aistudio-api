@@ -77,14 +77,18 @@ async def test_cdp_page_blocked_urls_configuration():
     page = CDPPage(conn, target_id="target-1")
     await page.set_blocked_urls(BLOCKED_URL_PATTERNS)
 
-    conn.send.assert_called_with("Network.setBlockedURLs", {"urls": BLOCKED_URL_PATTERNS})
+    conn.send.assert_called_with(
+        "Network.setBlockedURLs", {"urls": BLOCKED_URL_PATTERNS}
+    )
 
 
 @pytest.mark.asyncio
 async def test_cdp_page_evaluate_argument_wrapping():
     """Test CDPPage.evaluate correctly wraps expressions with arguments and unwraps value."""
     conn = MagicMock(spec=CDPConnection)
-    conn.send = AsyncMock(return_value={"result": {"type": "string", "value": "hello world"}})
+    conn.send = AsyncMock(
+        return_value={"result": {"type": "string", "value": "hello world"}}
+    )
 
     page = CDPPage(conn, target_id="target-1")
     res = await page.evaluate("(args) => args.val", {"val": "hello world"})

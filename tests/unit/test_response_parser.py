@@ -47,7 +47,9 @@ def test_parse_response_chunk_and_classify_chunk():
 
     ctype, text = classify_chunk(raw[0][1])
     assert ctype == "thinking"
-    assert isinstance(text, str) and 'standard Chinese greeting meaning "Hello."' in text
+    assert (
+        isinstance(text, str) and 'standard Chinese greeting meaning "Hello."' in text
+    )
 
 
 def test_stream_parser_extracts_real_chunks():
@@ -65,7 +67,30 @@ def test_parse_text_output_handles_double_wrapped_chunk_bundle():
         [
             [
                 [
-                    [[[[[None, "先想一会儿", None, None, None, None, None, None, None, None, None, None, 1]], "model"]]],
+                    [
+                        [
+                            [
+                                [
+                                    [
+                                        None,
+                                        "先想一会儿",
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        1,
+                                    ]
+                                ],
+                                "model",
+                            ]
+                        ]
+                    ],
                     None,
                     [10, None, 10, None, [[1, 10]]],
                     None,
@@ -75,7 +100,30 @@ def test_parse_text_output_handles_double_wrapped_chunk_bundle():
                     "resp_test",
                 ],
                 [
-                    [[[[[None, "答案", None, None, None, None, None, None, None, None, None, None, 0]], "model"]]],
+                    [
+                        [
+                            [
+                                [
+                                    [
+                                        None,
+                                        "答案",
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        0,
+                                    ]
+                                ],
+                                "model",
+                            ]
+                        ]
+                    ],
                     None,
                     [10, 2, 17, None, [[1, 10]], None, None, None, None, 5],
                     None,

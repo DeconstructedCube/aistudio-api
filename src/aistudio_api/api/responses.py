@@ -32,7 +32,9 @@ def _coerce_usage_int(value: object) -> int:
     return 0
 
 
-def to_gemini_usage_metadata(usage: dict[str, object] | None = None) -> GeminiUsageMetadata:
+def to_gemini_usage_metadata(
+    usage: dict[str, object] | None = None,
+) -> GeminiUsageMetadata:
     usage = usage or {}
     completion_details = usage.get("completion_tokens_details")
     if not isinstance(completion_details, dict):
@@ -62,6 +64,7 @@ def sse_error(message: str, code: int = 500, status: str = "INTERNAL") -> str:
 def sse_google_error(message: str, code: int = 500, status: str = "INTERNAL") -> str:
     data = {"error": {"code": code, "message": message, "status": status}}
     import json
+
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 

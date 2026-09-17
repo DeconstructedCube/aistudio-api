@@ -96,6 +96,11 @@ class AccountStats:
         """获取距离配额刷新的剩余秒数。"""
         if self.is_available(model):
             return 0.0
+        now = time.time()
+        if model:
+            cd = self.model_cooldowns.get(model, 0.0)
+            if cd > now:
+                return max(0.0, cd - now)
         return get_seconds_until_pacific_midnight()
 
     def record_success(self, model: str | None = None) -> None:
@@ -182,9 +187,7 @@ class AccountRotator:
                     else None
                 ),
                 "last_rate_limited": (
-                    datetime.fromtimestamp(
-                        stats.last_rate_limited, tz=UTC
-                    ).isoformat()
+                    datetime.fromtimestamp(stats.last_rate_limited, tz=UTC).isoformat()
                     if stats.last_rate_limited
                     else None
                 ),
@@ -192,8 +195,16 @@ class AccountRotator:
                 "cooldown_remaining": int(stats.get_cooldown_remaining()),
                 "model_cooldowns": {
                     m: int(stats.get_cooldown_remaining(m))
-                    for m in stats.model_rate_limited_dates
-                    if stats.model_rate_limited_dates.get(m) == current_la
+                    for m in (
+                        set(stats.model_cooldowns.keys())
+                        | {
+                            k
+                            for k, dt in stats.model_rate_limited_dates.items()
+                            if dt == current_la
+                        }
+                    )
+                    if not stats.is_available(m)
+                    and int(stats.get_cooldown_remaining(m)) > 0
                 },
                 "model_rate_limited_dates": dict(stats.model_rate_limited_dates),
                 "model_requests": dict(stats.model_requests),
@@ -280,9 +291,7 @@ class AccountRotator:
             self._stats[account_id] = AccountStats(account_id=account_id)
         self._stats[account_id].record_error(model)
 
-    def clear_cooldown(
-        self, account_id: str, model: str | None = None
-    ) -> None:
+    def clear_cooldown(self, account_id: str, model: str | None = None) -> None:
         """清除指定账号的 429 锁定。"""
         if account_id in self._stats:
             self._stats[account_id].clear_cooldown(model)

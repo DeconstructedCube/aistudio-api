@@ -198,13 +198,14 @@ class AistudioWireCodec:
             if model_defaults.disable_safety_settings:
                 body[self.SAFETY_INDEX] = None
         else:
-            if request.tools:
+            if request.tools or request.location is not None:
                 self._ensure_len(body, self.TIMEZONE_INDEX + 1)
                 body[self.TIMEZONE_INDEX] = request.location or [
                     [None, None, os.getenv("AISTUDIO_TIMEZONE", "Asia/Tokyo")]
                 ]
             else:
-                body = body[:12]
+                while len(body) > self.CACHED_CONTENT_INDEX + 1 and body[-1] is None:
+                    body.pop()
         return json.dumps(body, separators=(",", ":"), ensure_ascii=False)
 
     def rewrite(
@@ -282,9 +283,6 @@ class AistudioWireCodec:
 
         request.tools = tools if tools else None
 
-        if not model_defaults.is_image_model and request.tools:
-            request.generation_config.response_mime_type = None
-            request.generation_config.response_schema = None
         return self.encode(request)
 
     def _build_user_content(
@@ -356,10 +354,8 @@ class AistudioWireCodec:
                     function_call=function_call, thought_signature=signature
                 )
         if isinstance(raw_part, list) and (
-            (len(raw_part) > 11
-            and isinstance(raw_part[11], list))
-            or (len(raw_part) > 4
-            and isinstance(raw_part[4], list))
+            (len(raw_part) > 11 and isinstance(raw_part[11], list))
+            or (len(raw_part) > 4 and isinstance(raw_part[4], list))
         ):
             raw_function_response = (
                 raw_part[11]

@@ -49,6 +49,8 @@ class GeminiTool(BaseModel):
     googleMaps: dict[str, object] | None = None
     urlContext: dict[str, object] | None = None
     functionDeclarations: list[dict[str, object]] | None = None
+
+
 class GeminiGenerationConfig(BaseModel):
     stopSequences: list[str] | None = None
     temperature: float | None = None

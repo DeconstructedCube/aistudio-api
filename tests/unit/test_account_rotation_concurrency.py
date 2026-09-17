@@ -42,14 +42,14 @@ async def test_capture_service_concurrency_and_caching():
             "headers": {"content-type": "application/json"},
             "body": '["models/gemini-2.5-flash",[[[[null,"old"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"orig_snap"]',
         }
+
     mock_session.capture_template = AsyncMock(side_effect=fake_capture_template)
     cache = SnapshotCache(ttl=3600, max_size=100)
     service = RequestCaptureService(session=mock_session, snapshot_cache=cache)
 
     # 5 个并发请求同时请求同一个 model
     tasks = [
-        service.capture(prompt=f"hi {i}", model="gemini-2.5-flash")
-        for i in range(5)
+        service.capture(prompt=f"hi {i}", model="gemini-2.5-flash") for i in range(5)
     ]
     results = await asyncio.gather(*tasks)
 
@@ -101,19 +101,27 @@ async def test_account_stats_pacific_midnight_reset():
 async def test_rotator_sticky_mode():
     """测试 Sticky 模式：默认保持当前号，直到限流才切换。"""
     store = MagicMock(spec=AccountStore)
-    acc1 = AccountMeta(id="acc_1", name="Account 1", email="acc1@example.com", created_at="2026-01-01")
-    acc2 = AccountMeta(id="acc_2", name="Account 2", email="acc2@example.com", created_at="2026-01-01")
+    acc1 = AccountMeta(
+        id="acc_1", name="Account 1", email="acc1@example.com", created_at="2026-01-01"
+    )
+    acc2 = AccountMeta(
+        id="acc_2", name="Account 2", email="acc2@example.com", created_at="2026-01-01"
+    )
     store.list_accounts.return_value = [acc1, acc2]
 
     rotator = AccountRotator(account_store=store)
 
     # 初始获取账号，获取 acc1
-    next_acc = await rotator.get_next_account(model="gemini-2.5-pro", current_account_id=acc1.id)
+    next_acc = await rotator.get_next_account(
+        model="gemini-2.5-pro", current_account_id=acc1.id
+    )
     assert next_acc is not None
     assert next_acc.id == "acc_1"
 
     # 请求 flash 模型，继续复用 acc1 (sticky)
-    next_acc = await rotator.get_next_account(model="gemini-2.5-flash", current_account_id=acc1.id)
+    next_acc = await rotator.get_next_account(
+        model="gemini-2.5-flash", current_account_id=acc1.id
+    )
     assert next_acc is not None
     assert next_acc.id == "acc_1"
 
@@ -121,17 +129,23 @@ async def test_rotator_sticky_mode():
     rotator.record_rate_limited("acc_1", model="gemini-2.5-pro")
 
     # 请求 flash 模型，acc1 依然可用，继续复用 acc1！
-    next_acc = await rotator.get_next_account(model="gemini-2.5-flash", current_account_id=acc1.id)
+    next_acc = await rotator.get_next_account(
+        model="gemini-2.5-flash", current_account_id=acc1.id
+    )
     assert next_acc is not None
     assert next_acc.id == "acc_1"
 
     # 请求 pro 模型，acc1 不可用，自动切换到 acc2！
-    next_acc = await rotator.get_next_account(model="gemini-2.5-pro", current_account_id=acc1.id)
+    next_acc = await rotator.get_next_account(
+        model="gemini-2.5-pro", current_account_id=acc1.id
+    )
     assert next_acc is not None
     assert next_acc.id == "acc_2"
 
     # 随后请求 flash 或 pro，均以 acc2 为 sticky 目标
-    next_acc = await rotator.get_next_account(model="gemini-2.5-flash", current_account_id=acc2.id)
+    next_acc = await rotator.get_next_account(
+        model="gemini-2.5-flash", current_account_id=acc2.id
+    )
     assert next_acc is not None
     assert next_acc.id == "acc_2"
 
@@ -146,8 +160,12 @@ async def test_try_switch_account_avalanche_protection():
     mock_client = MagicMock()
     mock_client._session = MagicMock()
 
-    acc1 = AccountMeta(id="acc_1", name="Acc 1", email="acc1@test.com", created_at="2026-01-01")
-    acc2 = AccountMeta(id="acc_2", name="Acc 2", email="acc2@test.com", created_at="2026-01-01")
+    acc1 = AccountMeta(
+        id="acc_1", name="Acc 1", email="acc1@test.com", created_at="2026-01-01"
+    )
+    acc2 = AccountMeta(
+        id="acc_2", name="Acc 2", email="acc2@test.com", created_at="2026-01-01"
+    )
 
     active_acc = acc1
     mock_acc_service.get_active_account.side_effect = lambda: active_acc
@@ -170,10 +188,11 @@ async def test_try_switch_account_avalanche_protection():
     mock_acc_service.activate_account = AsyncMock(side_effect=fake_activate)
     mock_rotator.get_next_account = AsyncMock(return_value=acc2)
 
-    with patch.object(runtime_state, "rotator", mock_rotator), \
-         patch.object(runtime_state, "account_service", mock_acc_service), \
-         patch.object(runtime_state, "client", mock_client):
-
+    with (
+        patch.object(runtime_state, "rotator", mock_rotator),
+        patch.object(runtime_state, "account_service", mock_acc_service),
+        patch.object(runtime_state, "client", mock_client),
+    ):
         # 3 个并发协程同时遇到 429 并尝试切号
         tasks = [
             try_switch_account(model="gemini-2.5-pro", failed_account_id="acc_1")
@@ -191,6 +210,7 @@ def test_get_seconds_until_pacific_midnight():
     remaining = get_seconds_until_pacific_midnight()
     assert 0 <= remaining <= 86400
 
+
 @pytest.mark.asyncio
 async def test_goto_aistudio_net_err_aborted_tolerance():
     """当 page.goto 遭遇 net::ERR_ABORTED 但已在 aistudio 时，视为有效抵达并容错。"""
@@ -198,8 +218,16 @@ async def test_goto_aistudio_net_err_aborted_tolerance():
 
     page = MagicMock(spec=CDPPage)
     page.url = "https://aistudio.google.com/prompts/new_chat"
-    page.goto = AsyncMock(side_effect=RuntimeError("Navigation failed: net::ERR_ABORTED"))
-    page.evaluate = AsyncMock(side_effect=lambda expr, *a, **kw: "https://aistudio.google.com/prompts/new_chat" if "location.href" in expr else (True if "default_MakerSuite" in expr else None))
+    page.goto = AsyncMock(
+        side_effect=RuntimeError("Navigation failed: net::ERR_ABORTED")
+    )
+    page.evaluate = AsyncMock(
+        side_effect=lambda expr, *a, **kw: (
+            "https://aistudio.google.com/prompts/new_chat"
+            if "location.href" in expr
+            else (True if "default_MakerSuite" in expr else None)
+        )
+    )
     page.wait_for_timeout = AsyncMock()
 
     session = BrowserSession(port=9222)
@@ -209,6 +237,7 @@ async def test_goto_aistudio_net_err_aborted_tolerance():
     # 应该正常完成，不抛出 net::ERR_ABORTED 异常
     await session._goto_aistudio(page)
     assert session._verify_account_identity.called
+
 
 @pytest.mark.asyncio
 async def test_ensure_botguard_available_regions_fast_fail():
@@ -227,6 +256,8 @@ async def test_ensure_botguard_available_regions_fast_fail():
 
     with pytest.raises(RuntimeError, match="地区限制"):
         await session.ensure_botguard_service()
+
+
 @pytest.mark.asyncio
 async def test_runtime_state_record_model_stats():
     """测试 RuntimeState.record 正确更新 stats，不抛出 TypeError 'Field' object is not subscriptable。"""
@@ -234,7 +265,11 @@ async def test_runtime_state_record_model_stats():
 
     state = RuntimeState()
     state.record("models/gemini-3.8-flash", "errors")
-    state.record("models/gemini-3.8-flash", "success", {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30})
+    state.record(
+        "models/gemini-3.8-flash",
+        "success",
+        {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+    )
     state.record("models/gemini-3.8-flash", "rate_limited")
 
     item = state.model_stats["models/gemini-3.8-flash"]
@@ -245,16 +280,19 @@ async def test_runtime_state_record_model_stats():
     assert item.total_tokens == 30
     assert item.last_used is not None
 
+
 @pytest.mark.asyncio
 async def test_capture_model_preservation_when_template_differs():
     """测试当 Hook 拦截模板为 3.7-flash 时，请求 3.8-flash 不会被模板模型覆盖。"""
     mock_session = MagicMock(spec=BrowserSession)
     mock_session.generate_snapshot = AsyncMock(return_value="!mock_snap")
-    mock_session.capture_template = AsyncMock(return_value={
-        "url": "https://example.com/generate",
-        "headers": {"content-type": "application/json"},
-        "body": '["models/gemini-3.7-flash",[[[[null,"template prompt"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"old_snap"]',
-    })
+    mock_session.capture_template = AsyncMock(
+        return_value={
+            "url": "https://example.com/generate",
+            "headers": {"content-type": "application/json"},
+            "body": '["models/gemini-3.7-flash",[[[[null,"template prompt"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"old_snap"]',
+        }
+    )
     cache = SnapshotCache()
     service = RequestCaptureService(session=mock_session, snapshot_cache=cache)
 
@@ -266,8 +304,11 @@ async def test_capture_model_preservation_when_template_differs():
     # 确认 captured.model 是用户请求的模型，而不是模板的 gemini-3.7-flash
     assert captured.model == "models/gemini-3.8-flash"
     import json
+
     body = json.loads(captured.body)
     assert body[0] == "models/gemini-3.8-flash"
+
+
 @pytest.mark.asyncio
 async def test_browser_session_send_streaming_batch_events():
     """测试流式回放支持批量事件以提升并发吞吐。"""
@@ -286,6 +327,7 @@ async def test_browser_session_send_streaming_batch_events():
             {"type": "done"},
         ],
     }
+
     async def fake_eval(expr, *args, **kwargs):
         if "default_MakerSuite" in expr or "window.__bg_hooked" in expr:
             return "already_hooked"

@@ -230,6 +230,7 @@ class CDPPage:
             frame = raw_frame if isinstance(raw_frame, dict) else {}
             if not frame.get("parentId"):  # Main frame
                 self._last_url = str(frame.get("url") or "")
+
         self.cdp.on("Page.frameNavigated", on_navigated)
 
         if block_assets:
@@ -285,11 +286,15 @@ class CDPPage:
             exc: dict[str, object] = raw_exc if isinstance(raw_exc, dict) else {}
             raw_inner = exc.get("exception")
             inner: dict[str, object] = raw_inner if isinstance(raw_inner, dict) else {}
-            exc_text = str(inner.get("description") or exc.get("text") or "JS exception")
+            exc_text = str(
+                inner.get("description") or exc.get("text") or "JS exception"
+            )
             raise RuntimeError(f"CDP JS evaluation error: {exc_text}")
 
         raw_result_obj = res.get("result")
-        result_obj: dict[str, object] = raw_result_obj if isinstance(raw_result_obj, dict) else {}
+        result_obj: dict[str, object] = (
+            raw_result_obj if isinstance(raw_result_obj, dict) else {}
+        )
         val_type = result_obj.get("type")
         if val_type == "undefined":
             return None
@@ -340,6 +345,7 @@ class CDPPage:
                     self._last_url = str(actual_url)
             except Exception:
                 pass
+
     async def title(self) -> str:
         """Get document title."""
         try:
@@ -357,6 +363,7 @@ class CDPPage:
             return str(val) if val is not None else ""
         except Exception:
             return ""
+
     async def wait_for_timeout(self, ms: float) -> None:
         """Wait for specified milliseconds."""
         await asyncio.sleep(ms / 1000.0)
@@ -531,6 +538,7 @@ class CDPPage:
         res = await self.cdp.send("Network.getCookies")
         raw_cookies = res.get("cookies")
         return raw_cookies if isinstance(raw_cookies, list) else []
+
     async def set_cookies(
         self, cookies: list[dict[str, object]] | list[dict[str, str]]
     ) -> None:
@@ -633,6 +641,7 @@ class CDPPage:
                 "mime_type": str(resp.get("mimeType") or ""),
             }
             callback(data)
+
         return self.cdp.on("Network.responseReceived", listener)
 
     async def get_response_body(self, request_id: str) -> str:

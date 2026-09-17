@@ -27,7 +27,11 @@ async def test_generate_snapshot_hash_complex_tools_and_multimodal():
     passed_args = []
 
     async def fake_evaluate(expr, args=None, *a, **kw):
-        if "INSTALL_HOOKS" in expr or "window.__bg_hooked" in expr or "return 'already_hooked'" in expr:
+        if (
+            "INSTALL_HOOKS" in expr
+            or "window.__bg_hooked" in expr
+            or "return 'already_hooked'" in expr
+        ):
             return "already_hooked"
         if "!window.__bg_service" in expr:
             return True

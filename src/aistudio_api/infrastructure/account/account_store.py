@@ -79,6 +79,7 @@ class AccountMeta:
     last_used: str | None = None
     auth_user: str = "0"
     cookie_id: str | None = None
+
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
@@ -89,10 +90,15 @@ class AccountMeta:
             name=str(data.get("name") or ""),
             email=str(data["email"]) if data.get("email") is not None else None,
             created_at=str(data.get("created_at") or ""),
-            last_used=str(data["last_used"]) if data.get("last_used") is not None else None,
+            last_used=str(data["last_used"])
+            if data.get("last_used") is not None
+            else None,
             auth_user=str(data.get("auth_user") or "0"),
-            cookie_id=str(data["cookie_id"]) if data.get("cookie_id") is not None else None,
+            cookie_id=str(data["cookie_id"])
+            if data.get("cookie_id") is not None
+            else None,
         )
+
 
 @dataclass
 class Registry:
@@ -110,9 +116,13 @@ class Registry:
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> Registry:
         raw_accounts = data.get("accounts")
-        accounts_dict: dict[str, object] = raw_accounts if isinstance(raw_accounts, dict) else {}
+        accounts_dict: dict[str, object] = (
+            raw_accounts if isinstance(raw_accounts, dict) else {}
+        )
         accounts = {
-            k: AccountMeta.from_dict(v) for k, v in accounts_dict.items() if isinstance(v, dict)
+            k: AccountMeta.from_dict(v)
+            for k, v in accounts_dict.items()
+            if isinstance(v, dict)
         }
         raw_active_id = data.get("active_account_id")
         return cls(
@@ -146,6 +156,7 @@ class AccountStore:
         self._ensure_dirs()
         self._migrate_legacy_if_needed()
         self._initialized = True
+
     def _ensure_dirs(self) -> None:
         """确保目录存在。"""
         self._accounts_dir.mkdir(parents=True, exist_ok=True)

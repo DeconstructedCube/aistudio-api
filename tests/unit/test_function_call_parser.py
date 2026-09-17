@@ -8,7 +8,13 @@ def test_parse_response_chunk_keeps_raw_function_call_and_response():
                 [
                     [
                         [None, None, None, ["getWeather", '{"city":"Shanghai"}']],
-                        [None, None, None, None, ["getWeather", {"city": "Shanghai", "temperature": "24C"}]],
+                        [
+                            None,
+                            None,
+                            None,
+                            None,
+                            ["getWeather", {"city": "Shanghai", "temperature": "24C"}],
+                        ],
                     ]
                 ],
                 1,

@@ -72,6 +72,7 @@ def _refresh_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
     log.info("Refreshed cookies: %d total", len(all_cookies))
     return all_cookies
 
+
 def load_cookies_from_string(cookie_string: str) -> list[dict[str, object]]:
     """Load cookies from a raw cookie string.
 

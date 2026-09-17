@@ -121,6 +121,8 @@ async def serve_spa():
     if index_html_path.is_file():
         return FileResponse(index_html_path)
     return {"message": "AI Studio API Web UI"}
+
+
 def main():
     from aistudio_api.config import settings
 

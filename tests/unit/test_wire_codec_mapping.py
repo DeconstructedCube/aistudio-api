@@ -27,7 +27,9 @@ def test_decode_image_request_maps_generation_config_fields_from_proto_indexes()
     assert request.generation_config.image_output_mode == [2, 1]
     assert request.generation_config.thinking_config == [1, None, None, 3]
     assert request.request_flag == 1
-    assert request.cached_content is not None and request.cached_content.startswith("v1_")
+    assert request.cached_content is not None and request.cached_content.startswith(
+        "v1_"
+    )
 
 
 def test_encode_preserves_newly_mapped_proto_fields():

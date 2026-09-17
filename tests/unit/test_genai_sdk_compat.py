@@ -72,7 +72,10 @@ async def test_genai_sdk_aio_non_streaming(mock_client: MagicMock) -> None:
 @pytest.mark.asyncio
 async def test_genai_sdk_aio_streaming(mock_client: MagicMock) -> None:
     """Test async streaming generation with official Google GenAI SDK."""
-    async def fake_stream(*_args: object, **_kwargs: object) -> AsyncGenerator[tuple[str, object], None]:
+
+    async def fake_stream(
+        *_args: object, **_kwargs: object
+    ) -> AsyncGenerator[tuple[str, object], None]:
         yield ("thinking", "Thinking about the greeting...")
         yield ("body", "Hello ")
         yield ("body", "World!")
@@ -138,8 +141,11 @@ async def test_genai_sdk_aio_streaming(mock_client: MagicMock) -> None:
     finally:
         app.dependency_overrides.clear()
 
+
 @pytest.mark.asyncio
-async def test_genai_sdk_function_calling_and_response_flow(mock_client: MagicMock) -> None:
+async def test_genai_sdk_function_calling_and_response_flow(
+    mock_client: MagicMock,
+) -> None:
     """Test full multi-turn function calling flow with Google GenAI SDK."""
     captured_requests: list[object] = []
 
@@ -154,13 +160,22 @@ async def test_genai_sdk_function_calling_and_response_flow(mock_client: MagicMo
                 candidates=[
                     Candidate(
                         text="",
-                        function_calls=[{"name": "get_current_weather", "args": {"location": "San Francisco"}}],
+                        function_calls=[
+                            {
+                                "name": "get_current_weather",
+                                "args": {"location": "San Francisco"},
+                            }
+                        ],
                     )
                 ],
                 usage={"prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20},
             )
         return ModelOutput(
-            candidates=[Candidate(text="The current weather in San Francisco is sunny and 18°C.")],
+            candidates=[
+                Candidate(
+                    text="The current weather in San Francisco is sunny and 18°C."
+                )
+            ],
             usage={"prompt_tokens": 25, "completion_tokens": 15, "total_tokens": 40},
         )
 
@@ -190,21 +205,41 @@ async def test_genai_sdk_function_calling_and_response_flow(mock_client: MagicMo
 
             # Turn 2: user supplies function execution result, model answers
             turn2_contents = [
-                types.Content(role="user", parts=[types.Part.from_text(text="What is the weather in San Francisco?")]),
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(
+                            text="What is the weather in San Francisco?"
+                        )
+                    ],
+                ),
                 types.Content(
                     role="model",
-                    parts=[types.Part.from_function_call(name="get_current_weather", args={"location": "San Francisco"})],
+                    parts=[
+                        types.Part.from_function_call(
+                            name="get_current_weather",
+                            args={"location": "San Francisco"},
+                        )
+                    ],
                 ),
                 types.Content(
                     role="user",
-                    parts=[types.Part.from_function_response(name="get_current_weather", response={"temp": "18C", "condition": "sunny"})],
+                    parts=[
+                        types.Part.from_function_response(
+                            name="get_current_weather",
+                            response={"temp": "18C", "condition": "sunny"},
+                        )
+                    ],
                 ),
             ]
             turn2_resp = await aio_client.models.generate_content(
                 model="gemini-3.8-flash",
                 contents=turn2_contents,
             )
-            assert turn2_resp.text == "The current weather in San Francisco is sunny and 18°C."
+            assert (
+                turn2_resp.text
+                == "The current weather in San Francisco is sunny and 18°C."
+            )
             assert len(captured_requests) == 2
     finally:
         app.dependency_overrides.clear()

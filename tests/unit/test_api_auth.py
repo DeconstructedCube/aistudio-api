@@ -13,7 +13,9 @@ def _build_client() -> httpx.AsyncClient:
     async def protected():
         return {"ok": True}
 
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    )
 
 
 @pytest.mark.asyncio
@@ -40,9 +42,7 @@ async def test_bearer_token_is_accepted(monkeypatch):
 async def test_x_api_key_is_accepted(monkeypatch):
     monkeypatch.setattr(settings, "api_keys", frozenset({"secret-token"}))
     async with _build_client() as client:
-        response = await client.get(
-            "/protected", headers={"X-API-Key": "secret-token"}
-        )
+        response = await client.get("/protected", headers={"X-API-Key": "secret-token"})
         assert response.status_code == 200
         assert response.json() == {"ok": True}
 

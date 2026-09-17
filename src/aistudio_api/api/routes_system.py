@@ -44,7 +44,12 @@ async def get_rotation_status(
     """获取账号黏性调度与配额状态。"""
     rotator = runtime_state.rotator
     if rotator is None:
-        return {"enabled": False, "mode": "sticky", "message": "调度器未初始化", "accounts": {}}
+        return {
+            "enabled": False,
+            "mode": "sticky",
+            "message": "调度器未初始化",
+            "accounts": {},
+        }
 
     return {
         "enabled": True,
@@ -179,6 +184,7 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
     except Exception as e:
         raise HTTPException(500, detail=f"写入配置文件失败: {e}") from e
 
+
 # ========== API Key 备注与密钥管理 ==========
 
 
@@ -294,9 +300,7 @@ async def delete_api_key(key_value: str) -> dict[str, bool]:
     found = False
     if isinstance(raw_keys, list):
         for item in raw_keys:
-            item_key = str(
-                item.get("key") if isinstance(item, dict) else item
-            ).strip()
+            item_key = str(item.get("key") if isinstance(item, dict) else item).strip()
             if item_key == key_value:
                 found = True
                 continue
@@ -309,9 +313,7 @@ async def delete_api_key(key_value: str) -> dict[str, bool]:
                     }
                 )
             elif item_key:
-                new_list.append(
-                    {"name": "API Key", "key": item_key, "created_at": ""}
-                )
+                new_list.append({"name": "API Key", "key": item_key, "created_at": ""})
 
     if not found:
         raise HTTPException(404, detail="未找到该 API Key")
@@ -352,9 +354,7 @@ async def update_api_key_name(
 
     if isinstance(raw_keys, list):
         for item in raw_keys:
-            item_key = str(
-                item.get("key") if isinstance(item, dict) else item
-            ).strip()
+            item_key = str(item.get("key") if isinstance(item, dict) else item).strip()
             created = str(item.get("created_at") if isinstance(item, dict) else "")
             if item_key == key_value:
                 updated_item = ApiKeyItemModel(

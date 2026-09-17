@@ -43,7 +43,6 @@ _DOMAIN_OVERRIDES: dict[str, list[str]] = {
 }
 
 
-
 def parse_raw_cookies(raw: object) -> dict[str, str]:
     """万能 Cookie 解析器，支持：
     1. JSON 数组（EditThisCookie / Cookie-Editor 导出：`[{"name": "...", "value": "..."}, ...]`）
@@ -235,7 +234,9 @@ def parse_cookie_string(raw: object) -> dict[str, object]:
 def parse_and_filter_google_cookies(raw: object) -> list[dict[str, object]]:
     state = parse_cookie_string(raw)
     cookies_obj = state.get("cookies")
-    cookies: list[dict[str, object]] = cookies_obj if isinstance(cookies_obj, list) else []
+    cookies: list[dict[str, object]] = (
+        cookies_obj if isinstance(cookies_obj, list) else []
+    )
     return [cookie for cookie in cookies if "google" in str(cookie.get("domain", ""))]
 
 

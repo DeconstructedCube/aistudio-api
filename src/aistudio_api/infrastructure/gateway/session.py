@@ -10,9 +10,7 @@ import asyncio
 import json
 import logging
 import os
-import shutil
 import time
-import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from hashlib import sha256
@@ -26,6 +24,13 @@ from aistudio_api.infrastructure.browser.browser_engine import (
     launch_chromium_process,
 )
 from aistudio_api.infrastructure.browser.cdp_client import CDPClient, CDPPage
+from aistudio_api.infrastructure.browser.scripts import (
+    CHECK_IDENTITY_JS,
+    DIALOG_CLEANUP_JS,
+    INSTALL_HOOKS_JS,
+    SNAPSHOT_GENERATE_JS,
+)
+from aistudio_api.infrastructure.gateway.transport import XHRStreamTransport
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
 
 log = logging.getLogger("aistudio.session")
@@ -35,209 +40,6 @@ AI_STUDIO_URL_FALLBACK = "https://aistudio.google.com/app/prompts/new_chat"
 GOOGLE_LOGIN_BOOTSTRAP_URL = (
     "https://accounts.google.com/ServiceLogin?continue=https://aistudio.google.com"
 )
-
-INSTALL_HOOKS_JS = r"""
-((() => {
-    if (window.__bg_hooked && window.__snap_key) return 'already_hooked';
-
-    const dms = window.default_MakerSuite;
-    if (!dms) return 'no_default_MakerSuite';
-
-    // Auto-detect snapshot function via feature matching
-    let snapKey = null;
-    for (const k of Object.keys(dms)) {
-        try {
-            if (typeof dms[k] !== 'function') continue;
-            const src = dms[k].toString();
-            if (src.includes('.snapshot({') && src.includes('content') && src.includes('yield')) {
-                snapKey = k;
-                break;
-            }
-        } catch(e) {}
-    }
-    if (!snapKey) return 'no_snapshot_fn';
-
-    // Hook snapshot function to capture service
-    if (!dms[snapKey].__api_hooked) {
-        const origSnap = dms[snapKey];
-        dms[snapKey] = function(...args) {
-            window.__bg_service = args[0];
-            const result = origSnap.apply(this, args);
-            if (result instanceof Promise) return result.then(s => { window.__bg_snapshot = s; return s; });
-            window.__bg_snapshot = result;
-            return result;
-        };
-        dms[snapKey].__api_hooked = true;
-    }
-
-    window.__bg_hooked = true;
-    window.__snap_key = snapKey;
-    return 'hooked:' + snapKey;
-})())
-"""
-
-DIALOG_CLEANUP_JS = """(() => {
-    const cookieBtn = document.querySelector('.glue-cookie-notification-bar__accept');
-    if (cookieBtn) { try { cookieBtn.click(); } catch(e) {} }
-    document.querySelectorAll('button, mat-card, a, [role="button"]').forEach((el) => {
-        const text = (el.textContent || el.innerText || '').trim().toLowerCase();
-        if (['dismiss', 'close', 'accept', 'ok', 'agree', 'got it', 'start building', 'code and chat'].some(w => text.includes(w))) {
-            try { el.click(); } catch(e) {}
-        }
-    });
-    document.querySelectorAll('.cdk-overlay-backdrop').forEach((node) => node.remove());
-    document.querySelectorAll('.cdk-overlay-container').forEach((node) => node.remove());
-})()"""
-
-STREAMING_INIT_JS = """(args) => {
-    const rid = args.rid;
-    if (!window.__streams) window.__streams = {};
-
-    const existing = window.__streams[rid];
-    if (existing && existing.xhr && existing.xhr.readyState !== 4) {
-        try { existing.xhr.abort(); } catch (e) {}
-    }
-
-    const state = {
-        xhr: null,
-        events: [],
-        waiter: null,
-        recvPos: 0,
-        statusSent: false,
-    };
-    window.__streams[rid] = state;
-
-    function push(event) {
-        if (state.waiter) {
-            const waiter = state.waiter;
-            state.waiter = null;
-            waiter(event);
-            return;
-        }
-        state.events.push(event);
-    }
-
-    function pushStatus(xhr) {
-        if (state.statusSent || xhr.readyState < 2) return;
-        state.statusSent = true;
-        push({type: 'status', status: xhr.status || 0});
-    }
-
-    function pushChunk(xhr) {
-        if (xhr.readyState < 3) return;
-        const chunk = xhr.responseText.substring(state.recvPos);
-        if (!chunk) return;
-        state.recvPos = xhr.responseText.length;
-        push({type: 'chunk', text: chunk});
-    }
-
-    if (!window.__stream_next) window.__stream_next = {};
-    window.__stream_next[rid] = function(timeoutMs) {
-        if (state.events.length) {
-            var batch = state.events.slice();
-            state.events.length = 0;
-            return Promise.resolve({type: 'batch', events: batch});
-        }
-        return new Promise((resolve) => {
-            let done = false;
-            const timer = setTimeout(() => {
-                if (done) return;
-                done = true;
-                if (state.waiter === finish) state.waiter = null;
-                resolve({type: 'idle'});
-            }, timeoutMs);
-            const finish = (event) => {
-                if (done) return;
-                done = true;
-                clearTimeout(timer);
-                if (state.events.length) {
-                    var batch = [event].concat(state.events);
-                    state.events.length = 0;
-                    resolve({type: 'batch', events: batch});
-                } else {
-                    resolve(event);
-                }
-            };
-            state.waiter = finish;
-        });
-    };
-
-    if (!window.__stream_abort) window.__stream_abort = {};
-    window.__stream_abort[rid] = function() {
-        if (state.xhr && state.xhr.readyState !== 4) {
-            try { state.xhr.abort(); } catch (e) {}
-        }
-    };
-
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', args.url);
-    var h = args.headers || {};
-    for (var k in h) {
-        if (k.toLowerCase() === 'authorization') continue;
-        xhr.setRequestHeader(k, h[k]);
-    }
-    xhr.withCredentials = true;
-    xhr.timeout = args.timeout * 1000;
-
-    xhr.onreadystatechange = function() {
-        pushStatus(xhr);
-        pushChunk(xhr);
-    };
-    xhr.onprogress = function() {
-        pushStatus(xhr);
-        pushChunk(xhr);
-    };
-    xhr.onload = function() {
-        pushStatus(xhr);
-        pushChunk(xhr);
-        push({type: 'done'});
-    };
-    xhr.onerror = function() {
-        push({type: 'error', message: 'network error'});
-    };
-    xhr.ontimeout = function() {
-        push({type: 'error', message: 'timeout'});
-    };
-    xhr.onabort = function() {
-        push({type: 'aborted'});
-    };
-
-    state.xhr = xhr;
-    function getCookie(name) {
-        var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-        return m ? decodeURIComponent(m[1]) : '';
-    }
-    var sapisid = getCookie('SAPISID') || getCookie('__Secure-1PAPISID') || getCookie('__Secure-3PAPISID');
-    if (sapisid && window.crypto && window.crypto.subtle) {
-        var sapisid1p = getCookie('__Secure-1PAPISID') || sapisid;
-        var sapisid3p = getCookie('__Secure-3PAPISID') || sapisid;
-        var ts = Math.floor(Date.now() / 1000);
-        var origin = 'https://aistudio.google.com';
-        function sha1(str) {
-            return crypto.subtle.digest('SHA-1', new TextEncoder().encode(str)).then(function(buf) {
-                return Array.from(new Uint8Array(buf)).map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
-            });
-        }
-        Promise.all([
-            sha1(ts + ' ' + sapisid + ' ' + origin),
-            sha1(ts + ' ' + sapisid1p + ' ' + origin),
-            sha1(ts + ' ' + sapisid3p + ' ' + origin)
-        ]).then(function(res) {
-            var auth = 'SAPISIDHASH ' + ts + '_' + res[0] + ' SAPISID1PHASH ' + ts + '_' + res[1] + ' SAPISID3PHASH ' + ts + '_' + res[2];
-            xhr.setRequestHeader('Authorization', auth);
-            xhr.send(args.body);
-        }).catch(function() {
-            var fallbackAuth = h['Authorization'] || h['authorization'];
-            if (fallbackAuth) xhr.setRequestHeader('Authorization', fallbackAuth);
-            xhr.send(args.body);
-        });
-    } else {
-        var fallbackAuth = h['Authorization'] || h['authorization'];
-        if (fallbackAuth) xhr.setRequestHeader('Authorization', fallbackAuth);
-        xhr.send(args.body);
-    }
-}"""
-
 BOTGUARD_BOOTSTRAP_PROMPT = "say '1'"
 TEMPLATE_CAPTURE_PROMPT = "say 't'"
 
@@ -266,7 +68,8 @@ class BrowserSession:
         self._page: CDPPage | None = None
         self._snap_key: str | None = None
         self._templates: dict[str, dict[str, object]] = {}
-        self._bootstrap_template: dict[str, object] | None = dict(DEFAULT_BOOTSTRAP_TEMPLATE)
+        self._bootstrap_template: dict[str, object] | None = None
+        self._transport = XHRStreamTransport()
         self._lock = asyncio.Lock()
         self._botguard_lock = asyncio.Lock()
         self._template_lock = asyncio.Lock()
@@ -315,6 +118,7 @@ class BrowserSession:
             finally:
                 self._switching = False
                 self._switch_event.set()
+
     async def ensure_hook_page(self) -> bool:
         """Ensure page is navigated to AI Studio and hooks are installed."""
         page = await self.ensure_context()
@@ -389,7 +193,12 @@ class BrowserSession:
                         f"textarea not found while capturing BotGuardService; url={dbg_url}, title={dbg_title}, body={dbg_body[:200]}"
                     ) from err
                 original_text = str(
-                    (await page.evaluate("() => document.querySelector('textarea')?.value || ''")) or ""
+                    (
+                        await page.evaluate(
+                            "() => document.querySelector('textarea')?.value || ''"
+                        )
+                    )
+                    or ""
                 )
                 await page.fill("textarea", BOTGUARD_BOOTSTRAP_PROMPT)
                 await page.wait_for_timeout(800)
@@ -477,68 +286,88 @@ class BrowserSession:
         if model in self._templates:
             return self._templates[model]
 
+        clean_model = model.removeprefix("models/")
         async with self._template_lock:
             if model in self._templates:
                 return self._templates[model]
+            if clean_model in self._templates:
+                return self._templates[clean_model]
 
             page = await self.ensure_botguard_service()
-            if self._bootstrap_template:
+            if clean_model == "gemini-3.7-flash" and self._bootstrap_template:
                 bootstrap = dict(self._bootstrap_template)
                 self._templates[model] = bootstrap
+                self._templates[clean_model] = bootstrap
                 return bootstrap
-        captured: dict[str, object] = {}
-        last_response: dict[str, object] | None = None
 
-        def on_req(req: dict[str, object]) -> None:
-            url = str(req.get("url") or "")
-            if "GenerateContent" not in url or "Count" in url or captured:
-                return
-            body = str(req.get("post_data") or "")
-            if not body or len(body) <= 100:
-                return
-            captured["url"] = url
-            captured["headers"] = req.get("headers") or {}
-            captured["body"] = body
-        def on_resp(resp: dict[str, object]) -> None:
-            nonlocal last_response
-            url = str(resp.get("url") or "")
-            if "GenerateContent" not in url or "Count" in url:
-                return
-            last_response = resp
+            captured: dict[str, object] = {}
+            last_response: dict[str, object] | None = None
 
-        unsub_req = page.on_request(on_req)
-        unsub_resp = page.on_response(on_resp)
-        original_text = ""
-        try:
-            original_text = str(
-                (await page.evaluate("() => document.querySelector('textarea')?.value || ''")) or ""
-            )
-            await page.fill("textarea", TEMPLATE_CAPTURE_PROMPT)
-            await page.wait_for_timeout(500)
-            if not await self._click_run_button(page):
-                raise RuntimeError("failed to trigger send during template capture")
+            def on_req(req: dict[str, object]) -> None:
+                url = str(req.get("url") or "")
+                if "GenerateContent" not in url or "Count" in url or captured:
+                    return
+                body = str(req.get("post_data") or "")
+                if not body or len(body) <= 100:
+                    return
+                captured["url"] = url
+                captured["headers"] = req.get("headers") or {}
+                captured["body"] = body
 
-            for _ in range(30):
-                await page.wait_for_timeout(1000)
-                if captured:
-                    break
+            def on_resp(resp: dict[str, object]) -> None:
+                nonlocal last_response
+                url = str(resp.get("url") or "")
+                if "GenerateContent" not in url or "Count" in url:
+                    return
+                last_response = resp
 
-            if not captured:
-                if last_response is not None:
-                    raise RuntimeError(
-                        f"template capture failed after request: status={last_response.get('status')} url={last_response.get('url')}"
+            unsub_req = page.on_request(on_req)
+            unsub_resp = page.on_response(on_resp)
+            original_text = ""
+            try:
+                original_text = str(
+                    (
+                        await page.evaluate(
+                            "() => document.querySelector('textarea')?.value || ''"
+                        )
                     )
-                raise RuntimeError(f"template capture timeout for model={model}")
+                    or ""
+                )
+                await page.fill("textarea", TEMPLATE_CAPTURE_PROMPT)
+                await page.wait_for_timeout(500)
+                if not await self._click_run_button(page):
+                    raise RuntimeError("failed to trigger send during template capture")
 
-            await self._wait_until_idle(page)
-            await page.fill("textarea", original_text)
-            self._templates[model] = captured
-            return captured
-        finally:
-            unsub_req()
-            unsub_resp()
-            with suppress(Exception):
+                for _ in range(30):
+                    await page.wait_for_timeout(1000)
+                    if captured:
+                        break
+
+                if not captured:
+                    if self._bootstrap_template:
+                        log.warning(
+                            "Dynamic template capture for model=%s timed out; falling back to bootstrap template",
+                            model,
+                        )
+                        bootstrap = dict(self._bootstrap_template)
+                        self._templates[model] = bootstrap
+                        return bootstrap
+                    if last_response is not None:
+                        raise RuntimeError(
+                            f"template capture failed after request: status={last_response.get('status')} url={last_response.get('url')}"
+                        )
+                    raise RuntimeError(f"template capture timeout for model={model}")
+
+                await self._wait_until_idle(page)
                 await page.fill("textarea", original_text)
+                self._templates[model] = captured
+                self._templates[clean_model] = captured
+                return captured
+            finally:
+                unsub_req()
+                unsub_resp()
+                with suppress(Exception):
+                    await page.fill("textarea", original_text)
 
     async def generate_snapshot(self, contents: list[AistudioContent]) -> str:
         """Generate a BotGuard snapshot token for given content payload.
@@ -568,22 +397,7 @@ class BrowserSession:
                     hash_parts.append("")
         content_hash = sha256(" ".join(hash_parts).encode("utf-8")).hexdigest()
         # 直接使用 Promise 求值，完全隔离每个并发调用的结果，避免污染 window 全局变量
-        script = """
-        async (hash) => {
-            const dms = window.default_MakerSuite;
-            const service = window.__bg_service;
-            const snapKey = window.__snap_key;
-            if (!dms || !service || !snapKey || typeof dms[snapKey] !== 'function') {
-                throw new Error('service_unavailable');
-            }
-            const result = dms[snapKey](service, hash);
-            const snapshot = await Promise.resolve(result);
-            if (!snapshot || typeof snapshot !== 'string') {
-                throw new Error('empty_snapshot');
-            }
-            return snapshot;
-        }
-        """
+        script = SNAPSHOT_GENERATE_JS
         for attempt in range(3):
             try:
                 snapshot = await page.evaluate(
@@ -617,85 +431,17 @@ class BrowserSession:
             page = await self.ensure_botguard_service()
             if url and headers:
                 captured_url = url
-                captured_headers = {
-                    k: v
-                    for k, v in headers.items()
-                    if k.lower() not in ("host", "content-length")
-                }
+                captured_headers = headers
             else:
                 captured_url, captured_headers = self._get_captured_info()
 
-            timeout_s = timeout_ms / 1000
-            result = await page.evaluate(
-                """(args) => {
-                    return new Promise((resolve) => {
-                        var xhr = new XMLHttpRequest();
-                        xhr.open('POST', args.url);
-                        var h = args.headers || {};
-                        for (var k in h) {
-                            if (k.toLowerCase() === 'authorization') continue;
-                            xhr.setRequestHeader(k, h[k]);
-                        }
-                        xhr.withCredentials = true;
-                        xhr.timeout = args.timeout * 1000;
-                        xhr.onload = function() {
-                            resolve({status: xhr.status, body: xhr.responseText});
-                        };
-                        xhr.onerror = function() {
-                            resolve({status: 0, body: 'network error'});
-                        };
-                        xhr.ontimeout = function() {
-                            resolve({status: 0, body: 'timeout'});
-                        };
-                        function getCookie(name) {
-                            var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-                            return m ? decodeURIComponent(m[1]) : '';
-                        }
-                        var sapisid = getCookie('SAPISID') || getCookie('__Secure-1PAPISID') || getCookie('__Secure-3PAPISID');
-                        if (sapisid && window.crypto && window.crypto.subtle) {
-                            var sapisid1p = getCookie('__Secure-1PAPISID') || sapisid;
-                            var sapisid3p = getCookie('__Secure-3PAPISID') || sapisid;
-                            var ts = Math.floor(Date.now() / 1000);
-                            var origin = 'https://aistudio.google.com';
-                            function sha1(str) {
-                                return crypto.subtle.digest('SHA-1', new TextEncoder().encode(str)).then(function(buf) {
-                                    return Array.from(new Uint8Array(buf)).map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
-                                });
-                            }
-                            Promise.all([
-                                sha1(ts + ' ' + sapisid + ' ' + origin),
-                                sha1(ts + ' ' + sapisid1p + ' ' + origin),
-                                sha1(ts + ' ' + sapisid3p + ' ' + origin)
-                            ]).then(function(res) {
-                                var auth = 'SAPISIDHASH ' + ts + '_' + res[0] + ' SAPISID1PHASH ' + ts + '_' + res[1] + ' SAPISID3PHASH ' + ts + '_' + res[2];
-                                xhr.setRequestHeader('Authorization', auth);
-                                xhr.send(args.body);
-                            }).catch(function() {
-                                var fallbackAuth = h['Authorization'] || h['authorization'];
-                                if (fallbackAuth) xhr.setRequestHeader('Authorization', fallbackAuth);
-                                xhr.send(args.body);
-                            });
-                        } else {
-                            var fallbackAuth = h['Authorization'] || h['authorization'];
-                            if (fallbackAuth) xhr.setRequestHeader('Authorization', fallbackAuth);
-                            xhr.send(args.body);
-                        }
-                    });
-                }""",
-                {
-                    "url": captured_url,
-                    "headers": captured_headers,
-                    "body": body,
-                    "timeout": timeout_s,
-                },
+            return await self._transport.send_hooked_request(
+                page,
+                url=captured_url,
+                headers=captured_headers,
+                body=body,
+                timeout_ms=timeout_ms,
             )
-
-            res_dict: dict[str, object] = result if isinstance(result, dict) else {}
-            status = int(str(res_dict.get("status") or 0))
-            raw_text = str(res_dict.get("body") or "")
-            if status == 0:
-                raise RuntimeError(f"replay failed: {raw_text}")
-            return status, raw_text.encode("utf-8")
 
     async def send_streaming_request(
         self,
@@ -710,80 +456,18 @@ class BrowserSession:
             if url and headers:
                 page = await self.ensure_botguard_service()
                 captured_url = url
-                captured_headers = {
-                    k: v
-                    for k, v in headers.items()
-                    if k.lower() not in ("host", "content-length")
-                }
+                captured_headers = headers
             else:
                 page, captured_url, captured_headers = await self._prepare_streaming()
-            timeout_s = timeout_ms / 1000
-            rid = uuid.uuid4().hex[:8]
 
-            await page.evaluate(
-                STREAMING_INIT_JS,
-                {
-                    "url": captured_url,
-                    "headers": captured_headers,
-                    "body": body,
-                    "timeout": timeout_s,
-                    "rid": rid,
-                },
-            )
-
-            deadline = asyncio.get_running_loop().time() + timeout_s
-            status_sent = False
-
-            try:
-                while asyncio.get_running_loop().time() < deadline:
-                    raw_event = await page.evaluate(
-                        "(rid) => window.__stream_next && window.__stream_next[rid] ? window.__stream_next[rid](250) : {type: 'error', message: 'stream_session_lost'}",
-                        rid,
-                    )
-                    if not raw_event or not isinstance(raw_event, dict):
-                        await asyncio.sleep(0.05)
-                        continue
-
-                    event_type = str(raw_event.get("type") or "")
-                    events_to_process = []
-                    if event_type == "batch":
-                        raw_list = raw_event.get("events")
-                        if isinstance(raw_list, list):
-                            events_to_process = [e for e in raw_list if isinstance(e, dict)]
-                    else:
-                        events_to_process = [raw_event]
-
-                    is_terminal = False
-                    for event in events_to_process:
-                        etype = str(event.get("type") or "")
-                        if etype == "idle":
-                            continue
-                        if etype == "status":
-                            status = int(str(event.get("status") or 0))
-                            yield ("status", status)
-                            status_sent = True
-                            continue
-                        if etype == "chunk":
-                            text = str(event.get("text") or "")
-                            if text:
-                                yield ("chunk", text.encode("utf-8"))
-                            continue
-                        if etype == "error":
-                            message = str(event.get("message") or "unknown error")
-                            raise RuntimeError(f"streaming request failed: {message}")
-                        if etype in ("done", "aborted"):
-                            is_terminal = True
-                            break
-                    if is_terminal:
-                        break
-                if not status_sent:
-                    raise RuntimeError("streaming request timeout: no response status")
-            finally:
-                with suppress(Exception):
-                    await page.evaluate(
-                        "(rid) => { if (window.__stream_abort && window.__stream_abort[rid]) window.__stream_abort[rid](); }",
-                        rid,
-                    )
+            async for event in self._transport.send_streaming_request(
+                page,
+                url=captured_url,
+                headers=captured_headers,
+                body=body,
+                timeout_ms=timeout_ms,
+            ):
+                yield event
 
     async def close(self) -> None:
         """Close browser session and free resources."""
@@ -804,8 +488,7 @@ class BrowserSession:
         self._page = None
         self._snap_key = None
         self._templates.clear()
-        if self._bootstrap_template is None:
-            self._bootstrap_template = dict(DEFAULT_BOOTSTRAP_TEMPLATE)
+        self._bootstrap_template = None
 
     async def _ensure_browser_cdp(self) -> CDPPage:
         """Launch Chromium subprocess and connect async CDP client."""
@@ -961,7 +644,9 @@ class BrowserSession:
                     raise RuntimeError(
                         f"Google AI Studio 地区限制 (IP 漏了/不支持): {current_url}"
                     )
-                if "accounts.google.com" in current_url and ("signin" in current_url or "ServiceLogin" in current_url):
+                if "accounts.google.com" in current_url and (
+                    "signin" in current_url or "ServiceLogin" in current_url
+                ):
                     raise SessionExpiredError(
                         f"Cookie 认证失败，已被重定向到 Google 登录页。 (url={current_url})"
                     )
@@ -1094,30 +779,35 @@ class BrowserSession:
         if not expected_email:
             return
 
-        try:
-            page_html = await page.content()
-        except Exception:
-            return
+        is_verified = False
+        with suppress(Exception):
+            is_verified = bool(await page.evaluate(CHECK_IDENTITY_JS, expected_email))
 
-        if expected_email in page_html:
+        if not is_verified:
+            with suppress(Exception):
+                page_html = await page.content()
+                if expected_email in page_html:
+                    is_verified = True
+
+        if not is_verified:
+            with suppress(Exception):
+                cookies = await page.get_cookies()
+                for c in cookies:
+                    if expected_email in str(c.get("value", "")):
+                        is_verified = True
+                        break
+        if is_verified:
             return
 
         account_id = meta.get("id", "unknown")
         log.warning(
-            "[account-guard] 页面未登录期望账号 %s (%s)，拒绝保存 cookies 以防交叉污染",
+            "[account-guard] 页面未多重校验到期望账号 %s (%s)，已阻断本次写入以防交叉污染",
             expected_email,
             account_id,
         )
-        if self._profile_dir:
-            profile_path = Path(self._profile_dir)
-            if profile_path.exists():
-                log.warning(
-                    "[account-guard] 删除被污染的 profile 目录: %s", profile_path
-                )
-                shutil.rmtree(profile_path, ignore_errors=True)
         raise RuntimeError(
             f"页面未登录期望的账号 {expected_email} ({account_id})，"
-            f"已删除 profile 缓存，请重新导入该账号的 cookies"
+            f"已阻断写入，请确认该账号凭据是否有效"
         )
 
     async def _save_cookies(

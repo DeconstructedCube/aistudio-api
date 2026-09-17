@@ -34,18 +34,37 @@ def test_modify_body_updates_generation_config_and_prompt():
 
 
 def test_build_image_generation_search_tool_variants():
-    assert build_image_generation_search_tool(google_search=True, image_search=False) == [None, None, None, [None, [[]]]]
-    assert build_image_generation_search_tool(google_search=False, image_search=True) == [None, None, None, [None, [None, []]]]
-    assert build_image_generation_search_tool(google_search=True, image_search=True) == [None, None, None, [None, [[], []]]]
-    assert build_image_generation_search_tool(google_search=False, image_search=False) is None
+    assert build_image_generation_search_tool(
+        google_search=True, image_search=False
+    ) == [None, None, None, [None, [[]]]]
+    assert build_image_generation_search_tool(
+        google_search=False, image_search=True
+    ) == [None, None, None, [None, [None, []]]]
+    assert build_image_generation_search_tool(
+        google_search=True, image_search=True
+    ) == [None, None, None, [None, [[], []]]]
+    assert (
+        build_image_generation_search_tool(google_search=False, image_search=False)
+        is None
+    )
 
 
 def test_build_tools_from_names_supports_image_tool_aliases():
-    assert build_tools_from_names(["google_search"], model="models/gemini-3.1-flash-image-preview", is_image_model=True) == [[None, None, None, [None, [[]]]]]
-    assert build_tools_from_names(["image_search"], model="models/gemini-3.1-flash-image-preview", is_image_model=True) == [[None, None, None, [None, [None, []]]]]
-    assert build_tools_from_names(["google_search_and_image_search"], model="models/gemini-3.1-flash-image-preview", is_image_model=True) == [
-        [None, None, None, [None, [[], []]]]
-    ]
+    assert build_tools_from_names(
+        ["google_search"],
+        model="models/gemini-3.1-flash-image-preview",
+        is_image_model=True,
+    ) == [[None, None, None, [None, [[]]]]]
+    assert build_tools_from_names(
+        ["image_search"],
+        model="models/gemini-3.1-flash-image-preview",
+        is_image_model=True,
+    ) == [[None, None, None, [None, [None, []]]]]
+    assert build_tools_from_names(
+        ["google_search_and_image_search"],
+        model="models/gemini-3.1-flash-image-preview",
+        is_image_model=True,
+    ) == [[None, None, None, [None, [[], []]]]]
 
 
 def test_build_tools_from_names_merges_image_search_flags_into_single_tool():
@@ -57,7 +76,9 @@ def test_build_tools_from_names_merges_image_search_flags_into_single_tool():
 
 
 def test_build_tools_from_names_restricts_gemma_builtin_tools():
-    assert build_tools_from_names(["google_search", "code_execution"], model="models/gemma-4-31b-it") == [
+    assert build_tools_from_names(
+        ["google_search", "code_execution"], model="models/gemma-4-31b-it"
+    ) == [
         [None, None, None, [None, [[]]]],
         [[]],
     ]
@@ -84,7 +105,9 @@ def test_build_tools_from_names_allows_four_gemini_builtin_tools():
 
 def test_build_tools_from_names_restricts_unknown_model_to_safe_subset():
     try:
-        build_tools_from_names(["google_maps"], model="models/learnlm-1.5-pro-experimental")
+        build_tools_from_names(
+            ["google_maps"], model="models/learnlm-1.5-pro-experimental"
+        )
     except ValueError as exc:
         assert "not allowed" in str(exc)
     else:

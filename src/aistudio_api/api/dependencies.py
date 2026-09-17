@@ -51,9 +51,13 @@ def require_web_auth(request: Request) -> None:
         return
 
     token = _extract_request_token(request)
-    if token and settings.web_password and secrets.compare_digest(token, settings.web_password):
+    if (
+        token
+        and settings.web_password
+        and settings.web_password.strip()
+        and secrets.compare_digest(token, settings.web_password)
+    ):
         return
-
     raise HTTPException(
         status_code=401,
         detail="管理控制台鉴权失败，请输入正确的管理密码",
@@ -89,9 +93,13 @@ def require_api_key(request: Request) -> None:
         return
 
     # 匹配管理密码（管理员具备超级 API 访问权限）
-    if settings.web_password and token == settings.web_password:
+    if (
+        token
+        and settings.web_password
+        and settings.web_password.strip()
+        and secrets.compare_digest(token, settings.web_password)
+    ):
         return
-
     raise HTTPException(
         status_code=401,
         detail={
@@ -109,6 +117,7 @@ def get_client() -> AIStudioClient:
             detail={"message": "Client not initialized", "type": "service_unavailable"},
         )
     return runtime_state.client
+
 
 def get_account_service():
     if runtime_state.account_service is None:

@@ -43,7 +43,31 @@ def test_normalize_gemini_request_exposes_generation_config_overrides():
         "top_p": 0.95,
         "top_k": 64,
         "response_mime_type": "text/plain",
-        "response_schema": [6, None, None, None, None, None, [["test_response", [1]]], None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, ["test_response"]],
+        "response_schema": [
+            6,
+            None,
+            None,
+            None,
+            None,
+            None,
+            [["test_response", [1]]],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            ["test_response"],
+        ],
         "presence_penalty": 0.1,
         "frequency_penalty": 0.2,
         "response_logprobs": True,
@@ -61,7 +85,12 @@ def test_normalize_gemini_request_maps_official_image_generation_fields():
                 {
                     "role": "user",
                     "parts": [
-                        {"inlineData": {"mimeType": "image/jpeg", "data": "/9j/4AAQSkZJRgABAQAA...."}},
+                        {
+                            "inlineData": {
+                                "mimeType": "image/jpeg",
+                                "data": "/9j/4AAQSkZJRgABAQAA....",
+                            }
+                        },
                         {"text": "INSERT_INPUT_HERE"},
                     ],
                 }
@@ -98,7 +127,10 @@ def test_normalize_gemini_request_maps_official_image_generation_fields():
     }
     assert normalized.capture_images is not None
     assert len(normalized.capture_images) == 1
-    assert normalized.contents[0].parts[0].inline_data == ("image/jpeg", "/9j/4AAQSkZJRgABAQAA....")
+    assert normalized.contents[0].parts[0].inline_data == (
+        "image/jpeg",
+        "/9j/4AAQSkZJRgABAQAA....",
+    )
 
 
 def test_normalize_gemini_request_encodes_function_declarations_to_wire_tools():
@@ -131,7 +163,31 @@ def test_normalize_gemini_request_encodes_function_declarations_to_wire_tools():
                 [
                     "getWeather",
                     "gets the weather for a requested city",
-                    [6, None, None, None, None, None, [["city", [1]]], None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, ["city"]],
+                    [
+                        6,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        [["city", [1]]],
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        ["city"],
+                    ],
                 ]
             ],
         ],
@@ -270,4 +326,3 @@ def test_normalize_gemini_request_maps_official_text_model_fields():
         [None, None, 9, 3],
         [None, None, 10, 2],
     ]
-

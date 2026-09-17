@@ -110,10 +110,18 @@ def _iter_response_chunks(outer: object) -> list[list[object]]:
     if isinstance(outer, list) and outer:
         if len(outer) == 1 and isinstance(outer[0], list):
             inner = outer[0]
-            nested_chunks = [item for item in inner if _looks_like_response_chunk(item) and isinstance(item, list)]
+            nested_chunks = [
+                item
+                for item in inner
+                if _looks_like_response_chunk(item) and isinstance(item, list)
+            ]
             if nested_chunks:
                 return nested_chunks
-        top_level_chunks = [item for item in outer if _looks_like_response_chunk(item) and isinstance(item, list)]
+        top_level_chunks = [
+            item
+            for item in outer
+            if _looks_like_response_chunk(item) and isinstance(item, list)
+        ]
         if len(top_level_chunks) > 1:
             return top_level_chunks
 
@@ -189,7 +197,9 @@ def _parse_response_part(raw_part: object) -> ResponsePart:
     )
 
 
-def _coerce_wire_payload(raw_value: object, payload_type: str) -> dict[str, object] | None:
+def _coerce_wire_payload(
+    raw_value: object, payload_type: str
+) -> dict[str, object] | None:
     if raw_value is None:
         return None
     if isinstance(raw_value, dict):
@@ -329,7 +339,11 @@ def parse_response_chunk(chunk: list[object]) -> Candidate:
             decoded_images: list[GeneratedImage] = []
             for img in decoded:
                 raw_bytes = img.get("bytes")
-                b_data = bytes(raw_bytes) if isinstance(raw_bytes, (bytes, bytearray)) else b""
+                b_data = (
+                    bytes(raw_bytes)
+                    if isinstance(raw_bytes, (bytes, bytearray))
+                    else b""
+                )
                 decoded_images.append(
                     GeneratedImage(
                         mime=str(img.get("mime", "image/jpeg")),

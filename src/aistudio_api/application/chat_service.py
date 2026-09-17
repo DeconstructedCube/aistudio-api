@@ -49,6 +49,7 @@ class NormalizedGeminiRequest:
     def get(self, key: str, default: object = None) -> object:
         return getattr(self, key, default)
 
+
 SCHEMA_TYPE_CODES = {
     "string": 1,
     "number": 2,
@@ -72,16 +73,21 @@ def inline_data_to_file(mime_type: str, data: str, tmp_dir: str | None = None) -
     path_obj.write_bytes(base64.b64decode(data))
     return str(path_obj)
 
-def encode_schema_to_wire(schema: dict[str, object], *, include_required: bool = True) -> list[object]:
+
+def encode_schema_to_wire(
+    schema: dict[str, object], *, include_required: bool = True
+) -> list[object]:
     schema_type = str(schema.get("type") or "")
     type_code = SCHEMA_TYPE_CODES.get(schema_type, 0)
     wire: list[object] = [type_code]
 
-    if schema_type == "array" and isinstance(schema.get("items"), dict):
+    items = schema.get("items")
+    if schema_type == "array" and isinstance(items, dict):
         while len(wire) <= 5:
             wire.append(None)
         wire[5] = encode_schema_to_wire(
-            schema["items"], include_required=include_required  # type: ignore[arg-type]
+            items,
+            include_required=include_required,
         )
 
     properties = schema.get("properties")
@@ -149,7 +155,9 @@ def _normalize_gemini_modalities(value: object) -> AistudioImageOutputMode | Non
     return AistudioImageOutputMode.image_only()
 
 
-def _normalize_gemini_thinking_config(value: object) -> list[object] | dict[str, object] | None:
+def _normalize_gemini_thinking_config(
+    value: object,
+) -> list[object] | dict[str, object] | None:
     if value is None or isinstance(value, list):
         return value
     if not isinstance(value, dict):
@@ -192,7 +200,9 @@ def _normalize_gemini_image_config(value: object) -> dict[str, object]:
     return normalized
 
 
-def _extract_google_search_tool_names(tool: GeminiTool, *, is_image_model: bool) -> list[str]:
+def _extract_google_search_tool_names(
+    tool: GeminiTool, *, is_image_model: bool
+) -> list[str]:
     if tool.googleSearchRetrieval is not None:
         return ["google_search"]
 
@@ -312,24 +322,14 @@ def normalize_gemini_request(
         text_parts: list[str] = []
         content_images: list[str] = []
 
-        # 预先统计文本 Part 的位置索引，用于推断多 Part model 消息中的思考内容。
-        # 约定：model 角色有 2 个及以上纯文本 Part 时，最后一个是正式回答，
-        # 其余全是思考内容——即使客户端没有传 thought=true 字段。
-        text_part_positions = [
-            i for i, p in enumerate(content.parts) if p.text is not None
-        ]
-        infer_thinking = role == "model" and len(text_part_positions) >= 2
-
-        for idx, part in enumerate(content.parts):
+        for part in content.parts:
             if part.text is not None:
-                # 显式 thought 字段优先；否则对 model 多文本 Part 按位置推断
-                is_thought = bool(part.thought) or (
-                    infer_thinking and idx != text_part_positions[-1]
-                )
+                is_thought = bool(part.thought) or bool(part.thoughtSignature)
                 parts.append(
                     AistudioPart(
                         text=part.text,
                         thought=is_thought,
+                        thought_signature=part.thoughtSignature,
                     )
                 )
                 text_parts.append(part.text)
@@ -352,7 +352,9 @@ def normalize_gemini_request(
                 args_payload = fc.args if fc.args is not None else {}
                 parts.append(
                     AistudioPart(
-                        function_call=(fc.name, args_payload, fc.id) if fc.id else (fc.name, args_payload),
+                        function_call=(fc.name, args_payload, fc.id)
+                        if fc.id
+                        else (fc.name, args_payload),
                         thought_signature=part.thoughtSignature,
                     )
                 )
@@ -362,7 +364,9 @@ def normalize_gemini_request(
                 resp_payload = fr.response if fr.response is not None else {}
                 parts.append(
                     AistudioPart(
-                        function_response=(fr.name, resp_payload, fr.id) if fr.id else (fr.name, resp_payload),
+                        function_response=(fr.name, resp_payload, fr.id)
+                        if fr.id
+                        else (fr.name, resp_payload),
                     )
                 )
                 continue
@@ -385,7 +389,9 @@ def normalize_gemini_request(
                 AistudioPart(text=part.text)
                 if part.text is not None
                 else AistudioPart(
-                    inline_data=(part.inlineData.mimeType, part.inlineData.data) if part.inlineData else ("", ""),
+                    inline_data=(part.inlineData.mimeType, part.inlineData.data)
+                    if part.inlineData
+                    else ("", ""),
                     thought_signature=part.thoughtSignature,
                 )
                 for part in req.systemInstruction.parts

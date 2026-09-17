@@ -45,13 +45,18 @@ model_defaults:
 """
     )
 
-    defaults = resolve_model_defaults("models/gemini-3.1-flash-image-preview", config_path=config_path)
+    defaults = resolve_model_defaults(
+        "models/gemini-3.1-flash-image-preview", config_path=config_path
+    )
 
     assert defaults.is_image_model is True
     assert defaults.disable_safety_settings is True
     assert defaults.clear_generation_config_indexes == (7, 17)
     assert defaults.generation_config_defaults["response_mime_type"] is None
-    assert defaults.generation_config_defaults["image_output_mode"] == AistudioImageOutputMode.text_and_image()
+    assert (
+        defaults.generation_config_defaults["image_output_mode"]
+        == AistudioImageOutputMode.text_and_image()
+    )
     assert defaults.generation_config_defaults["thinking_config"] == [9, None, None, 3]
     assert defaults.generation_config_defaults["media_resolution"] == 3
 
@@ -73,7 +78,9 @@ model_defaults:
 """
     )
 
-    defaults = resolve_model_defaults("models/gemini-2.5-flash", config_path=config_path)
+    defaults = resolve_model_defaults(
+        "models/gemini-2.5-flash", config_path=config_path
+    )
 
     assert defaults.safety_settings == (
         (None, None, 7, 1),
@@ -98,7 +105,9 @@ model_defaults:
 """
     )
 
-    defaults = resolve_model_defaults("models/gemini-3.1-flash-image-preview", config_path=config_path)
+    defaults = resolve_model_defaults(
+        "models/gemini-3.1-flash-image-preview", config_path=config_path
+    )
 
     assert defaults.is_image_model is True
     assert defaults.default_tools == ("google_search_and_image_search",)
@@ -121,12 +130,21 @@ model_defaults:
 """
     )
 
-    defaults = resolve_model_defaults("models/gemini-3.5-flash", config_path=config_path)
+    defaults = resolve_model_defaults(
+        "models/gemini-3.5-flash", config_path=config_path
+    )
 
-    assert defaults.default_tools == ("google_search", "code_execution", "google_maps", "url_context")
+    assert defaults.default_tools == (
+        "google_search",
+        "code_execution",
+        "google_maps",
+        "url_context",
+    )
 
 
-def test_resolve_model_defaults_model_override_replaces_profile_tools_and_flags(tmp_path):
+def test_resolve_model_defaults_model_override_replaces_profile_tools_and_flags(
+    tmp_path,
+):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         """
@@ -146,7 +164,9 @@ model_defaults:
 """
     )
 
-    defaults = resolve_model_defaults("models/gemini-3.5-flash", config_path=config_path)
+    defaults = resolve_model_defaults(
+        "models/gemini-3.5-flash", config_path=config_path
+    )
 
     assert defaults.default_tools == ("code_execution",)
     assert defaults.disable_safety_settings is False

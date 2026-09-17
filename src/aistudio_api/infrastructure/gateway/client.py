@@ -32,6 +32,7 @@ from aistudio_api.infrastructure.gateway.streaming import StreamingGateway
 from aistudio_api.infrastructure.gateway.wire_codec import (
     TOOLS_TEMPLATES,
     build_image_generation_search_tool,
+    build_tools_from_names,
 )
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
 
@@ -375,10 +376,7 @@ class AIStudioClient:
             )
             if tool is not None:
                 resolved_tools = [tool]
-            from aistudio_api.infrastructure.gateway.wire_codec import (
-                build_tools_from_names,
-            )
-
+        elif use_default_tools and model_defaults.default_tools:
             resolved_tools = (
                 build_tools_from_names(
                     model_defaults.default_tools,
@@ -419,9 +417,7 @@ class AIStudioClient:
         if output.images:
             img = output.images[0]
             ext = "jpg" if "jpeg" in img.mime else "png"
-            default_img_path = (
-                Path(tempfile.gettempdir()) / f"aistudio_generated.{ext}"
-            )
+            default_img_path = Path(tempfile.gettempdir()) / f"aistudio_generated.{ext}"
             path = (
                 Path(save_path)
                 if save_path and save_path.endswith(f".{ext}")

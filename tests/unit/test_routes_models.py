@@ -10,7 +10,9 @@ from aistudio_api.config import settings
 def _build_client() -> httpx.AsyncClient:
     app = FastAPI()
     app.include_router(models_router, dependencies=[Depends(require_api_key)])
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    )
 
 
 @pytest.mark.asyncio
@@ -63,3 +65,14 @@ async def test_models_endpoint_accepts_query_param_key(monkeypatch):
         res_auth = await client.get("/v1beta/models?key=my-key")
         assert res_auth.status_code == 200
         assert "models" in res_auth.json()
+
+
+@pytest.mark.asyncio
+async def test_get_single_model_not_found_returns_404(monkeypatch):
+    monkeypatch.setattr(settings, "api_keys", frozenset())
+    async with _build_client() as client:
+        response = await client.get("/v1beta/models/non-existent-unknown-model-12345")
+        assert response.status_code == 404
+        data = response.json()
+        assert "detail" in data
+        assert data["detail"] == "Model not found"

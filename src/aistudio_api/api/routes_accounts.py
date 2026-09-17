@@ -116,7 +116,8 @@ async def get_active_account(
         created_at=account.created_at,
         last_used=account.last_used,
         auth_user=getattr(account, "auth_user", "0"),
-        cookie_id=getattr(account, "cookie_id", None) or f"cookie_{account.created_at[:16]}",
+        cookie_id=getattr(account, "cookie_id", None)
+        or f"cookie_{account.created_at[:16]}",
     )
 
 
@@ -145,7 +146,8 @@ async def activate_account(
         created_at=account.created_at,
         last_used=account.last_used,
         auth_user=getattr(account, "auth_user", "0"),
-        cookie_id=getattr(account, "cookie_id", None) or f"cookie_{account.created_at[:16]}",
+        cookie_id=getattr(account, "cookie_id", None)
+        or f"cookie_{account.created_at[:16]}",
     )
 
 
@@ -222,6 +224,7 @@ async def import_cookies(
     )
 
     import secrets
+
     cid = f"cookie_{secrets.token_hex(4)}"
     account = account_service._store.save_account(
         name=name,
@@ -274,6 +277,7 @@ async def probe_and_import(
     imported_accounts: list[AccountResponse] = []
     prefix = req.name_prefix.strip() if req.name_prefix else "Google Account"
     import secrets
+
     cid = f"cookie_{secrets.token_hex(4)}"
     for p in probed:
         u_idx = str(p["auth_user"])

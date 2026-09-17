@@ -38,6 +38,184 @@ from aistudio_api.infrastructure.gateway.client import AIStudioClient
 logger = logging.getLogger("aistudio.server")
 
 
+def classify_gemini_error_payload(exc: Exception) -> tuple[int, str, str]:
+    """Extract standard Gemini HTTP status code, message, and status string from an exception."""
+    if isinstance(exc, SessionExpiredError):
+        return (
+            401,
+            "All accounts have expired sessions. Please import fresh cookies.",
+            "UNAUTHENTICATED",
+        )
+    if isinstance(exc, AuthError):
+        return 403, str(exc), "PERMISSION_DENIED"
+    if isinstance(exc, UsageLimitExceeded):
+        return 429, str(exc), "RESOURCE_EXHAUSTED"
+    if isinstance(exc, ValueError):
+        return 400, str(exc), "INVALID_ARGUMENT"
+    if isinstance(exc, HTTPException):
+        status = exc.status_code
+        detail = exc.detail
+        raw_msg = detail.get("message") if isinstance(detail, dict) else detail
+        msg = str(raw_msg) if raw_msg is not None else ""
+        status_map = {
+            400: "INVALID_ARGUMENT",
+            401: "UNAUTHENTICATED",
+            403: "PERMISSION_DENIED",
+            404: "NOT_FOUND",
+            429: "RESOURCE_EXHAUSTED",
+            500: "INTERNAL",
+            503: "UNAVAILABLE",
+        }
+        return (
+            status,
+            msg,
+            status_map.get(status, "INTERNAL" if status >= 500 else "UNKNOWN"),
+        )
+    if isinstance(exc, RequestError):
+        status = exc.status if exc.status > 0 else 500
+        status_map = {
+            400: "INVALID_ARGUMENT",
+            401: "UNAUTHENTICATED",
+            403: "PERMISSION_DENIED",
+            404: "NOT_FOUND",
+            429: "RESOURCE_EXHAUSTED",
+            500: "INTERNAL",
+            503: "UNAVAILABLE",
+        }
+        return (
+            status,
+            str(exc),
+            status_map.get(status, "INTERNAL" if status >= 500 else "UNKNOWN"),
+        )
+
+    return 500, str(exc), "INTERNAL"
+
+
+async def handle_attempt_exception(
+    exc: Exception,
+    *,
+    attempt: int,
+    model_path: str,
+    normalized_model: str | None,
+    client: AIStudioClient,
+    has_yielded_data: bool = False,
+) -> bool:
+    """Handle per-attempt error classification and account switching.
+
+    Returns True if the operation should be retried, or raises HTTPException / re-raises.
+    """
+    target_model = normalized_model or model_path
+    account_svc = runtime_state.account_service
+    active_acc = account_svc.get_active_account() if account_svc else None
+    failed_id = active_acc.id if active_acc else None
+
+    if isinstance(exc, ValueError):
+        raise HTTPException(
+            400, detail={"message": str(exc), "type": "bad_request"}
+        ) from exc
+
+    if isinstance(exc, SessionExpiredError):
+        logger.warning("Gemini 账号 Session 已失效（重定向至登录页）: %s", exc)
+        record_rotator_event("error", model=target_model)
+        if not has_yielded_data and await try_switch_account(
+            model=target_model, failed_account_id=failed_id
+        ):
+            logger.info("已自动切换至健康账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
+            return True
+        raise HTTPException(
+            401,
+            detail={
+                "message": "All accounts have expired sessions. Please import fresh cookies.",
+                "type": "auth_error",
+            },
+        ) from exc
+
+    if isinstance(exc, AuthError):
+        logger.warning("Gemini 鉴权/权限异常: %s", exc)
+        client.clear_snapshot_cache()
+        record_rotator_event("error", model=target_model)
+        if not has_yielded_data and await try_switch_account(
+            model=target_model, failed_account_id=failed_id
+        ):
+            logger.info("已自动切换至可用账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
+            return True
+        raise HTTPException(
+            403, detail={"message": str(exc), "type": "auth_error"}
+        ) from exc
+
+    if isinstance(exc, UsageLimitExceeded):
+        runtime_state.record(target_model, "rate_limited")
+        record_rotator_event("rate_limited", model=target_model)
+        if not has_yielded_data and await try_switch_account(
+            model=target_model, failed_account_id=failed_id
+        ):
+            logger.info(
+                "Gemini 429 配额耗尽: model=%s，已切换至可用账号重试 (%d/%d)",
+                target_model,
+                attempt + 1,
+                MAX_RETRIES,
+            )
+            return True
+        logger.warning(
+            "Gemini 429 限额: model=%s，全部账号今日配额均已耗尽", target_model
+        )
+        raise HTTPException(
+            429,
+            detail={
+                "message": f"All accounts reached daily quota for model '{target_model}'. Quota resets at 00:00 PST.",
+                "type": "rate_limit_exceeded",
+            },
+        ) from exc
+
+    if (
+        isinstance(exc, RequestError)
+        and exc.status == 204
+        and attempt == 0
+        and not has_yielded_data
+    ):
+        logger.warning("Gemini 收到 204，清理 snapshot 缓存后重试一次")
+        client.clear_snapshot_cache()
+        return True
+
+    if isinstance(exc, RuntimeError):
+        err_msg = str(exc).lower()
+        if (
+            (
+                "cdp" in err_msg
+                or "closed" in err_msg
+                or "aborted" in err_msg
+                or "timeout" in err_msg
+            )
+            and attempt < 2
+            and not has_yielded_data
+        ):
+            logger.warning(
+                "Gemini 浏览器进程断开或超时，自动重启并重试 (%d/%d): %s",
+                attempt + 1,
+                MAX_RETRIES,
+                exc,
+            )
+            if client._session is not None:
+                await client._session._close_internal()
+            return True
+
+    if isinstance(exc, AistudioError):
+        runtime_state.record(target_model, "errors")
+        record_rotator_event("error", model=target_model)
+        logger.warning("Gemini error: %s", exc)
+        raise HTTPException(
+            500, detail={"message": str(exc), "type": "server_error"}
+        ) from exc
+
+    runtime_state.record(target_model, "errors")
+    record_rotator_event("error", model=target_model)
+    logger.error("Gemini unexpected error: %s", exc)
+    logger.debug("Gemini error details:", exc_info=True)
+    raise HTTPException(
+        500, detail={"message": str(exc), "type": "server_error"}
+    ) from exc
+
+
 async def handle_gemini_generate_content(
     model_path: str,
     req: GeminiGenerateContentRequest,
@@ -50,7 +228,7 @@ async def handle_gemini_generate_content(
             client=client, req=req, model_path=model_path
         )
 
-    last_error = None
+    last_error: Exception | None = None
     for attempt in range(MAX_RETRIES):
         await ensure_active_account(attempt, model=model_path)
         normalized = None
@@ -101,83 +279,17 @@ async def handle_gemini_generate_content(
                 modelVersion=normalized.model,
                 responseId=output.response_id or None,
             )
-        except ValueError as exc:
-            raise HTTPException(
-                400, detail={"message": str(exc), "type": "bad_request"}
-            ) from exc
-        except SessionExpiredError as exc:
-            target_model = normalized.model if normalized else model_path
-            logger.warning("Gemini 账号 Session 已失效（重定向至登录页）: %s", exc)
-            account_svc = runtime_state.account_service
-            active_acc = account_svc.get_active_account() if account_svc else None
-            failed_id = active_acc.id if active_acc else None
-            record_rotator_event("error", model=target_model)
-            if await try_switch_account(model=target_model, failed_account_id=failed_id):
-                logger.info("已自动切换至健康账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
-                continue
-            raise HTTPException(
-                401, detail={"message": "All accounts have expired sessions. Please import fresh cookies.", "type": "auth_error"}
-            ) from exc
-        except AuthError as exc:
-            target_model = normalized.model if normalized else model_path
-            logger.warning("Gemini 鉴权/权限异常: %s", exc)
-            client.clear_snapshot_cache()
-            account_svc = runtime_state.account_service
-            active_acc = account_svc.get_active_account() if account_svc else None
-            failed_id = active_acc.id if active_acc else None
-            record_rotator_event("error", model=target_model)
-            if await try_switch_account(model=target_model, failed_account_id=failed_id):
-                logger.info("已自动切换至可用账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
-                continue
-            raise HTTPException(
-                403, detail={"message": str(exc), "type": "auth_error"}
-            ) from exc
-        except UsageLimitExceeded as exc:
-            target_model = normalized.model if normalized else model_path
-            runtime_state.record(target_model, "rate_limited")
-            last_error = exc
-            account_svc = runtime_state.account_service
-            active_acc = (
-                account_svc.get_active_account() if account_svc else None
-            )
-            failed_id = active_acc.id if active_acc else None
-
-            record_rotator_event("rate_limited", model=target_model)
-            if await try_switch_account(
-                model=target_model, failed_account_id=failed_id
-            ):
-                logger.info(
-                    "Gemini 429 配额耗尽: model=%s，已切换至可用账号重试 (%d/%d)",
-                    target_model,
-                    attempt + 1,
-                    MAX_RETRIES,
-                )
-                continue
-            logger.warning("Gemini 429 限额: model=%s，全部账号今日配额均已耗尽", target_model)
-            raise HTTPException(
-                429,
-                detail={
-                    "message": f"All accounts reached daily quota for model '{target_model}'. Quota resets at 00:00 PST.",
-                    "type": "rate_limit_exceeded",
-                },
-            ) from exc
-        except AistudioError as exc:
-            target_model = normalized.model if normalized else model_path
-            runtime_state.record(target_model, "errors")
-            record_rotator_event("error", model=target_model)
-            logger.warning("Gemini error: %s", exc)
-            raise HTTPException(
-                500, detail={"message": str(exc), "type": "server_error"}
-            ) from exc
         except Exception as exc:
-            target_model = normalized.model if normalized else model_path
-            runtime_state.record(target_model, "errors")
-            record_rotator_event("error", model=target_model)
-            logger.error("Gemini unexpected error: %s", exc)
-            logger.debug("Gemini error details:", exc_info=True)
-            raise HTTPException(
-                500, detail={"message": str(exc), "type": "server_error"}
-            ) from exc
+            last_error = exc
+            if await handle_attempt_exception(
+                exc,
+                attempt=attempt,
+                model_path=model_path,
+                normalized_model=normalized.model if normalized else None,
+                client=client,
+            ):
+                continue
+            raise
         finally:
             if normalized is not None and not stream:
                 cleanup_files(normalized.cleanup_paths)
@@ -285,9 +397,7 @@ def _build_gemini_streaming_response(
                                                 "content": {
                                                     "role": "model",
                                                     "parts": [
-                                                        {
-                                                            "thoughtSignature": str(text)
-                                                        }
+                                                        {"thoughtSignature": str(text)}
                                                     ],
                                                 },
                                                 "index": 0,
@@ -327,9 +437,7 @@ def _build_gemini_streaming_response(
                                 + "\n\n"
                             )
                         elif event_type == "reasoning_images" and text:
-                            r_img_list = (
-                                text if isinstance(text, list) else []
-                            )
+                            r_img_list = text if isinstance(text, list) else []
                             yield (
                                 "data: "
                                 + json.dumps(
@@ -382,100 +490,20 @@ def _build_gemini_streaming_response(
                                 + "\n\n"
                             )
                         elif event_type == "usage":
-                            final_usage = (
-                                text if isinstance(text, dict) else None
-                            )
+                            final_usage = text if isinstance(text, dict) else None
                     break
-                except UsageLimitExceeded:
-                    target_model = (
-                        normalized.model if normalized else model_path
-                    )
-                    runtime_state.record(target_model, "rate_limited")
-                    account_svc = runtime_state.account_service
-                    active_acc = (
-                        account_svc.get_active_account()
-                        if account_svc
-                        else None
-                    )
-                    failed_id = active_acc.id if active_acc else None
-                    record_rotator_event("rate_limited", model=target_model)
-                    if not has_yielded_data and await try_switch_account(
-                        model=target_model, failed_account_id=failed_id
+                except Exception as exc:
+                    if await handle_attempt_exception(
+                        exc,
+                        attempt=stream_attempt,
+                        model_path=model_path,
+                        normalized_model=normalized.model if normalized else None,
+                        client=client,
+                        has_yielded_data=has_yielded_data,
                     ):
-                        logger.warning(
-                            "Gemini stream 429 限流: model=%s，已切换账号重试 (%d/%d)",
-                            target_model,
-                            stream_attempt + 1,
-                            MAX_RETRIES,
-                        )
                         continue
                     raise
-                except RequestError as exc:
-                    if exc.status == 204 and stream_attempt == 0:
-                        logger.warning(
-                            "Gemini stream 收到 204，清理 snapshot 缓存后重试一次"
-                        )
-                        client.clear_snapshot_cache()
-                        continue
-                    raise
-                except SessionExpiredError as exc:
-                    target_model = normalized.model if normalized else model_path
-                    logger.warning("Gemini stream 账号 Session 已失效（重定向至登录页）: %s", exc)
-                    account_svc = runtime_state.account_service
-                    active_acc = account_svc.get_active_account() if account_svc else None
-                    failed_id = active_acc.id if active_acc else None
-                    record_rotator_event("error", model=target_model)
-                    if not has_yielded_data and await try_switch_account(
-                        model=target_model, failed_account_id=failed_id
-                    ):
-                        logger.warning(
-                            "Gemini stream 自动切换至健康账号重试 (%d/%d)",
-                            stream_attempt + 1,
-                            MAX_RETRIES,
-                        )
-                        continue
-                    raise
-                except AuthError as exc:
-                    target_model = normalized.model if normalized else model_path
-                    logger.warning("Gemini stream 鉴权异常: %s", exc)
-                    client.clear_snapshot_cache()
-                    account_svc = runtime_state.account_service
-                    active_acc = account_svc.get_active_account() if account_svc else None
-                    failed_id = active_acc.id if active_acc else None
-                    record_rotator_event("error", model=target_model)
-                    if not has_yielded_data and await try_switch_account(
-                        model=target_model, failed_account_id=failed_id
-                    ):
-                        logger.warning(
-                            "Gemini stream 鉴权失败，已切换至可用账号重试 (%d/%d)",
-                            stream_attempt + 1,
-                            MAX_RETRIES,
-                        )
-                        continue
-                    raise
-                except RuntimeError as exc:
-                    target_model = normalized.model if normalized else model_path
-                    err_msg = str(exc).lower()
-                    if (
-                        (
-                            "cdp" in err_msg
-                            or "closed" in err_msg
-                            or "aborted" in err_msg
-                            or "timeout" in err_msg
-                        )
-                        and stream_attempt < 2
-                        and not has_yielded_data
-                    ):
-                        logger.warning(
-                            "Gemini stream 浏览器进程断开或超时，自动重启并重试 (%d/%d): %s",
-                            stream_attempt + 1,
-                            MAX_RETRIES,
-                            exc,
-                        )
-                        if client._session is not None:
-                            await client._session._close_internal()
-                        continue
-                    raise
+
             record_rotator_event(
                 "success", model=normalized.model if normalized else model_path
             )
@@ -505,26 +533,15 @@ def _build_gemini_streaming_response(
                     + "\n\n"
                 )
         except Exception as exc:
-            target_model = normalized.model if normalized else model_path
-            if not isinstance(exc, UsageLimitExceeded):
-                record_rotator_event("error", model=target_model)
-            runtime_state.record(target_model, "errors")
-            if isinstance(exc, AistudioError):
-                logger.warning("Gemini stream error: %s", exc)
-            else:
-                logger.error("Gemini stream unexpected error: %s", exc)
-                logger.debug("Gemini stream error details:", exc_info=True)
-            status_code = getattr(exc, "status_code", 500)
-            if not isinstance(status_code, int):
-                status_code = 500
+            code, msg, status_str = classify_gemini_error_payload(exc)
             yield (
                 "data: "
                 + json.dumps(
                     {
                         "error": {
-                            "code": status_code,
-                            "message": str(exc),
-                            "status": "INTERNAL" if status_code == 500 else "INVALID_ARGUMENT",
+                            "code": code,
+                            "message": msg,
+                            "status": status_str,
                         }
                     },
                     ensure_ascii=False,

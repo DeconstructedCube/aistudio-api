@@ -67,6 +67,7 @@ class AccountService:
                 if snapshot_cache is not None:
                     snapshot_cache.clear()
                 from aistudio_api.api.state import runtime_state
+
                 if runtime_state.client is not None:
                     runtime_state.client.clear_snapshot_cache()
                 logger.info("已清除 snapshot 与模板缓存")

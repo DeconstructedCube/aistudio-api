@@ -49,6 +49,7 @@ async def test_browser_session_generate_snapshot(mock_cdp_page):
         if "window.__sr" in expr:
             return "!mocked_snapshot_token_value_123"
         return None
+
     mock_cdp_page.evaluate.side_effect = fake_evaluate
 
     contents = [
@@ -118,7 +119,9 @@ async def test_browser_session_send_streaming_request(mock_cdp_page):
     mock_cdp_page.evaluate.side_effect = fake_evaluate
 
     collected = []
-    async for tag, data in session.send_streaming_request(body='["stream"]', timeout_ms=5000):
+    async for tag, data in session.send_streaming_request(
+        body='["stream"]', timeout_ms=5000
+    ):
         collected.append((tag, data))
 
     assert ("status", 200) in collected

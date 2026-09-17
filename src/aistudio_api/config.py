@@ -60,8 +60,6 @@ def _load_web_password() -> str | None:
     return os.getenv("AISTUDIO_WEB_PASSWORD") or os.getenv("AISTUDIO_ADMIN_PASSWORD")
 
 
-
-
 _AUTH_SEARCH_ROOTS = [
     Path(__file__).resolve().parents[2] / "data",  # 项目内 data/ 目录
 ]
@@ -106,6 +104,7 @@ def discover_proxy_url() -> str | None:
         return env_proxy
     # 尝试自动探测本地代理（如 Termux 下的 Clash / v2ray）
     import socket
+
     for port in (7890, 10808):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -115,6 +114,7 @@ def discover_proxy_url() -> str | None:
         except Exception:
             pass
     return None
+
 
 def build_browser_proxy(proxy_url: str | None) -> dict[str, str] | None:
     if not proxy_url:
@@ -169,4 +169,6 @@ class Settings:
     def auth_enabled(self) -> bool:
         """网页管理端鉴权是否开启。"""
         return bool(self.web_password)
+
+
 settings = Settings()

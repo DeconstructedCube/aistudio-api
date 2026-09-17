@@ -9,7 +9,10 @@ from aistudio_api.api.app import app
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    )
+
 
 @pytest.mark.asyncio
 async def test_health_endpoint():
@@ -59,11 +62,16 @@ async def test_get_config_endpoint():
 @pytest.mark.asyncio
 async def test_update_config_yaml_validation():
     async with _client() as client:
-        resp = await client.put("/config/yaml", json={"yaml_content": "invalid: [yaml: broken"})
+        resp = await client.put(
+            "/config/yaml", json={"yaml_content": "invalid: [yaml: broken"}
+        )
         assert resp.status_code == 400
 
-        resp_non_dict = await client.put("/config/yaml", json={"yaml_content": "- item1\n- item2"})
+        resp_non_dict = await client.put(
+            "/config/yaml", json={"yaml_content": "- item1\n- item2"}
+        )
         assert resp_non_dict.status_code == 400
+
 
 @pytest.mark.asyncio
 async def test_rotation_status_and_clear_cooldown():
@@ -83,6 +91,8 @@ async def test_rotation_status_and_clear_cooldown():
         assert data["mode"] == "sticky"
         assert "accounts" in data
 
-        resp_clear = await client.post("/rotation/clear-cooldown", json={"account_id": "acc_1"})
+        resp_clear = await client.post(
+            "/rotation/clear-cooldown", json={"account_id": "acc_1"}
+        )
         assert resp_clear.status_code == 200
         mock_rotator.clear_cooldown.assert_called_once_with("acc_1", model=None)

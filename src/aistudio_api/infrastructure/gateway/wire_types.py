@@ -267,6 +267,16 @@ class AistudioPart:
             while len(part) <= 12:
                 part.append(None)
             part[12] = 1
+            if self.thought_signature:
+                while len(part) <= 14:
+                    part.append(None)
+                part[14] = self.thought_signature
+            return part
+        if self.thought_signature:
+            part = [None, self.text]
+            while len(part) <= 14:
+                part.append(None)
+            part[14] = self.thought_signature
             return part
         return [None, self.text]
 

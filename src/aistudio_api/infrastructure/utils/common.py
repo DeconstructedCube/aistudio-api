@@ -31,13 +31,18 @@ def extract_outer_json(raw: str) -> list[object]:
     return results
 
 
-
 def decode_base64_images(images: list[dict[str, object]]) -> list[dict[str, object]]:
     decoded = []
     for img in images:
         try:
             data = base64.b64decode(str(img["data"]))
-            decoded.append({"mime": str(img.get("mime", "image/jpeg")), "bytes": data, "size": len(data)})
+            decoded.append(
+                {
+                    "mime": str(img.get("mime", "image/jpeg")),
+                    "bytes": data,
+                    "size": len(data),
+                }
+            )
         except Exception:
             pass
     return decoded

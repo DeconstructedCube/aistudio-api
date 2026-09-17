@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from aistudio_api.api.dependencies import get_runtime_state
 from aistudio_api.api.response_models import (
@@ -14,11 +15,10 @@ from aistudio_api.api.response_models import (
 
 if TYPE_CHECKING:
     from aistudio_api.api.state import RuntimeState
-
 router = APIRouter()
 
 
-def _to_gemini_model(model_data: dict[str, object]) -> GeminiModelResponse:
+def _to_gemini_model(model_data: Mapping[str, object]) -> GeminiModelResponse:
     raw_id = str(model_data.get("id") or model_data.get("name") or "")
     clean_id = raw_id.removeprefix("models/")
     name = f"models/{clean_id}"
@@ -68,7 +68,10 @@ async def get_model(
     runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> GeminiModelResponse:
     session = runtime_state.client._session if runtime_state.client else None
-    from aistudio_api.infrastructure.gateway.model_discovery import model_discovery
+    from aistudio_api.infrastructure.gateway.model_discovery import (
+        _FALLBACK_MODELS,
+        model_discovery,
+    )
 
     discovered = await model_discovery.get_models(session=session)
     clean_target = model_id.removeprefix("models/")
@@ -77,4 +80,9 @@ async def get_model(
         model_clean_id = model_raw_id.removeprefix("models/")
         if model_clean_id == clean_target:
             return _to_gemini_model(model_info)
-    return _to_gemini_model({"id": clean_target})
+    for model_info in _FALLBACK_MODELS:
+        model_raw_id = str(model_info.get("id") or model_info.get("name") or "")
+        model_clean_id = model_raw_id.removeprefix("models/")
+        if model_clean_id == clean_target:
+            return _to_gemini_model(model_info)
+    raise HTTPException(status_code=404, detail="Model not found")

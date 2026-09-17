@@ -80,6 +80,7 @@ class IncrementalJSONStreamParser:
         return
         yield []
 
+
 def classify_chunk(chunk: list) -> tuple[str, object]:
     candidate = parse_response_chunk(chunk)
     if candidate.thinking:

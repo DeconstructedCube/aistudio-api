@@ -217,11 +217,15 @@ def _coerce_safety_settings(raw: object) -> tuple[tuple[object, ...], ...] | Non
 def _defaults_from_mapping(raw: dict[str, object] | None) -> ModelDefaults:
     raw_dict = raw or {}
     raw_default_tools = raw_dict.get("default_tools")
-    default_tools_list = raw_default_tools if isinstance(raw_default_tools, (list, tuple)) else ()
+    default_tools_list = (
+        raw_default_tools if isinstance(raw_default_tools, (list, tuple)) else ()
+    )
     raw_gen_defaults = raw_dict.get("generation_config_defaults")
     gen_defaults = raw_gen_defaults if isinstance(raw_gen_defaults, dict) else None
     raw_clear_indexes = raw_dict.get("clear_generation_config_indexes")
-    clear_indexes_list = raw_clear_indexes if isinstance(raw_clear_indexes, (list, tuple)) else ()
+    clear_indexes_list = (
+        raw_clear_indexes if isinstance(raw_clear_indexes, (list, tuple)) else ()
+    )
     return ModelDefaults(
         is_image_model=bool(raw_dict.get("is_image_model", False)),
         default_tools=tuple(str(x) for x in default_tools_list),
@@ -349,8 +353,6 @@ def _compiled_model_overrides(config_path: str) -> dict[str, ModelDefaults]:
     return overrides
 
 
-
-
 def resolve_model_defaults(
     model: str, *, config_path: str | os.PathLike[str] | None = None
 ) -> ModelDefaults:
@@ -391,7 +393,9 @@ def get_configured_api_key_items(
                 name_val = str(k.get("name") or "API Key").strip()
                 created_val = str(k.get("created_at") or "").strip()
                 if key_val:
-                    items.append({"key": key_val, "name": name_val, "created_at": created_val})
+                    items.append(
+                        {"key": key_val, "name": name_val, "created_at": created_val}
+                    )
             elif isinstance(k, str) and k.strip():
                 items.append({"key": k.strip(), "name": "API Key", "created_at": ""})
     elif isinstance(raw_keys, str):

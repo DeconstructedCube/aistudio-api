@@ -27,9 +27,8 @@ def _derive_stable_fingerprint_seed(key: str) -> int:
 
 def _is_termux() -> bool:
     """True iff running inside Termux (host or via app)."""
-    return (
-        platform.system() == "Android"
-        or os.environ.get("PREFIX", "").startswith("/data/data/com.termux")
+    return platform.system() == "Android" or os.environ.get("PREFIX", "").startswith(
+        "/data/data/com.termux"
     )
 
 
@@ -59,28 +58,41 @@ def _resolve_local_chrome(match: str) -> str:
 def find_chromium_executable() -> str:
     """Find the best Chromium executable available on the system."""
     # 1. Configured explicit path
-    if settings.browser_executable_path and Path(
+    if (
         settings.browser_executable_path
-    ).exists():
+        and Path(settings.browser_executable_path).exists()
+    ):
         return settings.browser_executable_path
 
     project_root = Path(__file__).resolve().parents[4]
     # 2. Local project-scoped CloakBrowser (.cloakbrowser/**/chrome)
     cloak_dir = project_root / ".cloakbrowser"
     if cloak_dir.is_dir():
-        for pat in ("**/chrome", "**/Chromium.app/Contents/MacOS/Chromium", "**/chrome.exe"):
+        for pat in (
+            "**/chrome",
+            "**/Chromium.app/Contents/MacOS/Chromium",
+            "**/chrome.exe",
+        ):
             local_matches = sorted(cloak_dir.glob(pat))
             for match in reversed(local_matches):
-                if match.is_file() and (os.access(match, os.X_OK) or platform.system() == "Windows"):
+                if match.is_file() and (
+                    os.access(match, os.X_OK) or platform.system() == "Windows"
+                ):
                     return _resolve_local_chrome(str(match))
 
     # 3. User-level CloakBrowser (~/.cloakbrowser/**/chrome)
     user_cloak_dir = Path.home() / ".cloakbrowser"
     if user_cloak_dir.is_dir():
-        for pat in ("**/chrome", "**/chrome.exe", "**/Chromium.app/Contents/MacOS/Chromium"):
+        for pat in (
+            "**/chrome",
+            "**/chrome.exe",
+            "**/Chromium.app/Contents/MacOS/Chromium",
+        ):
             cloak_matches = sorted(user_cloak_dir.glob(pat))
             for match in reversed(cloak_matches):
-                if match.is_file() and (os.access(match, os.X_OK) or platform.system() == "Windows"):
+                if match.is_file() and (
+                    os.access(match, os.X_OK) or platform.system() == "Windows"
+                ):
                     return _resolve_local_chrome(str(match))
     # 4. Standard binary names in PATH
     for name in (
@@ -108,7 +120,10 @@ def find_chromium_executable() -> str:
                 "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
                 "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
                 "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-                str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                str(
+                    Path.home()
+                    / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+                ),
                 str(Path.home() / "Applications/Chromium.app/Contents/MacOS/Chromium"),
             ]
         )
@@ -117,12 +132,20 @@ def find_chromium_executable() -> str:
             [
                 r"C:\Program Files\Google\Chrome\Application\chrome.exe",
                 r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
-                os.path.expandvars(r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"),
-                os.path.expandvars(r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe"),
+                os.path.expandvars(
+                    r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"
+                ),
+                os.path.expandvars(
+                    r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"
+                ),
+                os.path.expandvars(
+                    r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe"
+                ),
                 r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
                 r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-                os.path.expandvars(r"%PROGRAMFILES(X86)%\Microsoft\Edge\Application\msedge.exe"),
+                os.path.expandvars(
+                    r"%PROGRAMFILES(X86)%\Microsoft\Edge\Application\msedge.exe"
+                ),
             ]
         )
     else:
@@ -297,6 +320,7 @@ class ChromiumProcess:
             self.process.wait(timeout=1.0)
         except Exception as e:
             log.debug("Error terminating Chromium process: %s", e)
+
 
 def launch_chromium_process(
     port: int,

@@ -75,7 +75,6 @@ class GeminiGenerateContentResponse(BaseModel):
     responseId: str | None = None
 
 
-
 class HealthResponse(BaseModel):
     status: str
     busy: bool

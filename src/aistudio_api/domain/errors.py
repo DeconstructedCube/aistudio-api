@@ -1,11 +1,13 @@
 """Domain errors for AI Studio interactions."""
 
+
 class AistudioError(Exception):
     pass
 
 
 class AuthError(AistudioError):
     pass
+
 
 class SessionExpiredError(AuthError):
     """明确被 Google 重定向至登录页（Cookie 真正失效）。"""

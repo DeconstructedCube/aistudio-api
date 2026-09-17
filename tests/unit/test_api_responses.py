@@ -10,7 +10,10 @@ def test_to_gemini_usage_metadata_uses_visible_and_reasoning_tokens():
             "prompt_tokens": 9,
             "completion_tokens": 316,
             "total_tokens": 325,
-            "completion_tokens_details": {"reasoning_tokens": 290, "visible_tokens": 26},
+            "completion_tokens_details": {
+                "reasoning_tokens": 290,
+                "visible_tokens": 26,
+            },
         }
     ).model_dump(mode="json") == {
         "promptTokenCount": 9,
@@ -29,12 +32,20 @@ def test_to_gemini_parts_keeps_function_call_and_response_parts():
 
     assert [part.model_dump(mode="json", exclude_none=True) for part in parts] == [
         {"functionCall": {"name": "getWeather", "args": {"city": "Shanghai"}}},
-        {"functionResponse": {"name": "getWeather", "response": {"temperature": "24C"}}},
+        {
+            "functionResponse": {
+                "name": "getWeather",
+                "response": {"temperature": "24C"},
+            }
+        },
     ]
 
 
 def test_to_gemini_parts_can_emit_thought_part():
-    assert [part.model_dump(mode="json", exclude_none=True) for part in to_gemini_parts("答案", thinking="思考")] == [
+    assert [
+        part.model_dump(mode="json", exclude_none=True)
+        for part in to_gemini_parts("答案", thinking="思考")
+    ] == [
         {"text": "思考", "thought": True},
         {"text": "答案"},
     ]
