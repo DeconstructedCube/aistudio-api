@@ -99,6 +99,7 @@ function handleLogout() {
     <!-- Footer Status / Action -->
     <div class="p-3 border-t border-gray-100 flex flex-col gap-2">
       <button
+        v-if="authStore.authEnabled"
         type="button"
         class="w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium text-gray-600 hover:bg-gray-100 transition-colors cursor-pointer"
         @click="emit('openTokenModal')"
@@ -109,6 +110,17 @@ function handleLogout() {
         </div>
         <span class="text-[10px] text-gray-400 font-mono">配置</span>
       </button>
+      <div
+        v-else
+        class="px-3 py-2 rounded-xl text-xs bg-amber-50/70 border border-amber-200/60 text-amber-800"
+      >
+        <div class="font-semibold flex items-center gap-1.5 text-[11px]">
+          <span>免密访问模式</span>
+        </div>
+        <div class="text-[10px] text-amber-700/80 mt-0.5 leading-tight">
+          如需保护控制台，请在服务端环境变量配置 AISTUDIO_WEB_PASSWORD
+        </div>
+      </div>
 
       <div class="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-xl text-xs text-gray-500">
         <div class="flex items-center gap-2">

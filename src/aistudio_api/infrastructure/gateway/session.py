@@ -310,7 +310,7 @@ class BrowserSession:
                 self._auth_file = auth_file
                 self._profile_dir = self._derive_profile_dir(auth_file)
                 self._templates.clear()
-                self._bootstrap_template = None
+                self._bootstrap_template = dict(DEFAULT_BOOTSTRAP_TEMPLATE)
                 await self._close_internal()
             finally:
                 self._switching = False
@@ -541,7 +541,16 @@ class BrowserSession:
                 await page.fill("textarea", original_text)
 
     async def generate_snapshot(self, contents: list[AistudioContent]) -> str:
-        """Generate a BotGuard snapshot token for given content payload."""
+        """Generate a BotGuard snapshot token for given content payload.
+
+        Matches Google AI Studio's official _.Nv(request) algorithm:
+        For each content in contents, extract each part as a string:
+          - text part -> part.text (or "" if None)
+          - inline_data part -> part.inline_data[1] (base64 data)
+          - file_id / file_data part -> part.file_id (or "" if None)
+          - other parts (function_call, function_response, etc.) -> ""
+        All extracted parts are joined by a single space (" ") and hashed via SHA-256 hex digest.
+        """
         page = await self.ensure_botguard_service()
         if not self._snap_key:
             raise RuntimeError("Snapshot function not detected")
@@ -549,12 +558,15 @@ class BrowserSession:
         hash_parts: list[str] = []
         for content in contents:
             for part in content.parts:
-                if part.inline_data:
-                    hash_parts.append(part.inline_data[1])
-                if part.text:
+                if part.text is not None:
                     hash_parts.append(str(part.text))
+                elif part.inline_data is not None:
+                    hash_parts.append(str(part.inline_data[1]))
+                elif part.file_id is not None:
+                    hash_parts.append(str(part.file_id))
+                else:
+                    hash_parts.append("")
         content_hash = sha256(" ".join(hash_parts).encode("utf-8")).hexdigest()
-
         # 直接使用 Promise 求值，完全隔离每个并发调用的结果，避免污染 window 全局变量
         script = """
         async (hash) => {
@@ -792,7 +804,8 @@ class BrowserSession:
         self._page = None
         self._snap_key = None
         self._templates.clear()
-        self._bootstrap_template = None
+        if self._bootstrap_template is None:
+            self._bootstrap_template = dict(DEFAULT_BOOTSTRAP_TEMPLATE)
 
     async def _ensure_browser_cdp(self) -> CDPPage:
         """Launch Chromium subprocess and connect async CDP client."""

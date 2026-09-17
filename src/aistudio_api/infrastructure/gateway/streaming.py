@@ -15,7 +15,6 @@ from aistudio_api.infrastructure.gateway.session import BrowserSession
 from aistudio_api.infrastructure.gateway.stream_parser import (
     IncrementalJSONStreamParser,
 )
-from aistudio_api.infrastructure.gateway.wire_codec import modify_body
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
 
 logger = logging.getLogger("aistudio")
@@ -91,21 +90,7 @@ class StreamingGateway:
         if self._session is None:
             raise RuntimeError("browser session is required for streaming xhr replay")
 
-        modified_body = modify_body(
-            captured.body,
-            model=model,
-            contents=contents,
-            system_instruction=system_instruction,
-            system_instruction_content=system_instruction_content,
-            tools=tools,
-            safety_settings=safety_settings,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            max_tokens=max_tokens,
-            generation_config_overrides=generation_config_overrides,
-            sanitize_plain_text=sanitize_plain_text,
-        )
+        modified_body = captured.body
 
         parser = IncrementalJSONStreamParser()
         latest_usage: dict[str, object] | None = None

@@ -51,12 +51,21 @@ class RequestCaptureService:
         model: str = DEFAULT_TEXT_MODEL,
         images: list[str] | None = None,
         contents: list[AistudioContent] | None = None,
+        system_instruction: str | None = None,
+        system_instruction_content: AistudioContent | None = None,
+        tools: list[list] | None = None,
+        safety_settings: list[list] | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        max_tokens: int | None = None,
+        generation_config_overrides: dict | None = None,
+        sanitize_plain_text: bool = True,
         force_refresh: bool = False,
     ) -> CapturedRequest | None:
         if force_refresh:
             self._templates.pop(model, None)
         template = await self._ensure_template(model)
-        # 先只走 inlineData 路径，避免 fileData/Drive 上传链路干扰主流程。
         rewritten_contents = contents
         snapshot_contents = rewritten_contents or [
             self._build_capture_content(prompt=prompt, images=images)
@@ -67,6 +76,17 @@ class RequestCaptureService:
             model=model,
             prompt=prompt,
             contents=rewritten_contents,
+            system_instruction=system_instruction,
+            system_instruction_content=system_instruction_content,
+            tools=tools,
+            safety_settings=safety_settings,
+            images=images,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            max_tokens=max_tokens,
+            generation_config_overrides=generation_config_overrides,
+            sanitize_plain_text=sanitize_plain_text,
             snapshot=snapshot,
         )
         captured = CapturedRequest(

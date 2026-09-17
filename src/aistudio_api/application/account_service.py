@@ -62,7 +62,7 @@ class AccountService:
                 return None
 
             await browser_session.switch_auth(str(auth_path))
-            await browser_session.ensure_context()
+            await browser_session.ensure_botguard_service()
             if not keep_snapshot_cache:
                 if snapshot_cache is not None:
                     snapshot_cache.clear()

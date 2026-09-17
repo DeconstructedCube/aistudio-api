@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { ref } from 'vue'
 import { useAccountsStore } from '@/stores/accounts.ts'
 import { useSystemStore } from '@/stores/system.ts'
+import { usePolling } from '@/composables/usePolling.ts'
 import type { AccountWithStats } from '@/types/accounts.ts'
 import Button from '@/components/ui/Button.vue'
 import AccountTable from '@/components/accounts/AccountTable.vue'
@@ -23,9 +24,8 @@ async function loadData() {
   ])
 }
 
-onMounted(() => {
-  loadData()
-})
+// 页面活跃时每 8 秒自动轮询账号状态与配额
+usePolling(loadData, 8000)
 
 function handleEditName(acc: AccountWithStats) {
   editingAccount.value = acc

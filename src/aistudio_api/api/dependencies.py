@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import secrets
+
 from fastapi import HTTPException, Request
 
 from aistudio_api.config import settings
@@ -49,9 +51,8 @@ def require_web_auth(request: Request) -> None:
         return
 
     token = _extract_request_token(request)
-    if token and token == settings.web_password:
+    if token and settings.web_password and secrets.compare_digest(token, settings.web_password):
         return
-
 
     raise HTTPException(
         status_code=401,

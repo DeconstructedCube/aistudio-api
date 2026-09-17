@@ -32,7 +32,6 @@ from aistudio_api.infrastructure.gateway.streaming import StreamingGateway
 from aistudio_api.infrastructure.gateway.wire_codec import (
     TOOLS_TEMPLATES,
     build_image_generation_search_tool,
-    modify_body,
 )
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
 
@@ -127,6 +126,16 @@ class AIStudioClient:
         model: str = DEFAULT_TEXT_MODEL,
         images: list[str] | None = None,
         contents: list[AistudioContent] | None = None,
+        system_instruction: str | None = None,
+        system_instruction_content: AistudioContent | None = None,
+        tools: list[list] | None = None,
+        safety_settings: list[list] | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        max_tokens: int | None = None,
+        generation_config_overrides: dict | None = None,
+        sanitize_plain_text: bool = True,
         force_refresh: bool = False,
     ) -> CapturedRequest | None:
         return await self._capture_service.capture(
@@ -134,6 +143,16 @@ class AIStudioClient:
             model=model,
             images=images,
             contents=contents,
+            system_instruction=system_instruction,
+            system_instruction_content=system_instruction_content,
+            tools=tools,
+            safety_settings=safety_settings,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            max_tokens=max_tokens,
+            generation_config_overrides=generation_config_overrides,
+            sanitize_plain_text=sanitize_plain_text,
             force_refresh=force_refresh,
         )
 
@@ -199,6 +218,15 @@ class AIStudioClient:
             model=model,
             images=capture_images,
             contents=contents,
+            system_instruction_content=system_instruction_content,
+            tools=tools,
+            safety_settings=safety_settings,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            max_tokens=max_tokens,
+            generation_config_overrides=generation_config_overrides,
+            sanitize_plain_text=sanitize_plain_text,
             force_refresh=force_refresh_capture,
         )
         async for event in self._streaming_gateway.stream_chat(
@@ -277,14 +305,9 @@ class AIStudioClient:
     ) -> ModelOutput:
         logger.info("拦截请求: %r", f"{capture_prompt[:20]}...")
         captured = await self.capture_request(
-            capture_prompt, model=model, images=capture_images, contents=contents
-        )
-        if not captured:
-            raise RequestError(0, "无法拦截请求")
-
-        modified_body = modify_body(
-            captured.body,
+            prompt=capture_prompt,
             model=model,
+            images=capture_images,
             contents=contents,
             system_instruction_content=system_instruction_content,
             tools=tools,
@@ -296,6 +319,10 @@ class AIStudioClient:
             generation_config_overrides=generation_config_overrides,
             sanitize_plain_text=sanitize_plain_text,
         )
+        if not captured:
+            raise RequestError(0, "无法拦截请求")
+
+        modified_body = captured.body
 
         status, raw = await self._replay_service.replay(captured, body=modified_body)
         raw_text = raw.decode("utf-8", errors="replace")
@@ -335,12 +362,6 @@ class AIStudioClient:
         request_contents = contents or [
             self._build_user_content(prompt=prompt, images=images)
         ]
-        captured = await self.capture_request(
-            prompt, model=model, images=images, contents=request_contents
-        )
-        if not captured:
-            raise RequestError(0, "无法拦截请求")
-
         generation_config_overrides = None
         output_resolution = self.resolve_image_size(size)
         if output_resolution is not None:
@@ -367,13 +388,18 @@ class AIStudioClient:
                 or None
             )
 
-        modified_body = modify_body(
-            captured.body,
+        captured = await self.capture_request(
+            prompt=prompt,
             model=model,
+            images=images,
             contents=request_contents,
             tools=resolved_tools,
             generation_config_overrides=generation_config_overrides,
         )
+        if not captured:
+            raise RequestError(0, "无法拦截请求")
+
+        modified_body = captured.body
         status, raw = await self._replay_service.replay(
             captured, body=modified_body, timeout=120
         )

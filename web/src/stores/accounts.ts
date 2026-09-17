@@ -34,25 +34,26 @@ export const useAccountsStore = defineStore('accounts', () => {
   async function fetchAll() {
     loading.value = true
     try {
-      const [accs, active, rotStats] = await Promise.all([
-        accountsApi.list().catch((err) => {
-          console.error('获取账号列表失败:', err)
-          return []
-        }),
-        accountsApi.getActive().catch((err) => {
-          console.debug('获取活跃账号失败或未配置:', err)
-          return null
-        }),
-        systemApi.getRotation().catch((err) => {
-          console.debug('获取轮询状态失败:', err)
-          return null
-        }),
+      const [accsRes, activeRes, rotStatsRes] = await Promise.allSettled([
+        accountsApi.list(),
+        accountsApi.getActive(),
+        systemApi.getRotation(),
       ])
 
-      accounts.value = accs
-      activeAccount.value = active
-      if (rotStats?.accounts) {
-        rotationAccounts.value = rotStats.accounts
+      if (accsRes.status === 'fulfilled') {
+        accounts.value = accsRes.value
+      } else {
+        console.warn('获取账号列表失败，保留当前展示数据:', accsRes.reason)
+      }
+
+      if (activeRes.status === 'fulfilled') {
+        activeAccount.value = activeRes.value
+      } else if (accsRes.status === 'fulfilled' && accsRes.value.length === 0) {
+        activeAccount.value = null
+      }
+
+      if (rotStatsRes.status === 'fulfilled' && rotStatsRes.value?.accounts) {
+        rotationAccounts.value = rotStatsRes.value.accounts
       }
     } finally {
       loading.value = false

@@ -118,6 +118,21 @@ async def handle_gemini_generate_content(
             raise HTTPException(
                 401, detail={"message": "All accounts have expired sessions. Please import fresh cookies.", "type": "auth_error"}
             ) from exc
+        except AuthError as exc:
+            target_model = normalized.model if normalized else model_path
+            logger.warning("Gemini 鉴权/权限异常: %s", exc)
+            client.clear_snapshot_cache()
+            account_svc = runtime_state.account_service
+            active_acc = account_svc.get_active_account() if account_svc else None
+            failed_id = active_acc.id if active_acc else None
+            record_rotator_event("error", model=target_model)
+            if await try_switch_account(model=target_model, failed_account_id=failed_id):
+                logger.info("已自动切换至可用账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
+                continue
+            raise HTTPException(
+                403, detail={"message": str(exc), "type": "auth_error"}
+            ) from exc
+        except UsageLimitExceeded as exc:
             target_model = normalized.model if normalized else model_path
             runtime_state.record(target_model, "rate_limited")
             last_error = exc
@@ -422,14 +437,21 @@ def _build_gemini_streaming_response(
                     raise
                 except AuthError as exc:
                     target_model = normalized.model if normalized else model_path
-                    if stream_attempt == 0:
-                        logger.warning(
-                            "Gemini stream 鉴权异常，清理 snapshot 缓存后重试一次: %s",
-                            exc,
-                        )
-                        client.clear_snapshot_cache()
-                        continue
+                    logger.warning("Gemini stream 鉴权异常: %s", exc)
+                    client.clear_snapshot_cache()
+                    account_svc = runtime_state.account_service
+                    active_acc = account_svc.get_active_account() if account_svc else None
+                    failed_id = active_acc.id if active_acc else None
                     record_rotator_event("error", model=target_model)
+                    if not has_yielded_data and await try_switch_account(
+                        model=target_model, failed_account_id=failed_id
+                    ):
+                        logger.warning(
+                            "Gemini stream 鉴权失败，已切换至可用账号重试 (%d/%d)",
+                            stream_attempt + 1,
+                            MAX_RETRIES,
+                        )
+                        continue
                     raise
                 except RuntimeError as exc:
                     target_model = normalized.model if normalized else model_path

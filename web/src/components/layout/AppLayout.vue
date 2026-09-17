@@ -5,18 +5,38 @@ import Sidebar from './Sidebar.vue'
 import Topbar from './Topbar.vue'
 import TokenSettingsModal from '@/components/modals/TokenSettingsModal.vue'
 import ToastContainer from '@/components/ui/ToastContainer.vue'
+import { useAccountsStore } from '@/stores/accounts.ts'
+import { useSystemStore } from '@/stores/system.ts'
+import { useToastStore } from '@/stores/toast.ts'
 
 const route = useRoute()
+const accountsStore = useAccountsStore()
+const systemStore = useSystemStore()
+const toast = useToastStore()
+
 const sidebarOpen = ref(false)
 const tokenModalOpen = ref(false)
+const refreshing = ref(false)
 
 const currentTitle = computed(() => {
   const t = route.meta.title
   return typeof t === 'string' ? t.replace(' - AI Studio Proxy', '') : 'AI Studio Proxy'
 })
 
-function handleRefresh() {
-  window.location.reload()
+async function handleRefresh() {
+  if (refreshing.value) return
+  refreshing.value = true
+  try {
+    await Promise.allSettled([
+      accountsStore.fetchAll(),
+      systemStore.fetchStats(),
+      systemStore.fetchRotation(),
+      systemStore.checkHealth(),
+    ])
+    toast.success('数据已刷新')
+  } finally {
+    refreshing.value = false
+  }
 }
 </script>
 
@@ -35,6 +55,7 @@ function handleRefresh() {
     <div class="flex-1 lg:pl-64 flex flex-col min-w-0">
       <Topbar
         :title="currentTitle"
+        :refreshing="refreshing"
         @toggle-sidebar="sidebarOpen = !sidebarOpen"
         @open-token-modal="tokenModalOpen = true"
         @refresh="handleRefresh"

@@ -4,7 +4,7 @@ import { systemApi } from '@/api/system.ts'
 import { useToastStore } from '@/stores/toast.ts'
 import type { SystemConfig } from '@/types/system.ts'
 import ApiKeyManagerCard from '@/components/settings/ApiKeyManagerCard.vue'
-import YamlConfigCard from '@/components/settings/YamlConfigCard.vue'
+import VisualConfigEditor from '@/components/config/VisualConfigEditor.vue'
 import {
   Server,
   CheckCircle2,
@@ -101,7 +101,7 @@ onMounted(() => {
       <div class="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-xs">
         <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
           <Lock class="w-4 h-4 text-rose-600" />
-          <span>API 鉴权保护</span>
+          <span>控制台鉴权状态</span>
         </div>
         <div class="text-base font-bold">
           <span
@@ -114,11 +114,29 @@ onMounted(() => {
             v-else
             class="text-amber-600 flex items-center gap-1"
           >
-            <AlertCircle class="w-4 h-4" /> 未开启鉴权
+            <AlertCircle class="w-4 h-4" /> 免密开放模式
           </span>
         </div>
         <div class="text-[11px] text-gray-400 mt-1">
-          AISTUDIO_WEB_PASSWORD 控制台保护
+          {{ config?.auth_enabled ? '已受 AISTUDIO_WEB_PASSWORD 保护' : '未配置 AISTUDIO_WEB_PASSWORD' }}
+        </div>
+      </div>
+    </div>
+
+    <!-- Auth Warning Banner if Auth is disabled -->
+    <div
+      v-if="config && !config.auth_enabled"
+      class="p-4 bg-amber-50/80 border border-amber-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900"
+    >
+      <div class="flex items-start gap-2.5">
+        <AlertCircle class="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+        <div>
+          <div class="font-bold text-amber-900">
+            当前控制台处于免密开放模式
+          </div>
+          <div class="text-amber-700/90 mt-0.5 leading-relaxed">
+            如需在局域网或公网环境下防止未授权访问与修改，可在系统环境变量或 <code>.env</code> 文件中添加 <code>AISTUDIO_WEB_PASSWORD=你的安全密码</code> 并重启服务。
+          </div>
         </div>
       </div>
     </div>
@@ -126,10 +144,10 @@ onMounted(() => {
     <!-- API Key Management Card -->
     <ApiKeyManagerCard />
 
-    <!-- YAML Config Editor -->
-    <YamlConfigCard
+    <!-- Visual & YAML Model Config Editor -->
+    <VisualConfigEditor
       v-if="config"
-      :initial-content="config.yaml_content"
+      :initial-yaml="config.yaml_content"
       @saved="loadConfig"
     />
   </div>
