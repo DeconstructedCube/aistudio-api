@@ -2,6 +2,7 @@
 import { LayoutDashboard, Users, Sliders, Key, LogOut } from 'lucide-vue-next'
 import { useAuthStore } from '@/stores/auth.ts'
 import { useRouter, useRoute } from 'vue-router'
+import { useSystemHealth } from '@/composables/useSystemHealth.ts'
 
 defineProps<{
   open: boolean
@@ -15,6 +16,7 @@ const emit = defineEmits<{
 const authStore = useAuthStore()
 const router = useRouter()
 const route = useRoute()
+const { state: healthState } = useSystemHealth(15000)
 
 const navItems = [
   {
@@ -110,8 +112,17 @@ function handleLogout() {
 
       <div class="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-xl text-xs text-gray-500">
         <div class="flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span class="font-medium text-gray-700">系统在线</span>
+          <span
+            class="w-2 h-2 rounded-full transition-colors"
+            :class="{
+              'bg-emerald-500 animate-pulse': healthState === 'online',
+              'bg-rose-500': healthState === 'offline',
+              'bg-amber-400 animate-pulse': healthState === 'checking',
+            }"
+          />
+          <span class="font-medium text-gray-700">
+            {{ healthState === 'online' ? '系统在线' : healthState === 'offline' ? '服务离线' : '探测中' }}
+          </span>
         </div>
 
         <button

@@ -1,28 +1,19 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import type { AccountWithStats } from '@/types'
+import { ref, toRef } from 'vue'
+import type { AccountWithStats } from '@/types/accounts.ts'
 import { useAccountsStore } from '@/stores/accounts.ts'
 import { useSystemStore } from '@/stores/system.ts'
-import Badge from '@/components/ui/Badge.vue'
-import Button from '@/components/ui/Button.vue'
+import { useCookieGroups, type CookieGroup } from './useCookieGroups.ts'
+import CookieGroupBlock from './CookieGroupBlock.vue'
+import AccountRow from './AccountRow.vue'
 import {
   Cookie,
-  CheckCircle2,
-  Clock,
-  Trash2,
-  Edit2,
-  ChevronDown,
-  ChevronRight,
-  Flame,
   Users,
-  FolderMinus,
-  Layers,
-  RotateCcw,
 } from 'lucide-vue-next'
+
 const props = defineProps<{
   accounts: AccountWithStats[]
   activeId: string
-  loading?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -31,69 +22,15 @@ const emit = defineEmits<{
 
 const accountsStore = useAccountsStore()
 const systemStore = useSystemStore()
+
+const { cookieGroups } = useCookieGroups(toRef(props, 'accounts'), toRef(props, 'activeId'))
+
 // 记录被折叠的 Cookie 组 ID，默认所有组全部展开展示账号
 const collapsedCookieIds = ref<Set<string>>(new Set())
 
-function isGroupExpanded(cid: string): boolean {
-  return !collapsedCookieIds.value.has(cid)
+function isGroupCollapsed(cid: string): boolean {
+  return collapsedCookieIds.value.has(cid)
 }
-
-// 展开查看单个账号的模型细分状态
-const expandedAccountIds = ref<Set<string>>(new Set())
-
-interface CookieGroup {
-  id: string
-  name: string
-  createdAt: string
-  accounts: AccountWithStats[]
-  totalRequests: number
-  totalSuccess: number
-  totalRateLimited: number
-  hasActive: boolean
-}
-
-const cookieGroups = computed<CookieGroup[]>(() => {
-  const map: Record<string, AccountWithStats[]> = {}
-
-  for (const acc of props.accounts) {
-    // 优先使用显式 cookie_id，无显式 cookie_id 时使用 created_at 前 16 位归组
-    const cid = acc.cookie_id || (acc.created_at ? `cookie_${acc.created_at.slice(0, 16)}` : 'cookie_default')
-    if (!map[cid]) {
-      map[cid] = []
-    }
-    map[cid].push(acc)
-  }
-
-  return Object.entries(map).map(([cid, accList], idx) => {
-    // 按 auth_user 升序排序子账号
-    accList.sort((a, b) => {
-      const uA = parseInt(a.auth_user || '0', 10)
-      const uB = parseInt(b.auth_user || '0', 10)
-      return uA - uB
-    })
-
-    const earliestCreatedAt = accList[0]?.created_at || ''
-    const totalRequests = accList.reduce((sum, a) => sum + (a.requests || 0), 0)
-    const totalSuccess = accList.reduce((sum, a) => sum + (a.success || 0), 0)
-    const totalRateLimited = accList.reduce((sum, a) => sum + (a.rate_limited || 0), 0)
-    const hasActive = accList.some((a) => a.id === props.activeId)
-
-
-    const primaryEmail = accList.find(a => a.email)?.email
-    const sessionTitle = primaryEmail || `Cookie 会话 #${idx + 1}`
-
-    return {
-      id: cid,
-      name: sessionTitle,
-      createdAt: earliestCreatedAt,
-      accounts: accList,
-      totalRequests,
-      totalSuccess,
-      totalRateLimited,
-      hasActive,
-    }
-  })
-})
 
 function toggleCookieGroup(cid: string) {
   const next = new Set(collapsedCookieIds.value)
@@ -111,31 +48,6 @@ function expandAll() {
 
 function collapseAll() {
   collapsedCookieIds.value = new Set(cookieGroups.value.map((g) => g.id))
-}
-
-function toggleAccountModels(id: string) {
-  const next = new Set(expandedAccountIds.value)
-  if (next.has(id)) {
-    next.delete(id)
-  } else {
-    next.add(id)
-  }
-  expandedAccountIds.value = next
-}
-
-function formatDate(dateStr?: string | null): string {
-  if (!dateStr) return '-'
-  try {
-    const d = new Date(dateStr)
-    return d.toLocaleString('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return dateStr
-  }
 }
 
 async function handleDeleteAccount(acc: AccountWithStats) {
@@ -161,6 +73,7 @@ async function handleClearModelCooldown(accountId: string, model: string) {
   await accountsStore.fetchAll()
 }
 </script>
+
 <template>
   <div class="bg-white border border-gray-200/80 rounded-2xl shadow-xs overflow-hidden space-y-0">
     <!-- Header Bar -->
@@ -200,305 +113,27 @@ async function handleClearModelCooldown(accountId: string, model: string) {
 
     <!-- Tree Body -->
     <div class="divide-y divide-gray-100">
-      <div
+      <CookieGroupBlock
         v-for="group in cookieGroups"
         :key="group.id"
-        class="transition-colors"
+        :group="group"
+        :collapsed="isGroupCollapsed(group.id)"
+        @toggle="toggleCookieGroup(group.id)"
+        @delete-group="handleDeleteCookieGroup(group)"
       >
-        <!-- Level 1: Cookie Credential Parent Node -->
-        <div
-          class="px-5 py-3.5 flex items-center justify-between gap-3 cursor-pointer select-none transition-colors"
-          :class="[
-            group.hasActive ? 'bg-brand-50/30 hover:bg-brand-50/50' : 'bg-white hover:bg-gray-50/80',
-          ]"
-          @click="toggleCookieGroup(group.id)"
-        >
-          <div class="flex items-center gap-3 min-w-0">
-            <!-- Expand Chevron -->
-            <button
-              type="button"
-              class="p-1 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-200/60 transition-colors"
-            >
-              <ChevronDown
-                v-if="isGroupExpanded(group.id)"
-                class="w-4 h-4"
-              />
-              <ChevronRight
-                v-else
-                class="w-4 h-4"
-              />
-            </button>
-
-            <!-- Cookie Icon -->
-            <div
-              class="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 shadow-2xs"
-              :class="group.hasActive ? 'bg-brand-500 text-white' : 'bg-gray-100 text-gray-600'"
-            >
-              <Cookie class="w-4 h-4" />
-            </div>
-
-            <!-- Group Info -->
-            <div class="truncate">
-              <div class="flex items-center gap-2">
-                <span class="font-bold text-gray-900 text-xs tracking-tight">
-                  {{ group.name }}
-                </span>
-                <span class="text-[11px] font-mono text-gray-400">
-                  ({{ group.accounts.length }} 个子账号)
-                </span>
-                <span
-                  v-if="group.hasActive"
-                  class="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-emerald-100 text-emerald-800"
-                >
-                  当前激活
-                </span>
-              </div>
-              <div class="text-[11px] text-gray-400 font-mono flex items-center gap-2 mt-0.5">
-                <span>导入时间: {{ formatDate(group.createdAt) }}</span>
-                <span>·</span>
-                <span
-                  class="truncate max-w-[140px]"
-                  :title="group.id"
-                >会话指纹: {{ group.id.replace(/^cookie_/, '') }}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Group Summary & Group Actions -->
-          <div
-            class="flex items-center gap-3 shrink-0"
-            @click.stop
-          >
-            <div class="hidden sm:flex items-center gap-2 text-xs font-mono">
-              <span class="text-gray-500">调用: <strong class="text-gray-800">{{ group.totalRequests }}</strong></span>
-              <span class="text-gray-300">|</span>
-              <span :class="group.totalRateLimited > 0 ? 'text-rose-600 font-bold' : 'text-gray-400'">
-                429: {{ group.totalRateLimited }}
-              </span>
-            </div>
-
-            <button
-              type="button"
-              class="flex items-center gap-1 px-2 py-1 text-[11px] text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-              title="删除整份 Cookie 及其下所有子账号"
-              @click="handleDeleteCookieGroup(group)"
-            >
-              <FolderMinus class="w-3.5 h-3.5" />
-              <span class="hidden md:inline">删除整组</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Level 2: Sub-Accounts -->
-        <div
-          v-if="isGroupExpanded(group.id)"
-          class="bg-gray-50/40 px-4 sm:px-6 py-3 border-t border-gray-100"
-        >
-          <div class="space-y-2">
-            <div
-              v-for="(acc, index) in group.accounts"
-              :key="acc.id"
-              class="relative bg-white border rounded-xl p-3 shadow-2xs transition-all hover:shadow-xs"
-              :class="[
-                acc.id === activeId
-                  ? 'border-brand-300 bg-brand-50/20 ring-1 ring-brand-400/20'
-                  : 'border-gray-200/80 hover:border-gray-300',
-              ]"
-            >
-              <!-- Sub-Account Header Bar -->
-              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div class="flex items-center gap-2.5 min-w-0">
-                  <!-- User Index Badge: u/0, u/1... -->
-                  <span
-                    class="px-2 py-0.5 rounded-full text-xs font-mono font-bold shrink-0"
-                    :class="[
-                      acc.id === activeId
-                        ? 'bg-brand-500 text-white'
-                        : 'bg-blue-50 text-blue-700 border border-blue-200/60',
-                    ]"
-                  >
-                    u/{{ acc.auth_user !== undefined ? acc.auth_user : index }}
-                  </span>
-
-                  <!-- Account Name & Memo -->
-                  <div class="truncate">
-                    <div class="flex items-center gap-1.5">
-                      <span class="font-semibold text-gray-900 text-xs truncate">
-                        {{ acc.name || 'Google Account' }}
-                      </span>
-                      <button
-                        type="button"
-                        class="text-gray-300 hover:text-gray-600 transition-colors cursor-pointer"
-                        title="重命名账号"
-                        @click="emit('editName', acc)"
-                      >
-                        <Edit2 class="w-3 h-3" />
-                      </button>
-                    </div>
-                    <div class="text-[11px] text-gray-400 font-mono truncate">
-                      <span
-                        v-if="acc.email"
-                        class="text-gray-600 mr-1"
-                      >{{ acc.email }}</span>
-                      <span>ID: {{ acc.id }}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Sub-Account Stats & Controls -->
-                <div class="flex items-center gap-2 sm:gap-3 shrink-0 flex-wrap">
-                  <div class="flex items-center gap-2 text-xs font-mono">
-                    <span class="text-gray-600">总计: <strong>{{ acc.requests || 0 }}</strong></span>
-                    <Badge
-                      variant="green"
-                      size="sm"
-                    >
-                      {{ acc.success || 0 }}
-                    </Badge>
-                    <Badge
-                      :variant="(acc.rate_limited || 0) > 0 ? 'red' : 'gray'"
-                      size="sm"
-                    >
-                      429: {{ acc.rate_limited || 0 }}
-                    </Badge>
-                  </div>
-
-                  <!-- Status Pill -->
-                  <div
-                    v-if="acc.id === activeId"
-                    class="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200"
-                  >
-                    <CheckCircle2 class="w-3 h-3" />
-                    <span>激活</span>
-                  </div>
-                  <div
-                    v-else-if="acc.is_available === false"
-                    class="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200"
-                  >
-                    <Clock class="w-3 h-3" />
-                    <span>配额耗尽</span>
-                  </div>
-                  <div
-                    v-else
-                    class="text-[11px] text-gray-400 font-medium"
-                  >
-                    就绪
-                  </div>
-                  <!-- Action Buttons -->
-                  <div class="flex items-center gap-1.5 ml-1">
-                    <Button
-                      v-if="acc.id !== activeId"
-                      variant="secondary"
-                      size="sm"
-                      :loading="accountsStore.activatingId === acc.id"
-                      @click="accountsStore.activateAccount(acc.id)"
-                    >
-                      <span>激活</span>
-                    </Button>
-
-                    <button
-                      v-if="(acc.rate_limited || 0) > 0"
-                      type="button"
-                      class="p-1 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
-                      title="清除该账号锁定"
-                      @click="handleClearAccountCooldown(acc.id)"
-                    >
-                      <RotateCcw class="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      type="button"
-                      class="p-1 text-gray-400 hover:text-brand-600 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
-                      :class="{ 'text-brand-600 bg-brand-50': expandedAccountIds.has(acc.id) }"
-                      title="展开/收起模型独立配额详情"
-                      @click="toggleAccountModels(acc.id)"
-                    >
-                      <Layers class="w-3.5 h-3.5" />
-                    </button>
-
-                    <button
-                      type="button"
-                      class="p-1 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                      title="删除此子账号"
-                      @click="handleDeleteAccount(acc)"
-                    >
-                      <Trash2 class="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <!-- Level 3: Per-Model Independent Quota/Rate Limits -->
-              <div
-                v-if="expandedAccountIds.has(acc.id)"
-                class="mt-3 pt-3 border-t border-gray-100 space-y-2 bg-gray-50/60 p-3 rounded-lg"
-              >
-                <div class="flex items-center justify-between text-[11px] font-semibold text-gray-600">
-                  <span class="flex items-center gap-1.5">
-                    <Flame class="w-3.5 h-3.5 text-amber-500" />
-                    <span>模型配额状态 (每日 00:00 PST 重置)</span>
-                  </span>
-                  <span class="text-gray-400 font-normal">
-                    最后调用: {{ formatDate(acc.last_used) }}
-                  </span>
-                </div>
-
-                <div
-                  v-if="acc.model_requests && Object.keys(acc.model_requests).length"
-                  class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 pt-1"
-                >
-                  <div
-                    v-for="(reqCount, modelKey) in acc.model_requests"
-                    :key="String(modelKey)"
-                    class="p-2 bg-white rounded-md border border-gray-200/70 flex items-center justify-between text-xs"
-                  >
-                    <div class="truncate mr-2 font-mono">
-                      <div
-                        class="font-medium text-gray-800 truncate"
-                        :title="String(modelKey)"
-                      >
-                        {{ String(modelKey).replace(/^models\//, '') }}
-                      </div>
-                      <div class="text-[10px] text-gray-400">
-                        调用: {{ reqCount }} 次
-                      </div>
-                    </div>
-
-                    <div>
-                      <button
-                        v-if="acc.model_cooldowns && acc.model_cooldowns[String(modelKey)]"
-                        type="button"
-                        class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 cursor-pointer"
-                        title="点击解除此模型锁定"
-                        @click="handleClearModelCooldown(acc.id, String(modelKey))"
-                      >
-                        配额耗尽 (点击重置)
-                      </button>
-                      <span
-                        v-else-if="acc.model_rate_limited && acc.model_rate_limited[String(modelKey)]"
-                        class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700"
-                      >
-                        限流: {{ acc.model_rate_limited[String(modelKey)] }}
-                      </span>
-                      <span
-                        v-else
-                        class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700"
-                      >
-                        正常
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div
-                  v-else
-                  class="text-[11px] text-gray-400 italic py-1"
-                >
-                  无调用记录
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+        <AccountRow
+          v-for="acc in group.accounts"
+          :key="acc.id"
+          :account="acc"
+          :active="acc.id === activeId"
+          :activating="accountsStore.activatingId === acc.id"
+          @activate="accountsStore.activateAccount(acc.id)"
+          @delete="handleDeleteAccount(acc)"
+          @edit-name="emit('editName', acc)"
+          @clear-cooldown="handleClearAccountCooldown(acc.id)"
+          @clear-model="handleClearModelCooldown(acc.id, $event)"
+        />
+      </CookieGroupBlock>
 
       <!-- Empty State -->
       <div

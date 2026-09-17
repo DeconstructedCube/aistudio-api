@@ -296,8 +296,9 @@ class BrowserSession:
             self._switch_event.clear()
             self._switching = True
             try:
-                # 等待正在处理的请求排干，最多等待 5 秒，避免直接切号杀进程导致进行中的流断连
-                for _ in range(50):
+                # 等待正在处理的请求排干，最多等待 15 秒，避免直接切号杀进程导致进行中的流断连
+                # 但也不能无期限等待，否则会造成所有新请求排队超时
+                for _ in range(150):
                     if self._in_flight <= 0:
                         break
                     await asyncio.sleep(0.1)

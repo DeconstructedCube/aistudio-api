@@ -8,6 +8,11 @@ export interface SystemConfig {
   yaml_content: string
 }
 
+
+export interface HealthCheckResponse {
+  status: string
+  busy: boolean
+}
 export interface ApiKeyItem {
   name: string
   key: string

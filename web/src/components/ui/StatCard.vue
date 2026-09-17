@@ -4,13 +4,11 @@ interface Props {
   value: string | number
   subValue?: string
   color?: 'default' | 'green' | 'amber' | 'red' | 'blue'
-  loading?: boolean
 }
 
 withDefaults(defineProps<Props>(), {
   subValue: '',
   color: 'default',
-  loading: false,
 })
 </script>
 
@@ -22,11 +20,6 @@ withDefaults(defineProps<Props>(), {
     </div>
     <div class="flex items-baseline gap-2">
       <div
-        v-if="loading"
-        class="h-8 w-24 bg-gray-200 animate-pulse rounded"
-      />
-      <div
-        v-else
         class="text-2xl font-bold tracking-tight truncate max-w-full"
         :class="{
           'text-gray-900': color === 'default',

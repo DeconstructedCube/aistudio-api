@@ -24,34 +24,3 @@
   @apply bg-gray-300 rounded-full hover:bg-gray-400 transition-colors;
 }
 
-/* Markdown 代码高亮样式微调 */
-.markdown-body pre {
-  @apply bg-gray-900 text-gray-100 rounded-xl p-4 my-3 overflow-x-auto text-sm font-mono shadow-sm;
-}
-.markdown-body code {
-  @apply font-mono text-xs px-1.5 py-0.5 rounded bg-gray-100 text-brand-700 font-semibold;
-}
-.markdown-body pre code {
-  @apply bg-transparent text-gray-100 p-0 text-sm font-normal;
-}
-.markdown-body p {
-  @apply mb-3 leading-relaxed;
-}
-.markdown-body p:last-child {
-  @apply mb-0;
-}
-.markdown-body ul {
-  @apply list-disc list-inside mb-3 space-y-1;
-}
-.markdown-body ol {
-  @apply list-decimal list-inside mb-3 space-y-1;
-}
-.markdown-body h1, .markdown-body h2, .markdown-body h3 {
-  @apply font-bold text-gray-900 mt-4 mb-2;
-}
-.markdown-body h1 { @apply text-xl; }
-.markdown-body h2 { @apply text-lg; }
-.markdown-body h3 { @apply text-base; }
-.markdown-body blockquote {
-  @apply border-l-4 border-brand-500 pl-3 italic text-gray-600 my-2;
-}

@@ -10,6 +10,7 @@ export const useSystemStore = defineStore('system', () => {
   const loading = ref(false)
   const resettingCooldown = ref(false)
   const switchingNext = ref(false)
+  const health = ref<'checking' | 'online' | 'offline'>('checking')
 
   const totalRequests = computed(() => stats.value?.totals?.requests ?? 0)
   const totalRateLimited = computed(() => stats.value?.totals?.rate_limited ?? 0)
@@ -36,6 +37,15 @@ export const useSystemStore = defineStore('system', () => {
       // ignore
     }
   }
+  async function checkHealth() {
+    try {
+      await systemApi.health()
+      health.value = 'online'
+    } catch {
+      health.value = 'offline'
+    }
+  }
+
 
   async function clearCooldown(req: ClearCooldownRequest = {}) {
     const toast = useToastStore()
@@ -82,9 +92,11 @@ export const useSystemStore = defineStore('system', () => {
     totalTokens,
     promptTokens,
     completionTokens,
+    health,
     fetchStats,
     fetchRotation,
     clearCooldown,
     forceNextAccount,
+    checkHealth,
   }
 })

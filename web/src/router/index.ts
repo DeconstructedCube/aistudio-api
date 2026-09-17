@@ -10,25 +10,25 @@ const routes: RouteRecordRaw[] = [
     path: '/login',
     name: 'login',
     component: LoginView,
-    meta: { public: true, title: '登录 - AI Studio Proxy' },
+    meta: { public: true, title: '登录' },
   },
   {
     path: '/',
     name: 'dashboard',
     component: DashboardView,
-    meta: { title: '控制面板 - AI Studio Proxy' },
+    meta: { title: '控制面板' },
   },
   {
     path: '/accounts',
     name: 'accounts',
     component: AccountsView,
-    meta: { title: '账号管理 - AI Studio Proxy' },
+    meta: { title: '账号管理' },
   },
   {
     path: '/settings',
     name: 'settings',
     component: SettingsView,
-    meta: { title: '系统配置 - AI Studio Proxy' },
+    meta: { title: '系统配置' },
   },
   {
     path: '/:pathMatch(.*)*',
@@ -44,7 +44,7 @@ export const router = createRouter({
 router.beforeEach(async (to, _from, next) => {
   // 设置文档标题
   if (to.meta.title && typeof to.meta.title === 'string') {
-    document.title = to.meta.title
+    document.title = `${to.meta.title} - AI Studio Proxy`
   }
 
   const authStore = useAuthStore()

@@ -3,7 +3,6 @@ import { Menu, Key, RefreshCw } from 'lucide-vue-next'
 
 defineProps<{
   title: string
-  refreshing?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -32,8 +31,7 @@ const emit = defineEmits<{
       <button
         type="button"
         class="p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-all cursor-pointer"
-        :class="{ 'animate-spin': refreshing }"
-        title="刷新数据"
+        title="刷新页面"
         @click="emit('refresh')"
       >
         <RefreshCw class="w-4 h-4" />

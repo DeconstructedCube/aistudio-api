@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useAccountsStore } from '@/stores/accounts.ts'
 import { useSystemStore } from '@/stores/system.ts'
-import type { AccountWithStats } from '@/types'
+import type { AccountWithStats } from '@/types/accounts.ts'
 import Button from '@/components/ui/Button.vue'
 import AccountTable from '@/components/accounts/AccountTable.vue'
 import CookieImportModal from '@/components/modals/CookieImportModal.vue'
@@ -96,7 +96,6 @@ async function handleForceNext() {
     <AccountTable
       :accounts="accountsStore.accountRows"
       :active-id="accountsStore.activeId"
-      :loading="accountsStore.loading"
       @edit-name="handleEditName"
     />
 

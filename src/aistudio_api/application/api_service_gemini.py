@@ -391,6 +391,7 @@ def _build_gemini_streaming_response(
                         continue
                     raise
                 except AuthError as exc:
+                    target_model = normalized.model if normalized else model_path
                     if stream_attempt == 0:
                         logger.warning(
                             "Gemini stream 鉴权异常，清理 snapshot 缓存后重试一次: %s",
@@ -398,6 +399,37 @@ def _build_gemini_streaming_response(
                         )
                         client.clear_snapshot_cache()
                         continue
+                    
+                    account_svc = runtime_state.account_service
+                    active_acc = account_svc.get_active_account() if account_svc else None
+                    failed_id = active_acc.id if active_acc else None
+                    
+                    # 将报 AuthError 的账号全局标记为限流（视作失效），避免后续继续派发请求
+                    record_rotator_event("rate_limited", model=None)
+                    
+                    if not has_yielded_data and await try_switch_account(
+                        model=target_model, failed_account_id=failed_id
+                    ):
+                        logger.warning(
+                            "Gemini stream AuthError，已自动踢出废号并切换账号重试 (%d/%d)",
+                            stream_attempt + 1,
+                            MAX_RETRIES,
+                        )
+                        continue
+                except RuntimeError as exc:
+                    target_model = normalized.model if normalized else model_path
+                    err_msg = str(exc).lower()
+                    if "cdp" in err_msg or "closed" in err_msg or "aborted" in err_msg or "timeout" in err_msg:
+                        if stream_attempt < 2 and not has_yielded_data:
+                            logger.warning(
+                                "Gemini stream 浏览器进程断开或超时，自动重启并重试 (%d/%d): %s",
+                                stream_attempt + 1,
+                                MAX_RETRIES,
+                                exc,
+                            )
+                            if client._session is not None:
+                                await client._session._close_internal()
+                            continue
                     raise
             record_rotator_event(
                 "success", model=normalized.model if normalized else model_path

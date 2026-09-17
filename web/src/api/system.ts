@@ -7,9 +7,15 @@ import type {
   ApiKeyItem,
   CreateApiKeyRequest,
   UpdateApiKeyRequest,
+  HealthCheckResponse,
 } from '@/types'
 
+
 export const systemApi = {
+  health(): Promise<HealthCheckResponse> {
+    return request<HealthCheckResponse>('/health')
+  },
+
   getStats(): Promise<StatsResponse> {
     return request<StatsResponse>('/stats')
   },

@@ -5,6 +5,7 @@ import { useToastStore } from '@/stores/toast.ts'
 import type { ApiKeyItem } from '@/types'
 import Button from '@/components/ui/Button.vue'
 import Modal from '@/components/ui/Modal.vue'
+import { useClipboard } from '@/composables/useClipboard.ts'
 import {
   Key,
   Plus,
@@ -22,8 +23,8 @@ const toast = useToastStore()
 
 const apiKeys = ref<ApiKeyItem[]>([])
 const loading = ref(false)
-const copiedKey = ref<string | null>(null)
 const visibleKeys = ref<Set<string>>(new Set())
+const { copy, copied } = useClipboard()
 
 // 新建 Key 弹窗
 const createModalOpen = ref(false)
@@ -66,14 +67,7 @@ function maskKey(key: string): string {
 }
 
 function handleCopy(key: string) {
-  navigator.clipboard.writeText(key)
-  copiedKey.value = key
-  toast.success('已复制 API Key 到剪贴板')
-  setTimeout(() => {
-    if (copiedKey.value === key) {
-      copiedKey.value = null
-    }
-  }, 2000)
+  void copy(key, key, '已复制 API Key 到剪贴板')
 }
 
 function openCreateModal() {
@@ -247,7 +241,7 @@ async function handleDeleteKey(item: ApiKeyItem) {
                   @click="handleCopy(item.key)"
                 >
                   <Check
-                    v-if="copiedKey === item.key"
+                    v-if="copied === item.key"
                     class="w-3.5 h-3.5 text-emerald-500"
                   />
                   <Copy

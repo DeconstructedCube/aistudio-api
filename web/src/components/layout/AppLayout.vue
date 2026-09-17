@@ -9,16 +9,10 @@ import ToastContainer from '@/components/ui/ToastContainer.vue'
 const route = useRoute()
 const sidebarOpen = ref(false)
 const tokenModalOpen = ref(false)
-const refreshing = ref(false)
-
-const titleMap: Record<string, string> = {
-  '/': '控制面板',
-  '/accounts': '账号管理与调度',
-  '/settings': '系统与模型配置',
-}
 
 const currentTitle = computed(() => {
-  return titleMap[route.path] || 'AI Studio Proxy'
+  const t = route.meta.title
+  return typeof t === 'string' ? t.replace(' - AI Studio Proxy', '') : 'AI Studio Proxy'
 })
 
 function handleRefresh() {
@@ -41,7 +35,6 @@ function handleRefresh() {
     <div class="flex-1 lg:pl-64 flex flex-col min-w-0">
       <Topbar
         :title="currentTitle"
-        :refreshing="refreshing"
         @toggle-sidebar="sidebarOpen = !sidebarOpen"
         @open-token-modal="tokenModalOpen = true"
         @refresh="handleRefresh"

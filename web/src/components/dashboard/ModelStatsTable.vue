@@ -1,29 +1,13 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { ModelStatItem } from '@/types'
+import type { ModelStatItem } from '@/types/stats.ts'
 import Badge from '@/components/ui/Badge.vue'
+import { formatDate } from '@/utils/format.ts'
 import { Layers } from 'lucide-vue-next'
 
 const props = defineProps<{
   stats: Record<string, ModelStatItem>
-  loading?: boolean
 }>()
-
-function formatDate(dateStr?: string | null): string {
-  if (!dateStr) return '-'
-  try {
-    const d = new Date(dateStr)
-    return d.toLocaleString('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    })
-  } catch {
-    return dateStr
-  }
-}
 
 const statList = computed(() => {
   return Object.entries(props.stats || {}).map(([rawName, item]) => ({
@@ -117,7 +101,7 @@ const statList = computed(() => {
               </span>
             </td>
             <td class="py-3.5 px-6 text-right text-xs text-gray-500 font-mono">
-              {{ formatDate(item.last_used) }}
+              {{ formatDate(item.last_used, { withSeconds: true }) }}
             </td>
           </tr>
 

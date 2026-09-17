@@ -90,9 +90,7 @@ const widthClasses: Record<string, string> = {
             <!-- Modal Header -->
             <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
               <h3 class="text-base font-semibold text-gray-900">
-                <slot name="title">
-                  {{ title }}
-                </slot>
+                {{ title }}
               </h3>
               <button
                 type="button"

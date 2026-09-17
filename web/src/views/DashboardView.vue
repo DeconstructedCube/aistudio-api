@@ -1,26 +1,20 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { computed } from 'vue'
 import { useAccountsStore } from '@/stores/accounts.ts'
 import { useSystemStore } from '@/stores/system.ts'
-import { useToastStore } from '@/stores/toast.ts'
+import { usePolling } from '@/composables/usePolling.ts'
 import StatCard from '@/components/ui/StatCard.vue'
 import ModelStatsTable from '@/components/dashboard/ModelStatsTable.vue'
+import QuickApiExamples from '@/components/dashboard/QuickApiExamples.vue'
 import {
   UserCheck,
   Users,
   Activity,
   AlertTriangle,
-  Code2,
-  Terminal,
-  Copy,
-  Check,
 } from 'lucide-vue-next'
 
 const accountsStore = useAccountsStore()
 const systemStore = useSystemStore()
-const toast = useToastStore()
-
-const copiedIndex = ref<number | null>(null)
 
 const activeAccountDisplay = computed(() => {
   const acc = accountsStore.activeAccount
@@ -46,50 +40,8 @@ async function loadData() {
   ])
 }
 
-onMounted(() => {
-  loadData()
-})
-
-const codeSnippets = [
-  {
-    title: 'cURL',
-    lang: 'bash',
-    code: `curl http://localhost:8080/v1beta/models/gemini-3.8-flash:generateContent \\
-  -H "x-goog-api-key: your-api-key" \\
-  -H "Content-Type: application/json" \\
-  -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'`,
-  },
-  {
-    title: 'Python SDK',
-    lang: 'python',
-    code: `from google import genai
-
-client = genai.Client(
-    api_key="your-api-key",
-    http_options={
-        "api_version": "v1beta",
-        "base_url": "http://localhost:8080",
-    },
-)
-
-response = client.models.generate_content(
-    model="gemini-3.8-flash",
-    contents="Hello"
-)
-print(response.text)`,
-  },
-]
-
-function copyCode(code: string, index: number) {
-  navigator.clipboard.writeText(code)
-  copiedIndex.value = index
-  toast.success('已复制调用示例到剪贴板')
-  setTimeout(() => {
-    if (copiedIndex.value === index) {
-      copiedIndex.value = null
-    }
-  }, 2000)
-}
+// 页面可见时每 10 秒自动轮询一次统计与账号状态
+usePolling(loadData, 10000)
 </script>
 
 <template>
@@ -141,49 +93,9 @@ function copyCode(code: string, index: number) {
     <!-- Model Statistics Table -->
     <ModelStatsTable
       :stats="systemStore.stats?.models || {}"
-      :loading="systemStore.loading"
     />
 
     <!-- Quick API Reference Snippets -->
-    <div class="bg-white border border-gray-200/80 rounded-2xl p-6 shadow-xs space-y-4">
-      <div class="flex items-center gap-2 border-b border-gray-100 pb-3">
-        <Code2 class="w-4 h-4 text-brand-600" />
-        <h3 class="font-semibold text-gray-900 text-sm">
-          快速调用示例
-        </h3>
-      </div>
-
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div
-          v-for="(snippet, idx) in codeSnippets"
-          :key="idx"
-          class="bg-gray-900 text-gray-100 rounded-xl p-4 flex flex-col justify-between overflow-hidden shadow-xs"
-        >
-          <div class="flex items-center justify-between pb-2 border-b border-gray-800 text-xs font-medium text-gray-400">
-            <div class="flex items-center gap-1.5">
-              <Terminal class="w-3.5 h-3.5 text-brand-400" />
-              <span>{{ snippet.title }}</span>
-            </div>
-            <button
-              type="button"
-              class="flex items-center gap-1 text-[11px] text-gray-400 hover:text-white px-2 py-0.5 rounded bg-gray-800 hover:bg-gray-700 transition-colors cursor-pointer"
-              @click="copyCode(snippet.code, idx)"
-            >
-              <Check
-                v-if="copiedIndex === idx"
-                class="w-3 h-3 text-emerald-400"
-              />
-              <Copy
-                v-else
-                class="w-3 h-3"
-              />
-              <span>{{ copiedIndex === idx ? '已复制' : '复制' }}</span>
-            </button>
-          </div>
-
-          <pre class="mt-3 text-xs font-mono overflow-x-auto text-gray-200 leading-relaxed"><code>{{ snippet.code }}</code></pre>
-        </div>
-      </div>
-    </div>
+    <QuickApiExamples />
   </div>
 </template>

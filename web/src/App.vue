@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue'
 
 const route = useRoute()
-const isLoginPage = computed(() => route.path === '/login')
+const isLoginPage = computed(() => route.meta.public === true)
 </script>
 
 <template>
