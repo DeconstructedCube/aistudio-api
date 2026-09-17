@@ -73,8 +73,32 @@ uv run python3 main.py server --port 8080
 - **未知数据收窄**：对于动态解析的数据，使用 `object` 配合 `isinstance` 进行类型收窄。
 - **结构化定义**：数据结构使用具名 dataclass（如 `NormalizedGeminiRequest`、`AccountMeta`）或明确泛型类型标注（如 `dict[str, object]`）。
 
-### 3.2 自动化检查命令
-### 3.2 自动化检查命令与执行守则
+### 3.2 Ruff 代码风格与规范配置
+
+项目采用 Ruff 作为统一的 Python 代码风格与 Lint 工具，并在 `pyproject.toml` 中开启了严格的规则检查：
+
+- **激活规则集**：
+  - `E` / `W` (pycodestyle 错误与警告)
+  - `F` (Pyflakes 代码逻辑错误)
+  - `I` (isort 自动 import 排序)
+  - `B` (flake8-bugbear 常见陷阱与 Bug 预防)
+  - `C4` (flake8-comprehensions 列表推导式优化)
+  - `UP` (pyupgrade Python 3.11+ 语法升级)
+  - `SIM` (flake8-simplify 代码精简)
+  - `TCH` (flake8-type-checking 类型注解引用隔离)
+  - `PTH` (flake8-use-pathlib 规范使用 Pathlib)
+  - `RUF` (Ruff 专属严格检查)
+  - `ASYNC` (flake8-async 异步编程反模式检查)
+  - `A` / `Q` / `RET` (内建函数命名防覆盖、引号与返回规范)
+- **检查与格式化指令**：
+  ```bash
+  # 代码风格与 Lint 检查
+  ruff check .
+  # 自动格式化与 import 排序修复
+  ruff check . --fix
+  ```
+
+### 3.3 自动化检查命令与执行守则
 
 在提交代码改动前，必须确保以下工具链检查通过：
 
@@ -89,8 +113,9 @@ uv run python3 main.py server --port 8080
 
 > [!NOTE]
 > **跨平台原生二进制依赖与开发工具**：
-> - `pydantic-core` 等生产核心依赖通过 `uv.lock` 显式注入 TUR 的 prebuilt Android wheel，实现全平台统一通过 `uv sync` 秒级安装且不触发源码构建。
-> - `ruff` 作为开发阶段的 Lint 工具，在 `pyproject.toml` 的 dev 依赖中配置了平台标记 `ruff>=0.8.0; sys_platform != 'android'`；桌面平台（Linux / macOS / Windows）执行 `uv sync --extra dev` 时直接自 PyPI 下载预编译 wheel。而在 Android Termux 环境下，TUR 并未打包 ruff 的 PyPI wheel，开发者可通过 Termux 原生包管理器 `pkg install -y ruff` 直接获得编译好的 aarch64 native 二进制，普通用户生产运行无需安装。
+> - `pydantic-core` 等生产核心依赖通过 `uv.lock` 显式注入 TUR 的 prebuilt Android wheel，配合 `setup-env.sh` 生成的项目级本地 `uv.toml`，实现全平台统一通过 `uv sync` 秒级安装且不触发源码构建。
+> - `ruff` 作为开发阶段的 Lint 工具，在 `pyproject.toml` 的 dev 依赖中配置了平台标记 `ruff>=0.8.0; sys_platform != 'android'`；桌面平台（Linux / macOS / Windows）执行 `uv sync --extra dev` 时直接自 PyPI 下载预编译 wheel。而在 Android Termux 环境下，TUR 并未打包 ruff 的 PyPI wheel，开发者可通过 Termux 原生包管理器 `pkg install -y ruff` 直接获得编译好的 aarch64 native 二进制，`setup-env.sh` / `setup-browser.sh` 会自动建立 `.venv/bin/ruff` 软链以便在虚拟环境中直接调用，普通用户生产运行无需安装。
+
 > [!TIP]
 > **避免无效重跑**：若在当前交互轮次中未发生代码或配置文件的实质性变动，无需重复执行全量类型与测试套件检查。
 ---
