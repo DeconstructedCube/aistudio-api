@@ -211,9 +211,9 @@ async def import_cookies(
         raise HTTPException(status_code=400, detail="未解析到有效 cookie")
 
     domain_summary: dict[str, int] = {}
-    for c in cookie_list:
-        d = str(c.get("domain", ""))
-        domain_summary[d] = domain_summary.get(d, 0) + 1
+    for cookie in cookie_list:
+        domain = str(cookie.get("domain", ""))
+        domain_summary[domain] = domain_summary.get(domain, 0) + 1
     name = req.name or (
         f"Google Account (u/{req.auth_user})" if req.auth_user != "0" else "导入的账号"
     )

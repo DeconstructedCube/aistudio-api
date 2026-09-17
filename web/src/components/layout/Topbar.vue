@@ -45,8 +45,8 @@ const emit = defineEmits<{
         @click="emit('openTokenModal')"
       >
         <Key class="w-3.5 h-3.5 text-gray-500" />
-        <span class="hidden sm:inline">Token 鉴权设置</span>
-        <span class="sm:hidden">Token</span>
+        <span class="hidden sm:inline">控制台密码设置</span>
+        <span class="sm:hidden">密码</span>
       </button>
     </div>
   </header>

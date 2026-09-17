@@ -103,7 +103,7 @@ function handleLogout() {
       >
         <div class="flex items-center gap-2">
           <Key class="w-4 h-4 text-gray-400" />
-          <span>API Token 设置</span>
+          <span>控制台密码设置</span>
         </div>
         <span class="text-[10px] text-gray-400 font-mono">配置</span>
       </button>

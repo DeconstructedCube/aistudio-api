@@ -1,18 +1,5 @@
 """Domain errors for AI Studio interactions."""
 
-from enum import IntEnum
-
-
-class ErrorCode(IntEnum):
-    USAGE_LIMIT_EXCEEDED = 429
-    UNAUTHORIZED = 401
-    FORBIDDEN = 403
-    NOT_FOUND = 404
-    RATE_LIMITED = 429
-    INTERNAL_ERROR = 500
-    BAD_REQUEST = 400
-
-
 class AistudioError(Exception):
     pass
 
@@ -22,14 +9,6 @@ class AuthError(AistudioError):
 
 
 class UsageLimitExceeded(AistudioError):
-    pass
-
-
-class SnapshotExpired(AistudioError):
-    pass
-
-
-class ModelNotFoundError(AistudioError):
     pass
 
 

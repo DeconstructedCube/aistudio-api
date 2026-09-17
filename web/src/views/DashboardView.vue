@@ -24,18 +24,18 @@ const copiedIndex = ref<number | null>(null)
 
 const activeAccountDisplay = computed(() => {
   const acc = accountsStore.activeAccount
-  if (!acc) return '暂无激活账号'
-  const sub = acc.auth_user !== undefined ? ` (u/${acc.auth_user})` : ''
+  if (!acc) return '无激活账号'
+  const sub = acc.auth_user != null && acc.auth_user !== '' ? ` (u/${acc.auth_user})` : ''
   return (acc.email || acc.name || acc.id) + sub
 })
 
-const totalAccountsCount = computed(() => accountsStore.accounts.length)
+const totalAccountsCount = computed(() => accountsStore.accountRows.length)
 
 const availableAccountsCount = computed(() => {
-  if (!systemStore.rotation?.accounts) return totalAccountsCount.value
-  return Object.values(systemStore.rotation.accounts).filter(
-    (a) => a.is_available !== false
-  ).length
+  const total = totalAccountsCount.value
+  if (total === 0) return 0
+  const available = accountsStore.accountRows.filter((a) => a.is_available !== false).length
+  return Math.min(available, total)
 })
 
 async function loadData() {
@@ -52,15 +52,15 @@ onMounted(() => {
 
 const codeSnippets = [
   {
-    title: 'cURL 调用示例',
+    title: 'cURL',
     lang: 'bash',
     code: `curl http://localhost:8080/v1beta/models/gemini-3.8-flash:generateContent \\
   -H "x-goog-api-key: your-api-key" \\
   -H "Content-Type: application/json" \\
-  -d '{"contents": [{"role": "user", "parts": [{"text": "Hello Gemini"}]}]}'`,
+  -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'`,
   },
   {
-    title: 'Python SDK 调用示例',
+    title: 'Python SDK',
     lang: 'python',
     code: `from google import genai
 
@@ -74,7 +74,7 @@ client = genai.Client(
 
 response = client.models.generate_content(
     model="gemini-3.8-flash",
-    contents="Hello from aistudio-api"
+    contents="Hello"
 )
 print(response.text)`,
   },

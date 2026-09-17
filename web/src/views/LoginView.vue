@@ -34,7 +34,7 @@ onMounted(async () => {
 async function handleLogin() {
   const token = inputToken.value.trim()
   if (!token) {
-    errorMsg.value = '请输入 API Token'
+    errorMsg.value = '请输入控制台访问密码'
     return
   }
 
@@ -48,8 +48,8 @@ async function handleLogin() {
       const redirect = (route.query.redirect as string) || '/'
       router.replace(redirect)
     } else {
-      errorMsg.value = 'API Token 无效或无权访问'
-      toast.error('Token 校验失败，请检查后重试')
+      errorMsg.value = '密码错误或无权访问'
+      toast.error('密码校验失败，请检查后重试')
     }
   } catch {
     errorMsg.value = '网络请求异常，请检查服务状态'
@@ -74,7 +74,7 @@ async function handleLogin() {
           AI Studio Proxy
         </h1>
         <p class="text-xs text-gray-400 mt-1.5">
-          请输入服务端配置的 API Token 登录管理控制台
+          请输入服务端配置的控制台密码 (AISTUDIO_WEB_PASSWORD)
         </p>
       </div>
 
@@ -94,7 +94,7 @@ async function handleLogin() {
       >
         <div class="space-y-1.5">
           <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider">
-            API Token
+            控制台访问密码 (Web Password)
           </label>
           <div class="relative">
             <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400">
@@ -103,7 +103,7 @@ async function handleLogin() {
             <input
               v-model="inputToken"
               :type="showPassword ? 'text' : 'password'"
-              placeholder="输入您的 AISTUDIO_API_KEYS"
+              placeholder="输入 AISTUDIO_WEB_PASSWORD"
               autocomplete="current-password"
               autofocus
               class="w-full pl-10 pr-10 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all font-mono"
@@ -140,7 +140,7 @@ async function handleLogin() {
 
       <!-- Footer Info -->
       <div class="mt-8 text-center text-xs text-gray-400 border-t border-gray-100 pt-6">
-        <p>Token 由管理员通过环境变量设置与分发</p>
+        <p>控制台访问密码由服务端环境变量 AISTUDIO_WEB_PASSWORD 设置</p>
       </div>
     </div>
   </div>

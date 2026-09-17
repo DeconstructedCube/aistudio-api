@@ -92,14 +92,13 @@ async def handle_gemini_generate_content(
                                 reasoning_images=output.reasoning_images,
                             ),
                         ),
-                        finishReason=(
-                            "STOP"
-                            if not output.function_calls
-                            else "FUNCTION_CALL"
-                        ),
+                        finishReason="STOP",
+                        index=0,
                     )
                 ],
                 usageMetadata=to_gemini_usage_metadata(output.usage),
+                modelVersion=normalized.model,
+                responseId=output.response_id or None,
             )
         except ValueError as exc:
             raise HTTPException(
@@ -212,7 +211,58 @@ def _build_gemini_streaming_response(
                                                     "role": "model",
                                                     "parts": [{"text": text}],
                                                 },
-                                                "finishReason": None,
+                                                "index": 0,
+                                            }
+                                        ]
+                                    },
+                                    ensure_ascii=False,
+                                )
+                                + "\n\n"
+                            )
+                        elif event_type == "tool_calls" and text:
+                            fc_list = text if isinstance(text, list) else []
+                            yield (
+                                "data: "
+                                + json.dumps(
+                                    {
+                                        "candidates": [
+                                            {
+                                                "content": {
+                                                    "role": "model",
+                                                    "parts": [
+                                                        part.model_dump(
+                                                            mode="json",
+                                                            exclude_none=True,
+                                                        )
+                                                        for part in to_gemini_parts(
+                                                            "", function_calls=fc_list
+                                                        )
+                                                    ],
+                                                },
+                                                "index": 0,
+                                            }
+                                        ]
+                                    },
+                                    ensure_ascii=False,
+                                )
+                                + "\n\n"
+                            )
+                        elif event_type == "thought_signature" and text:
+                            yield (
+                                "data: "
+                                + json.dumps(
+                                    {
+                                        "candidates": [
+                                            {
+                                                "content": {
+                                                    "role": "model",
+                                                    "parts": [
+                                                        {
+                                                            "thoughtSignature": str(text)
+                                                        }
+                                                    ],
+                                                },
+                                                "index": 0,
                                             }
                                         ]
                                     },
@@ -240,7 +290,7 @@ def _build_gemini_streaming_response(
                                                         )
                                                     ],
                                                 },
-                                                "finishReason": None,
+                                                "index": 0,
                                             }
                                         ]
                                     },
@@ -271,7 +321,7 @@ def _build_gemini_streaming_response(
                                                         )
                                                     ],
                                                 },
-                                                "finishReason": None,
+                                                "index": 0,
                                             }
                                         ]
                                     },
@@ -295,7 +345,7 @@ def _build_gemini_streaming_response(
                                                         }
                                                     ],
                                                 },
-                                                "finishReason": None,
+                                                "index": 0,
                                             }
                                         ]
                                     },
@@ -359,7 +409,16 @@ def _build_gemini_streaming_response(
                     "data: "
                     + json.dumps(
                         {
-                            "candidates": [],
+                            "candidates": [
+                                {
+                                    "content": {
+                                        "role": "model",
+                                        "parts": [],
+                                    },
+                                    "finishReason": "STOP",
+                                    "index": 0,
+                                }
+                            ],
                             "usageMetadata": to_gemini_usage_metadata(
                                 final_usage
                             ).model_dump(mode="json"),
@@ -368,7 +427,6 @@ def _build_gemini_streaming_response(
                     )
                     + "\n\n"
                 )
-            yield "data: [DONE]\n\n"
         except Exception as exc:
             target_model = normalized.model if normalized else model_path
             if not isinstance(exc, UsageLimitExceeded):
@@ -379,10 +437,20 @@ def _build_gemini_streaming_response(
             else:
                 logger.error("Gemini stream unexpected error: %s", exc)
                 logger.debug("Gemini stream error details:", exc_info=True)
+            status_code = getattr(exc, "status_code", 500)
+            if not isinstance(status_code, int):
+                status_code = 500
             yield (
                 "data: "
                 + json.dumps(
-                    {"error": {"message": str(exc)}}, ensure_ascii=False
+                    {
+                        "error": {
+                            "code": status_code,
+                            "message": str(exc),
+                            "status": "INTERNAL" if status_code == 500 else "INVALID_ARGUMENT",
+                        }
+                    },
+                    ensure_ascii=False,
                 )
                 + "\n\n"
             )

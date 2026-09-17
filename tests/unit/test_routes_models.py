@@ -13,7 +13,7 @@ def _build_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_list_models_returns_gemini_format(monkeypatch):
     monkeypatch.setattr(settings, "api_keys", frozenset())
     async with _build_client() as client:
@@ -31,7 +31,7 @@ async def test_list_models_returns_gemini_format(monkeypatch):
         assert "generateContent" in first["supportedGenerationMethods"]
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_get_single_model_returns_model_object(monkeypatch):
     monkeypatch.setattr(settings, "api_keys", frozenset())
     async with _build_client() as client:
@@ -43,7 +43,7 @@ async def test_get_single_model_returns_model_object(monkeypatch):
         assert "supportedGenerationMethods" in data
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_v1_models_endpoint_is_removed(monkeypatch):
     monkeypatch.setattr(settings, "api_keys", frozenset())
     async with _build_client() as client:
@@ -51,7 +51,7 @@ async def test_v1_models_endpoint_is_removed(monkeypatch):
         assert response.status_code == 404
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_models_endpoint_accepts_query_param_key(monkeypatch):
     monkeypatch.setattr(settings, "api_keys", frozenset({"my-key"}))
     async with _build_client() as client:

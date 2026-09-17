@@ -16,7 +16,7 @@ def _build_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_auth_is_disabled_when_no_api_key_is_configured(monkeypatch):
     monkeypatch.setattr(settings, "api_keys", frozenset())
     async with _build_client() as client:
@@ -25,7 +25,7 @@ async def test_auth_is_disabled_when_no_api_key_is_configured(monkeypatch):
         assert response.json() == {"ok": True}
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_bearer_token_is_accepted(monkeypatch):
     monkeypatch.setattr(settings, "api_keys", frozenset({"secret-token"}))
     async with _build_client() as client:
@@ -36,7 +36,7 @@ async def test_bearer_token_is_accepted(monkeypatch):
         assert response.json() == {"ok": True}
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_x_api_key_is_accepted(monkeypatch):
     monkeypatch.setattr(settings, "api_keys", frozenset({"secret-token"}))
     async with _build_client() as client:
@@ -47,7 +47,7 @@ async def test_x_api_key_is_accepted(monkeypatch):
         assert response.json() == {"ok": True}
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_x_goog_api_key_is_accepted(monkeypatch):
     monkeypatch.setattr(settings, "api_keys", frozenset({"secret-token"}))
     async with _build_client() as client:
@@ -58,7 +58,7 @@ async def test_x_goog_api_key_is_accepted(monkeypatch):
         assert response.json() == {"ok": True}
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_query_param_key_is_accepted(monkeypatch):
     monkeypatch.setattr(settings, "api_keys", frozenset({"secret-token"}))
     async with _build_client() as client:
@@ -67,7 +67,7 @@ async def test_query_param_key_is_accepted(monkeypatch):
         assert response.json() == {"ok": True}
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_missing_or_invalid_api_key_returns_401(monkeypatch):
     monkeypatch.setattr(settings, "api_keys", frozenset({"secret-token"}))
     async with _build_client() as client:

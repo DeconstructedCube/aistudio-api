@@ -6,7 +6,7 @@ import base64
 import os
 import tempfile
 import uuid
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aistudio_api.api.schemas import GeminiGenerateContentRequest, GeminiTool
@@ -39,12 +39,12 @@ class NormalizedGeminiRequest:
     max_tokens: int | None = None
     generation_config_overrides: dict[str, object] | None = None
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self, key: str) -> object:
         if hasattr(self, key):
             return getattr(self, key)
         raise KeyError(key)
 
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(self, key: str, default: object = None) -> object:
         return getattr(self, key, default)
 
 SCHEMA_TYPE_CODES = {
@@ -349,6 +349,25 @@ def normalize_gemini_request(
                 )
                 content_images.append(image_path)
                 cleanup_paths.append(image_path)
+                continue
+            if part.functionCall is not None:
+                fc = part.functionCall
+                args_payload = fc.args if fc.args is not None else {}
+                parts.append(
+                    AistudioPart(
+                        function_call=(fc.name, args_payload, fc.id) if fc.id else (fc.name, args_payload),
+                        thought_signature=part.thoughtSignature,
+                    )
+                )
+                continue
+            if part.functionResponse is not None:
+                fr = part.functionResponse
+                resp_payload = fr.response if fr.response is not None else {}
+                parts.append(
+                    AistudioPart(
+                        function_response=(fr.name, resp_payload, fr.id) if fr.id else (fr.name, resp_payload),
+                    )
+                )
                 continue
             if part.fileData is not None:
                 raise ValueError("fileData is not supported yet")

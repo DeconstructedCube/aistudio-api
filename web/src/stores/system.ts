@@ -11,26 +11,13 @@ export const useSystemStore = defineStore('system', () => {
   const resettingCooldown = ref(false)
   const switchingNext = ref(false)
 
-  const totalRequests = computed(() => {
-    if (!stats.value?.models) return 0
-    return Object.values(stats.value.models).reduce((sum, item) => sum + (item.requests || 0), 0)
-  })
-
-  const totalRateLimited = computed(() => {
-    if (!stats.value?.models) return 0
-    return Object.values(stats.value.models).reduce((sum, item) => sum + (item.rate_limited || 0), 0)
-  })
-
-  const totalSuccess = computed(() => {
-    if (!stats.value?.models) return 0
-    return Object.values(stats.value.models).reduce((sum, item) => sum + (item.success || 0), 0)
-  })
-
-  const totalErrors = computed(() => {
-    if (!stats.value?.models) return 0
-    return Object.values(stats.value.models).reduce((sum, item) => sum + (item.errors || 0), 0)
-  })
-
+  const totalRequests = computed(() => stats.value?.totals?.requests ?? 0)
+  const totalRateLimited = computed(() => stats.value?.totals?.rate_limited ?? 0)
+  const totalSuccess = computed(() => stats.value?.totals?.success ?? 0)
+  const totalErrors = computed(() => stats.value?.totals?.errors ?? 0)
+  const totalTokens = computed(() => stats.value?.totals?.total_tokens ?? 0)
+  const promptTokens = computed(() => stats.value?.totals?.prompt_tokens ?? 0)
+  const completionTokens = computed(() => stats.value?.totals?.completion_tokens ?? 0)
   async function fetchStats() {
     loading.value = true
     try {
@@ -92,6 +79,9 @@ export const useSystemStore = defineStore('system', () => {
     totalRateLimited,
     totalSuccess,
     totalErrors,
+    totalTokens,
+    promptTokens,
+    completionTokens,
     fetchStats,
     fetchRotation,
     clearCooldown,

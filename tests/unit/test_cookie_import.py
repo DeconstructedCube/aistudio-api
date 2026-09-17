@@ -8,10 +8,11 @@ from aistudio_api.infrastructure.account.cookie_refresher import load_cookies_fr
 
 def test_parse_cookie_string_skips_host_only_cookies_in_storage_state():
     state = parse_cookie_string("__Host-GAPS=abc; SID=sid123")
-
-    assert state["origins"] == []
-    assert {cookie["name"] for cookie in state["cookies"]} == {"SID"}
-    assert state["cookies"][0]["domain"] == ".google.com"
+    cookies = state.get("cookies")
+    assert isinstance(cookies, list)
+    assert state.get("origins") == []
+    assert {cookie["name"] for cookie in cookies if isinstance(cookie, dict)} == {"SID"}
+    assert cookies[0]["domain"] == ".google.com"
 
 
 def test_build_google_cookie_list_uses_url_for_host_targets_when_injecting():
@@ -86,7 +87,7 @@ def test_parse_raw_cookies_json_array_and_netscape():
     assert parsed_netscape["SID"] == "netscape_sid"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_model_discovery_parse():
     from aistudio_api.infrastructure.gateway.model_discovery import model_discovery
 

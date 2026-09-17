@@ -31,7 +31,7 @@ def mock_cdp_page():
     return page
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_browser_session_generate_snapshot(mock_cdp_page):
     session = BrowserSession(port=9222)
     session._page = mock_cdp_page
@@ -61,7 +61,7 @@ async def test_browser_session_generate_snapshot(mock_cdp_page):
     assert snapshot == "!mocked_snapshot_token_value_123"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_browser_session_send_hooked_request(mock_cdp_page):
     session = BrowserSession(port=9222)
     session._page = mock_cdp_page
@@ -86,7 +86,7 @@ async def test_browser_session_send_hooked_request(mock_cdp_page):
     assert body == b'["response_data"]'
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_browser_session_send_streaming_request(mock_cdp_page):
     session = BrowserSession(port=9222)
     session._page = mock_cdp_page

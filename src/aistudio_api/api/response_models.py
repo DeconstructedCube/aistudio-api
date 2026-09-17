@@ -6,6 +6,12 @@ from typing import Literal
 from pydantic import BaseModel
 
 
+class GoogleApiErrorDetail(BaseModel):
+    code: int = 500
+    message: str
+    status: str = "INTERNAL"
+
+
 class ErrorDetail(BaseModel):
     message: str
     type: str = "server_error"
@@ -13,6 +19,10 @@ class ErrorDetail(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: ErrorDetail
+
+
+class GoogleApiErrorResponse(BaseModel):
+    error: GoogleApiErrorDetail
 
 
 class GeminiUsageMetadata(BaseModel):
@@ -54,11 +64,15 @@ class GeminiContentResponse(BaseModel):
 class GeminiCandidateResponse(BaseModel):
     content: GeminiContentResponse
     finishReason: str | None = None
+    index: int = 0
 
 
 class GeminiGenerateContentResponse(BaseModel):
     candidates: list[GeminiCandidateResponse]
     usageMetadata: GeminiUsageMetadata | None = None
+    modelVersion: str | None = None
+    responseId: str | None = None
+
 
 
 class HealthResponse(BaseModel):

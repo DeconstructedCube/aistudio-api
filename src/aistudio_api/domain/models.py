@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+
 
 from aistudio_api.infrastructure.utils.common import (
     decode_base64_images,
@@ -52,7 +52,7 @@ class ModelOutput:
     model: str = ""
     raw_response: str = ""
     response_id: str = ""
-    usage: dict[str, Any] = field(default_factory=dict)
+    usage: dict[str, object] = field(default_factory=dict)
 
     @property
     def text(self) -> str:
@@ -253,7 +253,7 @@ def _decode_wire_value(value: object) -> object:
     return value
 
 
-def _parse_usage_metadata(raw_usage: object) -> dict[str, Any]:
+def _parse_usage_metadata(raw_usage: object) -> dict[str, object]:
     if not isinstance(raw_usage, list):
         return {}
     prompt_tokens = _coerce_int(raw_usage[0] if len(raw_usage) > 0 else None)
@@ -287,7 +287,7 @@ def _parse_usage_metadata(raw_usage: object) -> dict[str, Any]:
     }
 
 
-def parse_chunk_usage(chunk: object) -> dict[str, Any]:
+def parse_chunk_usage(chunk: object) -> dict[str, object]:
     if not isinstance(chunk, list):
         return {}
     return _parse_usage_metadata(chunk[2] if len(chunk) > 2 else None)

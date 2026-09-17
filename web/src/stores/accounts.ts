@@ -133,7 +133,7 @@ export const useAccountsStore = defineStore('accounts', () => {
     importing.value = true
     try {
       const res = await accountsApi.probeAndImport(payload)
-      toast.success(`🎉 成功探测并导入 ${res.imported_count} 个 Google 登录账号`)
+      toast.success(`已完成探测并导入 ${res.imported_count} 个账号`)
       await fetchAll()
       return true
     } catch (err: unknown) {

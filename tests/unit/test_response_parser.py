@@ -5,8 +5,7 @@ from aistudio_api.domain.models import parse_chunk_usage, parse_response_chunk, 
 from aistudio_api.infrastructure.gateway.stream_parser import IncrementalJSONStreamParser, classify_chunk
 
 
-ROOT = Path(__file__).resolve().parents[2]
-FIXTURES = ROOT / "tests"
+FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
 
 def test_parse_text_output_from_stream_bundle():
@@ -19,7 +18,9 @@ def test_parse_text_output_from_stream_bundle():
     assert output.usage["prompt_tokens"] == 5
     assert output.usage["completion_tokens"] == 161
     assert output.usage["total_tokens"] == 166
-    assert output.usage["completion_tokens_details"]["reasoning_tokens"] == 153
+    details = output.usage.get("completion_tokens_details")
+    assert isinstance(details, dict)
+    assert details.get("reasoning_tokens") == 153
     assert output.response_id
     assert output.candidates[0].finish_reason == 1
 
@@ -34,7 +35,9 @@ def test_parse_response_chunk_and_classify_chunk():
     assert candidate.safety_ratings
     assert usage["prompt_tokens"] == 5
     assert usage["completion_tokens"] == 161
-    assert usage["completion_tokens_details"]["reasoning_tokens"] == 153
+    usage_details = usage.get("completion_tokens_details")
+    assert isinstance(usage_details, dict)
+    assert usage_details.get("reasoning_tokens") == 153
 
     ctype, text = classify_chunk(raw[0][1])
     assert ctype == "thinking"
@@ -86,5 +89,7 @@ def test_parse_text_output_handles_double_wrapped_chunk_bundle():
     assert output.usage["prompt_tokens"] == 10
     assert output.usage["completion_tokens"] == 7
     assert output.usage["total_tokens"] == 17
-    assert output.usage["completion_tokens_details"]["reasoning_tokens"] == 5
+    details = output.usage.get("completion_tokens_details")
+    assert isinstance(details, dict)
+    assert details.get("reasoning_tokens") == 5
     assert output.response_id == "resp_test"

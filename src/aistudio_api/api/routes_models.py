@@ -18,15 +18,15 @@ if TYPE_CHECKING:
 router = APIRouter()
 
 
-def _to_gemini_model(m: dict[str, object]) -> GeminiModelResponse:
-    raw_id = str(m.get("id") or m.get("name") or "")
+def _to_gemini_model(model_data: dict[str, object]) -> GeminiModelResponse:
+    raw_id = str(model_data.get("id") or model_data.get("name") or "")
     clean_id = raw_id.removeprefix("models/")
     name = f"models/{clean_id}"
-    display_name = str(m.get("displayName") or clean_id)
-    description = str(m.get("description") or f"Google {display_name} model")
-    input_tokens = int(str(m.get("inputTokenLimit") or 1048576))
-    output_tokens = int(str(m.get("outputTokenLimit") or 8192))
-    raw_methods = m.get("supportedGenerationMethods")
+    display_name = str(model_data.get("displayName") or clean_id)
+    description = str(model_data.get("description") or f"Google {display_name} model")
+    input_tokens = int(str(model_data.get("inputTokenLimit") or 1048576))
+    output_tokens = int(str(model_data.get("outputTokenLimit") or 8192))
+    raw_methods = model_data.get("supportedGenerationMethods")
     methods = (
         [str(x) for x in raw_methods]
         if isinstance(raw_methods, list)
@@ -58,7 +58,7 @@ async def list_models(
     from aistudio_api.infrastructure.gateway.model_discovery import model_discovery
 
     discovered = await model_discovery.get_models(session=session)
-    models = [_to_gemini_model(m) for m in discovered]
+    models = [_to_gemini_model(item) for item in discovered]
     return GeminiModelListResponse(models=models)
 
 
@@ -72,9 +72,9 @@ async def get_model(
 
     discovered = await model_discovery.get_models(session=session)
     clean_target = model_id.removeprefix("models/")
-    for m in discovered:
-        m_raw = str(m.get("id") or m.get("name") or "")
-        m_clean = m_raw.removeprefix("models/")
-        if m_clean == clean_target:
-            return _to_gemini_model(m)
+    for model_info in discovered:
+        model_raw_id = str(model_info.get("id") or model_info.get("name") or "")
+        model_clean_id = model_raw_id.removeprefix("models/")
+        if model_clean_id == clean_target:
+            return _to_gemini_model(model_info)
     return _to_gemini_model({"id": clean_target})

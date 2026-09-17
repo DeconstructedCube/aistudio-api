@@ -147,7 +147,7 @@ async function handleDeleteKey(item: ApiKeyItem) {
             客户端 API 鉴权密钥 (API Keys)
           </h3>
           <p class="text-xs text-gray-400 mt-0.5">
-            用于向外部客户端（Chatbox、Cherry Studio、SDK 等）分发访问密钥，支持设置备注名
+            用于客户端调用鉴权，支持按应用设置独立备注
           </p>
         </div>
       </div>
@@ -171,10 +171,9 @@ async function handleDeleteKey(item: ApiKeyItem) {
     >
       <AlertTriangle class="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
       <div>
-        <span class="font-bold">当前未配置任何 API Key</span>：对外 Gemini API 处于公开免 Key 访问状态。添加 API Key 后，系统将自动启用严格的入站调用拦截。
+        未配置 API Key 时接口开放访问。添加密钥后将对入站请求进行校验。
       </div>
     </div>
-
     <!-- Key List Table -->
     <div
       v-if="apiKeys.length"
@@ -293,7 +292,7 @@ async function handleDeleteKey(item: ApiKeyItem) {
           <input
             v-model="newKeyName"
             type="text"
-            placeholder="例如: Cherry Studio 客户端、测试脚本、团队 A"
+            placeholder="例如: dev-client、prod-backend"
             class="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs outline-none focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all"
           >
         </div>
@@ -305,7 +304,7 @@ async function handleDeleteKey(item: ApiKeyItem) {
           <input
             v-model="customKeyValue"
             type="text"
-            placeholder="sk-aistudio-..."
+            placeholder="sk-..."
             class="w-full px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-mono outline-none focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all"
           >
         </div>

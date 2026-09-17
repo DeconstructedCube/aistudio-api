@@ -10,12 +10,12 @@ from aistudio_api.infrastructure.gateway.wire_types import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[1]
+FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
 
 def test_decode_image_request_maps_generation_config_fields_from_proto_indexes():
     codec = AistudioWireCodec()
-    raw = (ROOT / "test-image-input.json").read_text()
+    raw = (FIXTURES / "test_image_input.json").read_text()
 
     request = codec.decode(raw)
 
@@ -33,7 +33,7 @@ def test_decode_image_request_maps_generation_config_fields_from_proto_indexes()
 
 def test_encode_preserves_newly_mapped_proto_fields():
     codec = AistudioWireCodec()
-    raw = (ROOT / "test-image-input.json").read_text()
+    raw = (FIXTURES / "test_image_input.json").read_text()
 
     request = codec.decode(raw)
     encoded = codec.encode(request)

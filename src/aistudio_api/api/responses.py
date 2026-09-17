@@ -54,9 +54,15 @@ def to_gemini_usage_metadata(usage: dict[str, object] | None = None) -> GeminiUs
     )
 
 
-def sse_error(message: str) -> str:
+def sse_error(message: str, code: int = 500, status: str = "INTERNAL") -> str:
     data = ErrorResponse(error=ErrorDetail(message=message, type="server_error"))
     return f"data: {data.model_dump_json()}\n\n"
+
+
+def sse_google_error(message: str, code: int = 500, status: str = "INTERNAL") -> str:
+    data = {"error": {"code": code, "message": message, "status": status}}
+    import json
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def to_gemini_parts(

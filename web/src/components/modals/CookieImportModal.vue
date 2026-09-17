@@ -75,10 +75,10 @@ async function handleSubmit() {
         <div class="flex-1 text-xs">
           <div class="font-semibold text-brand-900 flex items-center gap-1.5">
             <Sparkles class="w-3.5 h-3.5 text-brand-600" />
-            <span>自动无限向下探活多登录账号 (u/0, u/1, u/2... 一键批量分化导入)</span>
+            <span>递归探测多身份登录账号 (u/0, u/1, u/2...)</span>
           </div>
           <div class="text-brand-700/80 mt-0.5">
-            单份包含多个 Google 登录账号的 Cookie，将自动探测所有有效子账号并自动分化建档。
+            针对包含多登录身份的凭据，自动探测全部有效子账号并建立独立配置。
           </div>
         </div>
       </label>
@@ -131,7 +131,7 @@ async function handleSubmit() {
         @click="handleSubmit"
       >
         <template #default>
-          <span v-if="autoProbe">⚡ 探活并批量导入</span>
+          <span v-if="autoProbe">探测并导入</span>
           <span v-else>导入 Cookie</span>
         </template>
       </Button>

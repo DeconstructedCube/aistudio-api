@@ -24,7 +24,7 @@ def test_blocked_url_patterns_coverage():
     assert "*play.google.com/log*" in BLOCKED_URL_PATTERNS
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_cdp_connection_send_and_receive():
     """Test CDPConnection request-response matching and error handling."""
     conn = CDPConnection("ws://127.0.0.1:9222/devtools/page/test")
@@ -46,7 +46,7 @@ async def test_cdp_connection_send_and_receive():
     assert res == {"result": {"value": 42}}
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_cdp_connection_error_handling():
     """Test CDPConnection properly raises CDPError on JSON-RPC error."""
     conn = CDPConnection("ws://127.0.0.1:9222/devtools/page/test")
@@ -67,7 +67,7 @@ async def test_cdp_connection_error_handling():
     assert "Target closed" in str(exc_info.value)
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_cdp_page_blocked_urls_configuration():
     """Test CDPPage sets blocked URLs on Network domain."""
     conn = MagicMock(spec=CDPConnection)
@@ -80,7 +80,7 @@ async def test_cdp_page_blocked_urls_configuration():
     conn.send.assert_called_with("Network.setBlockedURLs", {"urls": BLOCKED_URL_PATTERNS})
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_cdp_page_evaluate_argument_wrapping():
     """Test CDPPage.evaluate correctly wraps expressions with arguments and unwraps value."""
     conn = MagicMock(spec=CDPConnection)
@@ -97,7 +97,7 @@ async def test_cdp_page_evaluate_argument_wrapping():
     assert call_args[1]["awaitPromise"] is True
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_cdp_page_set_cookies_normalization():
     """Test cookie normalization handles __Host- prefixes and domains properly."""
     conn = MagicMock(spec=CDPConnection)

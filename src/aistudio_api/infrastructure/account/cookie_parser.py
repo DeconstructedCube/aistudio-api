@@ -9,7 +9,7 @@ import re
 import time
 import uuid
 from collections.abc import Iterable
-from typing import Any
+
 
 logger = logging.getLogger("aistudio.cookie_parser")
 
@@ -43,18 +43,6 @@ _DOMAIN_OVERRIDES: dict[str, list[str]] = {
     "__Secure-3PSIDTS": [".youtube.com"],
 }
 
-_MULTI_DOMAIN_COOKIES = {
-    "SID",
-    "__Secure-1PSID",
-    "__Secure-3PSID",
-    "HSID",
-    "SSID",
-    "APISID",
-    "SAPISID",
-    "__Secure-1PAPISID",
-    "__Secure-3PAPISID",
-    "NID",
-}
 
 
 def parse_raw_cookies(raw: object) -> dict[str, str]:
@@ -236,7 +224,7 @@ def build_google_cookie_list(
     return cookies
 
 
-def parse_cookie_string(raw: object) -> dict[str, Any]:
+def parse_cookie_string(raw: object) -> dict[str, object]:
     """将任意格式 cookie 解析为 storage state dict，包含 cookies 和 origins 字段。"""
     cookie_dict = parse_raw_cookies(raw)
     return {
@@ -249,7 +237,7 @@ def parse_and_filter_google_cookies(raw: object) -> list[dict[str, object]]:
     state = parse_cookie_string(raw)
     cookies_obj = state.get("cookies")
     cookies: list[dict[str, object]] = cookies_obj if isinstance(cookies_obj, list) else []
-    return [c for c in cookies if "google" in str(c.get("domain", ""))]
+    return [cookie for cookie in cookies if "google" in str(cookie.get("domain", ""))]
 
 
 async def probe_google_accounts_infinite(

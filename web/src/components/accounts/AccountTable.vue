@@ -250,7 +250,7 @@ async function handleClearModelCooldown(accountId: string, model: string) {
                   v-if="group.hasActive"
                   class="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-emerald-100 text-emerald-800"
                 >
-                  当前激活位于此组
+                  当前激活
                 </span>
               </div>
               <div class="text-[11px] text-gray-400 font-mono flex items-center gap-2 mt-0.5">
@@ -435,7 +435,7 @@ async function handleClearModelCooldown(accountId: string, model: string) {
                 <div class="flex items-center justify-between text-[11px] font-semibold text-gray-600">
                   <span class="flex items-center gap-1.5">
                     <Flame class="w-3.5 h-3.5 text-amber-500" />
-                    <span>各模型配额状态 (美西 0:00 自动重置)</span>
+                    <span>模型配额状态 (每日 00:00 PST 重置)</span>
                   </span>
                   <span class="text-gray-400 font-normal">
                     最后调用: {{ formatDate(acc.last_used) }}
@@ -471,13 +471,13 @@ async function handleClearModelCooldown(accountId: string, model: string) {
                         title="点击解除此模型锁定"
                         @click="handleClearModelCooldown(acc.id, String(modelKey))"
                       >
-                        今日耗尽 · 点击解除
+                        配额耗尽 (点击重置)
                       </button>
                       <span
                         v-else-if="acc.model_rate_limited && acc.model_rate_limited[String(modelKey)]"
                         class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700"
                       >
-                        曾限流: {{ acc.model_rate_limited[String(modelKey)] }}
+                        限流: {{ acc.model_rate_limited[String(modelKey)] }}
                       </span>
                       <span
                         v-else
@@ -492,7 +492,7 @@ async function handleClearModelCooldown(accountId: string, model: string) {
                   v-else
                   class="text-[11px] text-gray-400 italic py-1"
                 >
-                  暂无该账号各模型的调用历史
+                  无调用记录
                 </div>
               </div>
             </div>
@@ -507,10 +507,10 @@ async function handleClearModelCooldown(accountId: string, model: string) {
       >
         <Cookie class="w-10 h-10 text-gray-300 mx-auto" />
         <div class="text-sm font-medium text-gray-600">
-          暂无配置的 Google 账号
+          未导入账号
         </div>
         <p class="text-xs text-gray-400 max-w-sm mx-auto">
-          点击右上角“+ 导入 Cookies”按钮，粘贴从浏览器导出的 Cookie 即可自动探活并导入账号。
+          点击上方导入按钮添加凭据。
         </p>
       </div>
     </div>

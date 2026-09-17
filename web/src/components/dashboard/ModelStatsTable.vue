@@ -40,11 +40,11 @@ const statList = computed(() => {
       <div class="flex items-center gap-2">
         <Layers class="w-4 h-4 text-brand-600" />
         <h3 class="font-semibold text-gray-900 text-sm">
-          模型调用统计 (各模型限额相互独立)
+          模型调用统计
         </h3>
       </div>
       <span class="text-xs text-gray-400 font-mono">
-        共 {{ statList.length }} 个模型活跃记录
+        {{ statList.length }} 个模型记录
       </span>
     </div>
 
@@ -55,20 +55,23 @@ const statList = computed(() => {
             <th class="py-3 px-6">
               模型标识
             </th>
-            <th class="py-3 px-4 text-center">
-              总请求
+            <th class="py-3 px-3 text-center">
+              请求数
             </th>
-            <th class="py-3 px-4 text-center">
+            <th class="py-3 px-3 text-center">
               成功
             </th>
-            <th class="py-3 px-4 text-center">
-              429 限流
+            <th class="py-3 px-3 text-center">
+              429
+            </th>
+            <th class="py-3 px-3 text-center">
+              错误
             </th>
             <th class="py-3 px-4 text-center">
-              异常错误
+              Tokens
             </th>
             <th class="py-3 px-6 text-right">
-              最后调用时间
+              最后调用
             </th>
           </tr>
         </thead>
@@ -81,31 +84,36 @@ const statList = computed(() => {
             <td class="py-3.5 px-6 font-medium text-gray-900 font-mono text-xs">
               {{ item.name }}
             </td>
-            <td class="py-3.5 px-4 text-center font-medium text-gray-700">
-              {{ item.requests || 0 }}
+            <td class="py-3.5 px-3 text-center font-mono font-medium text-gray-700">
+              {{ (item.requests || 0).toLocaleString() }}
             </td>
-            <td class="py-3.5 px-4 text-center">
+            <td class="py-3.5 px-3 text-center">
               <Badge
                 variant="green"
                 size="sm"
               >
-                {{ item.success || 0 }}
+                {{ (item.success || 0).toLocaleString() }}
               </Badge>
             </td>
-            <td class="py-3.5 px-4 text-center">
+            <td class="py-3.5 px-3 text-center">
               <Badge
                 :variant="(item.rate_limited || 0) > 0 ? 'red' : 'gray'"
                 size="sm"
               >
-                {{ item.rate_limited || 0 }}
+                {{ (item.rate_limited || 0).toLocaleString() }}
               </Badge>
             </td>
-            <td class="py-3.5 px-4 text-center">
+            <td class="py-3.5 px-3 text-center">
               <span
-                class="text-xs font-medium"
+                class="text-xs font-mono font-medium"
                 :class="(item.errors || 0) > 0 ? 'text-rose-600 font-bold' : 'text-gray-400'"
               >
-                {{ item.errors || 0 }}
+                {{ (item.errors || 0).toLocaleString() }}
+              </span>
+            </td>
+            <td class="py-3.5 px-4 text-center font-mono text-xs text-gray-600">
+              <span :title="`Prompt: ${(item.prompt_tokens || 0).toLocaleString()} / Completion: ${(item.completion_tokens || 0).toLocaleString()}`">
+                {{ (item.total_tokens || 0).toLocaleString() }}
               </span>
             </td>
             <td class="py-3.5 px-6 text-right text-xs text-gray-500 font-mono">
@@ -115,10 +123,10 @@ const statList = computed(() => {
 
           <tr v-if="!statList.length">
             <td
-              colspan="6"
+              colspan="7"
               class="py-12 text-center text-gray-400 text-xs"
             >
-              暂无模型调用数据
+              无调用记录
             </td>
           </tr>
         </tbody>

@@ -22,7 +22,7 @@ from aistudio_api.infrastructure.gateway.capture import CapturedRequest, Request
 from aistudio_api.infrastructure.gateway.session import BrowserSession
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_capture_service_concurrency_and_caching():
     """并发请求抓取模板时，模板捕获只执行 1 次，其余直接命中缓存。"""
     mock_session = MagicMock(spec=BrowserSession)
@@ -33,7 +33,7 @@ async def test_capture_service_concurrency_and_caching():
     async def fake_capture_template(model: str):
         nonlocal call_count
         call_count += 1
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.001)
         return {
             "url": "https://example.com/generate",
             "headers": {"content-type": "application/json"},
@@ -63,7 +63,7 @@ async def test_capture_service_concurrency_and_caching():
     assert res6 is not None
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_account_stats_per_model_cooldown():
     """测试账号在特定模型上的 429 冷却与隔离。"""
     stats = AccountStats(account_id="acc_1")
@@ -83,7 +83,7 @@ async def test_account_stats_per_model_cooldown():
     assert stats.is_available("gemini-2.5-pro")
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_account_stats_pacific_midnight_reset():
     """测试美西跨天日限额自动恢复。"""
     stats = AccountStats(account_id="acc_1")
@@ -94,7 +94,7 @@ async def test_account_stats_pacific_midnight_reset():
     assert "gemini-2.5-pro" not in stats.model_rate_limited_dates
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_rotator_sticky_mode():
     """测试 Sticky 模式：默认保持当前号，直到限流才切换。"""
     store = MagicMock(spec=AccountStore)
@@ -133,7 +133,7 @@ async def test_rotator_sticky_mode():
     assert next_acc.id == "acc_2"
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_try_switch_account_avalanche_protection():
     """测试并发多个 429 时，_switch_lock 防止级联切号。"""
     from aistudio_api.api.state import runtime_state
@@ -160,7 +160,7 @@ async def test_try_switch_account_avalanche_protection():
     async def fake_activate(acc_id, *args, **kwargs):
         nonlocal active_acc, activate_count
         activate_count += 1
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.001)
         active_acc = acc2 if acc_id == "acc_2" else acc1
         return active_acc
 
@@ -183,14 +183,12 @@ async def test_try_switch_account_avalanche_protection():
         assert activate_count == 1
 
 
-@pytest.mark.anyio
 def test_get_seconds_until_pacific_midnight():
     """测试距离美西 0 点剩余秒数计算。"""
     remaining = get_seconds_until_pacific_midnight()
     assert 0 <= remaining <= 86400
 
-
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_goto_aistudio_net_err_aborted_tolerance():
     """当 page.goto 遭遇 net::ERR_ABORTED 但已在 aistudio 时，视为有效抵达并容错。"""
     from aistudio_api.infrastructure.browser.cdp_client import CDPPage
@@ -209,8 +207,7 @@ async def test_goto_aistudio_net_err_aborted_tolerance():
     await session._goto_aistudio(page)
     assert session._verify_account_identity.called
 
-
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_ensure_botguard_available_regions_fast_fail():
     """检测到 available-regions 时立刻抛出 RuntimeError，无需等待 20s 超时。"""
     from aistudio_api.infrastructure.browser.cdp_client import CDPPage
@@ -227,8 +224,7 @@ async def test_ensure_botguard_available_regions_fast_fail():
 
     with pytest.raises(RuntimeError, match="地区限制"):
         await session.ensure_botguard_service()
-
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_runtime_state_record_model_stats():
     """测试 RuntimeState.record 正确更新 stats，不抛出 TypeError 'Field' object is not subscriptable。"""
     from aistudio_api.api.state import RuntimeState
@@ -246,8 +242,7 @@ async def test_runtime_state_record_model_stats():
     assert item.total_tokens == 30
     assert item.last_used is not None
 
-
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_capture_model_preservation_when_template_differs():
     """测试当 Hook 拦截模板为 3.7-flash 时，请求 3.8-flash 不会被模板模型覆盖。"""
     mock_session = MagicMock(spec=BrowserSession)
@@ -270,9 +265,7 @@ async def test_capture_model_preservation_when_template_differs():
     import json
     body = json.loads(captured.body)
     assert body[0] == "models/gemini-3.8-flash"
-
-
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_browser_session_send_streaming_batch_events():
     """测试流式回放支持批量事件以提升并发吞吐。"""
     from aistudio_api.infrastructure.browser.cdp_client import CDPPage

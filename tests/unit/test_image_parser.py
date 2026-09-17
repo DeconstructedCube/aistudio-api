@@ -3,11 +3,11 @@ from pathlib import Path
 from aistudio_api.domain.models import parse_image_output
 
 
-ROOT = Path(__file__).resolve().parents[1]
+FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
 
 def test_parse_image_output_keeps_only_final_images_in_images_field():
-    raw = (ROOT / "test-image-output.json").read_text()
+    raw = (FIXTURES / "test_image_output.json").read_text()
     output = parse_image_output(raw)
 
     assert len(output.images) == 1
