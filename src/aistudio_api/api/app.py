@@ -6,7 +6,10 @@ import argparse
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import Depends, FastAPI
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
@@ -15,8 +18,10 @@ from .dependencies import require_api_key, require_web_auth
 from .routes_accounts import router as accounts_router
 from .routes_gemini import router as gemini_router
 from .routes_models import router as models_router
-from .routes_system import protected_router as system_protected_router
-from .routes_system import public_router as system_public_router
+from .routes_system import (
+    protected_router as system_protected_router,
+    public_router as system_public_router,
+)
 from .state import runtime_state
 
 logging.basicConfig(
@@ -89,9 +94,6 @@ app.include_router(gemini_router, dependencies=[Depends(require_api_key)])
 app.include_router(models_router, dependencies=[Depends(require_api_key)])
 
 # 挂载前端静态资源与 SPA 路由支持
-from pathlib import Path
-from fastapi.responses import FileResponse
-
 static_dir = Path(__file__).resolve().parents[1] / "static"
 index_html_path = static_dir / "index.html"
 

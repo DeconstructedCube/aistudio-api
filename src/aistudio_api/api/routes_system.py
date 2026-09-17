@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -132,16 +133,14 @@ class ConfigYamlUpdateRequest(BaseModel):
 async def get_system_config() -> dict[str, object]:
     """获取系统运行配置与 config.yaml 内容。"""
     from pathlib import Path
+
     from aistudio_api.config import settings
 
     config_yaml_path = Path(__file__).resolve().parents[3] / "config.yaml"
     yaml_content = ""
     if config_yaml_path.exists():
-        try:
+        with contextlib.suppress(Exception):
             yaml_content = config_yaml_path.read_text(encoding="utf-8")
-        except Exception:
-            pass
-
     return {
         "port": settings.port,
         "browser_port": settings.browser_port,
@@ -156,16 +155,16 @@ async def get_system_config() -> dict[str, object]:
 @protected_router.put("/config/yaml")
 async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
     """更新 config.yaml 文件内容并热重载默认配置。"""
-    import yaml
     from pathlib import Path
+
+    import yaml
 
     try:
         parsed = yaml.safe_load(req.yaml_content)
         if parsed is not None and not isinstance(parsed, dict):
             raise HTTPException(400, detail="YAML 顶层必须为字典结构")
     except yaml.YAMLError as e:
-        raise HTTPException(400, detail=f"YAML 语法格式错误: {e}")
-
+        raise HTTPException(400, detail=f"YAML 语法格式错误: {e}") from e
     config_yaml_path = Path(__file__).resolve().parents[3] / "config.yaml"
     try:
         config_yaml_path.write_text(req.yaml_content, encoding="utf-8")
@@ -178,8 +177,7 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
         _compiled_model_overrides.cache_clear()
         return {"ok": True, "message": "配置已保存并重载"}
     except Exception as e:
-        raise HTTPException(500, detail=f"写入配置文件失败: {e}")
-
+        raise HTTPException(500, detail=f"写入配置文件失败: {e}") from e
 
 # ========== API Key 备注与密钥管理 ==========
 
@@ -221,8 +219,10 @@ async def list_api_keys() -> list[ApiKeyItemModel]:
 async def create_api_key(req: CreateApiKeyRequest) -> ApiKeyItemModel:
     """在 config.yaml 中添加新的 API Key。"""
     import secrets
+    from datetime import UTC, datetime
+
     import yaml
-    from datetime import datetime, UTC
+
     from aistudio_api.infrastructure.gateway.model_defaults import (
         _compiled_model_overrides,
         _compiled_profiles,
@@ -276,6 +276,7 @@ async def create_api_key(req: CreateApiKeyRequest) -> ApiKeyItemModel:
 async def delete_api_key(key_value: str) -> dict[str, bool]:
     """在 config.yaml 中删除指定 API Key。"""
     import yaml
+
     from aistudio_api.infrastructure.gateway.model_defaults import (
         _compiled_model_overrides,
         _compiled_profiles,
@@ -331,6 +332,7 @@ async def update_api_key_name(
 ) -> ApiKeyItemModel:
     """在 config.yaml 中更新指定 API Key 的备注名。"""
     import yaml
+
     from aistudio_api.infrastructure.gateway.model_defaults import (
         _compiled_model_overrides,
         _compiled_profiles,

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-
 from aistudio_api.infrastructure.utils.common import (
     decode_base64_images,
     extract_outer_json,

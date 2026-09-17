@@ -5,12 +5,13 @@ Provides direct Chromium subprocess launching with stealth and performance flags
 
 from __future__ import annotations
 
-import glob
+import contextlib
 import hashlib
 import logging
 import os
 import platform
 import shutil
+import signal
 import subprocess
 from pathlib import Path
 
@@ -58,37 +59,29 @@ def _resolve_local_chrome(match: str) -> str:
 def find_chromium_executable() -> str:
     """Find the best Chromium executable available on the system."""
     # 1. Configured explicit path
-    if settings.browser_executable_path and os.path.exists(
+    if settings.browser_executable_path and Path(
         settings.browser_executable_path
-    ):
+    ).exists():
         return settings.browser_executable_path
 
     project_root = Path(__file__).resolve().parents[4]
-    # 3. Local project-scoped CloakBrowser (.cloakbrowser/**/chrome)
-    local_cloak_patterns = [
-        str(project_root / ".cloakbrowser" / "**" / "chrome"),
-        str(project_root / ".cloakbrowser" / "**" / "Chromium.app" / "Contents" / "MacOS" / "Chromium"),
-        str(project_root / ".cloakbrowser" / "**" / "chrome.exe"),
-    ]
-    for pat in local_cloak_patterns:
-        local_matches = sorted(glob.glob(pat, recursive=True))
-        if local_matches:
+    # 2. Local project-scoped CloakBrowser (.cloakbrowser/**/chrome)
+    cloak_dir = project_root / ".cloakbrowser"
+    if cloak_dir.is_dir():
+        for pat in ("**/chrome", "**/Chromium.app/Contents/MacOS/Chromium", "**/chrome.exe"):
+            local_matches = sorted(cloak_dir.glob(pat))
             for match in reversed(local_matches):
-                if os.path.isfile(match) and (os.access(match, os.X_OK) or platform.system() == "Windows"):
-                    return _resolve_local_chrome(match)
+                if match.is_file() and (os.access(match, os.X_OK) or platform.system() == "Windows"):
+                    return _resolve_local_chrome(str(match))
 
     # 3. User-level CloakBrowser (~/.cloakbrowser/**/chrome)
-    user_cloak_patterns = [
-        os.path.expanduser("~/.cloakbrowser/**/chrome"),
-        os.path.expanduser("~/.cloakbrowser/**/chrome.exe"),
-        os.path.expanduser("~/.cloakbrowser/**/Chromium.app/Contents/MacOS/Chromium"),
-    ]
-    for pat in user_cloak_patterns:
-        cloak_matches = sorted(glob.glob(pat, recursive=True))
-        if cloak_matches:
+    user_cloak_dir = Path.home() / ".cloakbrowser"
+    if user_cloak_dir.is_dir():
+        for pat in ("**/chrome", "**/chrome.exe", "**/Chromium.app/Contents/MacOS/Chromium"):
+            cloak_matches = sorted(user_cloak_dir.glob(pat))
             for match in reversed(cloak_matches):
-                if os.path.isfile(match) and (os.access(match, os.X_OK) or platform.system() == "Windows"):
-                    return _resolve_local_chrome(match)
+                if match.is_file() and (os.access(match, os.X_OK) or platform.system() == "Windows"):
+                    return _resolve_local_chrome(str(match))
     # 4. Standard binary names in PATH
     for name in (
         "google-chrome-stable",
@@ -115,8 +108,8 @@ def find_chromium_executable() -> str:
                 "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
                 "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
                 "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-                os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-                os.path.expanduser("~/Applications/Chromium.app/Contents/MacOS/Chromium"),
+                str(Path.home() / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+                str(Path.home() / "Applications/Chromium.app/Contents/MacOS/Chromium"),
             ]
         )
     elif sys_name == "Windows":
@@ -148,7 +141,7 @@ def find_chromium_executable() -> str:
         )
 
     for p in sys_paths:
-        if os.path.isfile(p) and (os.access(p, os.X_OK) or sys_name == "Windows"):
+        if Path(p).is_file() and (os.access(p, os.X_OK) or sys_name == "Windows"):
             return p
 
     raise FileNotFoundError(
@@ -262,8 +255,6 @@ class ChromiumProcess:
 
     def terminate(self, timeout_s: float = 3.0) -> None:
         """Terminate the Chromium subprocess tree safely across platforms."""
-        import signal
-
         if self.process.poll() is not None:
             return
 
@@ -300,10 +291,8 @@ class ChromiumProcess:
         try:
             self.process.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
-            try:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(pgid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
             self.process.wait(timeout=1.0)
         except Exception as e:
             log.debug("Error terminating Chromium process: %s", e)

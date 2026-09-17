@@ -1,4 +1,6 @@
-from aistudio_api.infrastructure.gateway.stream_parser import IncrementalJSONStreamParser
+from aistudio_api.infrastructure.gateway.stream_parser import (
+    IncrementalJSONStreamParser,
+)
 
 
 def test_stream_parser_extracts_chunk_from_fragmented_input():

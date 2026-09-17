@@ -6,9 +6,12 @@ import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from aistudio_api.infrastructure.account.account_store import (
+        AccountMeta,
+        AccountStore,
+    )
     from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
     from aistudio_api.infrastructure.gateway.session import BrowserSession
-from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
 logger = logging.getLogger("aistudio.account")
 
 

@@ -7,10 +7,14 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
-
+if TYPE_CHECKING:
+    from aistudio_api.infrastructure.account.account_store import (
+        AccountMeta,
+        AccountStore,
+    )
 logger = logging.getLogger("aistudio.rotator")
 
 
@@ -248,11 +252,10 @@ class AccountRotator:
                     if a.id == current_account_id:
                         return a, s
 
-            pick = min(
+            return min(
                 available,
                 key=lambda x: (x[1].errors, x[1].last_used),
             )
-            return pick
 
     def record_success(self, account_id: str, model: str | None = None) -> None:
         if account_id not in self._stats:

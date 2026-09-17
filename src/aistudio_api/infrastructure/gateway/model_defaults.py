@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
-
 import yaml
 
 from .wire_types import (

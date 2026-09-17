@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from aistudio_api.api.dependencies import get_account_service, get_account_service_optional, get_runtime_state
+from aistudio_api.api.dependencies import (
+    get_account_service,
+    get_account_service_optional,
+    get_runtime_state,
+)
 from aistudio_api.infrastructure.account.cookie_parser import parse_cookie_string
 
 if TYPE_CHECKING:
@@ -167,9 +171,8 @@ async def delete_cookie_group(
     deleted_count = 0
     for a in accounts:
         acc_cid = getattr(a, "cookie_id", None) or f"cookie_{a.created_at[:16]}"
-        if acc_cid == cookie_id:
-            if account_service.delete_account(a.id):
-                deleted_count += 1
+        if acc_cid == cookie_id and account_service.delete_account(a.id):
+            deleted_count += 1
     return {"deleted": deleted_count}
 
 

@@ -92,7 +92,6 @@ select = [
     "C4",     # flake8-comprehensions
     "UP",     # pyupgrade
     "SIM",    # flake8-simplify
-    "TCH",    # flake8-type-checking
     "PTH",    # flake8-use-pathlib
     "RUF",    # Ruff-specific rules
     "ASYNC",  # flake8-async
@@ -105,7 +104,14 @@ select = [
     "YTT",    # flake8-2020
 ]
 ignore = [
-    "E501",   # Line too long (handled by formatter)
+    "E501",      # Line too long (handled by formatter)
+    "B008",      # Do not perform function call `Depends` in argument defaults (FastAPI standard pattern)
+    "RUF001",    # Ambiguous unicode characters in strings (Chinese fullwidth punctuation)
+    "RUF002",    # Ambiguous unicode characters in docstrings (Chinese fullwidth punctuation)
+    "RUF003",    # Ambiguous unicode characters in comments (Chinese fullwidth punctuation)
+    "ASYNC109",  # Async function definition with a `timeout` parameter
+    "ASYNC230",  # Async functions opening files with blocking methods
+    "ASYNC240",  # Async functions performing blocking pathlib operations
 ]
 
 [tool.ruff.lint.isort]
@@ -113,7 +119,8 @@ known-first-party = ["aistudio_api"]
 combine-as-imports = true
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["B018", "PTH", "ASYNC", "A001", "A002", "RET504"]
+"main.py" = ["E402"]
+"tests/**" = ["B018", "PTH", "ASYNC", "A001", "A002", "RET504", "TC001", "TC002", "TC003"]
 
 [tool.ruff.format]
 quote-style = "double"

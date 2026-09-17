@@ -1,9 +1,12 @@
 import pytest
+
 from aistudio_api.infrastructure.account.cookie_parser import (
     build_google_cookie_list,
     parse_cookie_string,
 )
-from aistudio_api.infrastructure.account.cookie_refresher import load_cookies_from_string
+from aistudio_api.infrastructure.account.cookie_refresher import (
+    load_cookies_from_string,
+)
 
 
 def test_parse_cookie_string_skips_host_only_cookies_in_storage_state():

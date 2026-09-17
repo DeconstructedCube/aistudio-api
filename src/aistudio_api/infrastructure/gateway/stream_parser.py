@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Generator
+from contextlib import suppress
 
 from aistudio_api.domain.models import parse_response_chunk
 
@@ -62,10 +63,8 @@ class IncrementalJSONStreamParser:
                     self.depth -= 1
                     if self.depth == 2 and self.chunk_start is not None:
                         chunk_str = self.buffer[self.chunk_start : self._pos + 1]
-                        try:
+                        with suppress(json.JSONDecodeError):
                             yield json.loads(chunk_str)
-                        except json.JSONDecodeError:
-                            pass
                         self.buffer = self.buffer[self._pos + 1 :]
                         self._pos = 0
                         self.chunk_start = None

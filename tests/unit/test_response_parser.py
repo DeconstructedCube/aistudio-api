@@ -1,9 +1,15 @@
 import json
 from pathlib import Path
 
-from aistudio_api.domain.models import parse_chunk_usage, parse_response_chunk, parse_text_output
-from aistudio_api.infrastructure.gateway.stream_parser import IncrementalJSONStreamParser, classify_chunk
-
+from aistudio_api.domain.models import (
+    parse_chunk_usage,
+    parse_response_chunk,
+    parse_text_output,
+)
+from aistudio_api.infrastructure.gateway.stream_parser import (
+    IncrementalJSONStreamParser,
+    classify_chunk,
+)
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 

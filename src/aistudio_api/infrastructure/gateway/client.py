@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import tempfile
 from pathlib import Path
+from typing import ClassVar
 
 from aistudio_api.config import (
     DEFAULT_BROWSER_PORT,
@@ -42,7 +42,7 @@ _snapshot_cache = SnapshotCache()
 
 
 class AIStudioClient:
-    IMAGE_SIZE_TO_OUTPUT_RESOLUTION = {
+    IMAGE_SIZE_TO_OUTPUT_RESOLUTION: ClassVar[dict[str, list[str]]] = {
         # 1:1
         "512x512": ["1:1", "512"],
         "1024x1024": ["1:1", "1K"],
@@ -393,16 +393,15 @@ class AIStudioClient:
         if output.images:
             img = output.images[0]
             ext = "jpg" if "jpeg" in img.mime else "png"
-            default_img_path = os.path.join(
-                tempfile.gettempdir(), f"aistudio_generated.{ext}"
+            default_img_path = (
+                Path(tempfile.gettempdir()) / f"aistudio_generated.{ext}"
             )
             path = (
-                save_path
+                Path(save_path)
                 if save_path and save_path.endswith(f".{ext}")
-                else (f"{save_path}.{ext}" if save_path else default_img_path)
+                else (Path(f"{save_path}.{ext}") if save_path else default_img_path)
             )
-            with open(path, "wb") as file:
-                file.write(img.data)
+            path.write_bytes(img.data)
             logger.info("图片已保存: %s (%s bytes)", path, img.size)
 
         return output
@@ -416,15 +415,15 @@ class AIStudioClient:
         parts = []
         for image_path in images or []:
             mime = mimetypes.guess_type(image_path)[0] or "image/jpeg"
-            with open(image_path, "rb") as file:
-                parts.append(
-                    AistudioPart(
-                        inline_data=(
-                            mime,
-                            base64.b64encode(file.read()).decode("ascii"),
-                        )
+            data = Path(image_path).read_bytes()
+            parts.append(
+                AistudioPart(
+                    inline_data=(
+                        mime,
+                        base64.b64encode(data).decode("ascii"),
                     )
                 )
+            )
         parts.append(AistudioPart(text=prompt))
         return AistudioContent(role="user", parts=parts)
 

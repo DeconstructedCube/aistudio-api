@@ -1,6 +1,11 @@
 import pytest
 
-from aistudio_api.api.schemas import GeminiContent, GeminiGenerateContentRequest, GeminiGenerationConfig, GeminiPart
+from aistudio_api.api.schemas import (
+    GeminiContent,
+    GeminiGenerateContentRequest,
+    GeminiGenerationConfig,
+    GeminiPart,
+)
 from aistudio_api.application.chat_service import normalize_gemini_request
 from aistudio_api.infrastructure.gateway.wire_types import AistudioImageOutputMode
 

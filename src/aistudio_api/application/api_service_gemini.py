@@ -358,7 +358,7 @@ def _build_gemini_streaming_response(
                                 text if isinstance(text, dict) else None
                             )
                     break
-                except UsageLimitExceeded as exc:
+                except UsageLimitExceeded:
                     target_model = (
                         normalized.model if normalized else model_path
                     )

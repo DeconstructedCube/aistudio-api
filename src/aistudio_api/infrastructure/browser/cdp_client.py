@@ -7,6 +7,7 @@ directly communicating with Chromium over DevTools JSON-RPC protocol.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -60,6 +61,7 @@ class CDPConnection:
         self._futures: dict[int, asyncio.Future[dict[str, object]]] = {}
         self._listeners: dict[str, list[Callable[[dict[str, object]], object]]] = {}
         self._recv_task: asyncio.Task[None] | None = None
+        self._background_tasks: set[asyncio.Task[object]] = set()
         self._closed = False
 
     async def connect(self, timeout_s: float = 10.0) -> None:
@@ -114,7 +116,9 @@ class CDPConnection:
                         try:
                             res = cb(params)
                             if asyncio.iscoroutine(res):
-                                asyncio.create_task(res)
+                                task = asyncio.create_task(res)
+                                self._background_tasks.add(task)
+                                task.add_done_callback(self._background_tasks.discard)
                         except Exception as e:
                             log.debug(
                                 "Error in CDP event listener for %s: %s", method, e
@@ -189,15 +193,11 @@ class CDPConnection:
         self._closed = True
         if self._recv_task and not self._recv_task.done():
             self._recv_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._recv_task
-            except asyncio.CancelledError:
-                pass
         if self.ws:
-            try:
+            with contextlib.suppress(Exception):
                 await self.ws.close()
-            except Exception:
-                pass
             self.ws = None
 
 
@@ -654,10 +654,8 @@ class CDPPage:
     async def close(self) -> None:
         """Close this page target."""
         self._is_closed = True
-        try:
+        with contextlib.suppress(Exception):
             await self.cdp.send("Page.close")
-        except Exception:
-            pass
         await self.cdp.close()
 
 

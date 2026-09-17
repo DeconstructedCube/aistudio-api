@@ -59,9 +59,7 @@ async def try_switch_account(
 
         if current_id and next_account.id == current_id:
             stats = rotator._stats.get(current_id)
-            if stats and stats.is_available(model):
-                return True
-            return False
+            return bool(stats and stats.is_available(model))
 
         result = await account_service.activate_account(
             next_account.id,

@@ -6,8 +6,6 @@ import base64
 import json
 
 
-
-
 def extract_outer_json(raw: str) -> list[object]:
     stripped = raw.strip()
     if not stripped:

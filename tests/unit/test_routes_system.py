@@ -7,6 +7,7 @@ import pytest
 
 from aistudio_api.api.app import app
 
+
 def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test")
 
@@ -67,6 +68,7 @@ async def test_update_config_yaml_validation():
 @pytest.mark.asyncio
 async def test_rotation_status_and_clear_cooldown():
     from unittest.mock import MagicMock
+
     from aistudio_api.api.state import runtime_state
     from aistudio_api.application.account_rotator import AccountRotator
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -10,6 +11,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
 
 
 def _atomic_write_json(path: Path, data: object) -> None:
@@ -20,13 +22,11 @@ def _atomic_write_json(path: Path, data: object) -> None:
         tmp_path.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        os.replace(tmp_path, path)
+        tmp_path.replace(path)
     except Exception:
         if tmp_path.exists():
-            try:
+            with contextlib.suppress(OSError):
                 tmp_path.unlink()
-            except OSError:
-                pass
         raise
 
 
@@ -124,7 +124,7 @@ class Registry:
 class AccountStore:
     """账号存储管理器（线程安全单例，支持原子文件替换）。"""
 
-    _instances: dict[Path, AccountStore] = {}
+    _instances: ClassVar[dict[Path, AccountStore]] = {}
     _singleton_lock = threading.Lock()
     _initialized: bool = False
 

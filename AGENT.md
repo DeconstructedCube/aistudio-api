@@ -84,12 +84,20 @@ uv run python3 main.py server --port 8080
   - `B` (flake8-bugbear 常见陷阱与 Bug 预防)
   - `C4` (flake8-comprehensions 列表推导式优化)
   - `UP` (pyupgrade Python 3.11+ 语法升级)
-  - `SIM` (flake8-simplify 代码精简)
-  - `TCH` (flake8-type-checking 类型注解引用隔离)
+  - `SIM` (flake8-simplify 代码精简，强制 `contextlib.suppress` 替代 `try-except-pass`)
   - `PTH` (flake8-use-pathlib 规范使用 Pathlib)
   - `RUF` (Ruff 专属严格检查)
-  - `ASYNC` (flake8-async 异步编程反模式检查)
-  - `A` / `Q` / `RET` (内建函数命名防覆盖、引号与返回规范)
+  - `ASYNC` (flake8-async 异步编程反模式检查，如 `asyncio.Event` 替代轮询睡眠)
+  - `PIE` (flake8-pie 冗余代码消除)
+  - `Q` / `RSE` / `RET` (引号、raise 括号与返回值规范)
+  - `A` (内建函数命名防覆盖)
+  - `YTT` (flake8-2020 版本兼容性检查)
+- **全局豁免（均有明确理由）**：
+  - `B008`：FastAPI `Depends()` 注入参数的标准模式
+  - `RUF001` / `RUF002` / `RUF003`：注释与文档字符串中的中文全角标点（项目文档语言为中文）
+  - `ASYNC109` / `ASYNC230` / `ASYNC240`：异步函数中的超时参数与本地文件访问（单机自托管场景）
+  - `E501`：行宽由 formatter 统一处理
+- **按文件豁免**：`main.py` 豁免 `E402`（启动时需先注入 `sys.path`）；`tests/**` 豁免动态殊性规则
 - **检查与格式化指令**：
   ```bash
   # 代码风格与 Lint 检查
@@ -97,7 +105,6 @@ uv run python3 main.py server --port 8080
   # 自动格式化与 import 排序修复
   ruff check . --fix
   ```
-
 ### 3.3 自动化检查命令与执行守则
 
 在提交代码改动前，必须确保以下工具链检查通过：

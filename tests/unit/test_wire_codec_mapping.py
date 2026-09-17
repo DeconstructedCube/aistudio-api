@@ -9,7 +9,6 @@ from aistudio_api.infrastructure.gateway.wire_types import (
     ThinkingLevel,
 )
 
-
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
 

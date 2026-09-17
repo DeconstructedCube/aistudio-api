@@ -13,10 +13,9 @@ import shutil
 import time
 import uuid
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from hashlib import sha256
 from pathlib import Path
-
 
 from aistudio_api.config import settings
 from aistudio_api.infrastructure.account.account_store import AccountStore
@@ -269,11 +268,13 @@ class BrowserSession:
         self._template_lock = asyncio.Lock()
         self._in_flight: int = 0
         self._switching: bool = False
+        self._switch_event = asyncio.Event()
+        self._switch_event.set()
+
     @asynccontextmanager
     async def request_scope(self):
         """追踪正在进行的请求，防止切号时进程被强杀造成断流。"""
-        while self._switching:
-            await asyncio.sleep(0.1)
+        await self._switch_event.wait()
         self._in_flight += 1
         try:
             yield
@@ -292,6 +293,7 @@ class BrowserSession:
     async def switch_auth(self, auth_file: str | None) -> None:
         """Switch active auth file and invalidate browser profile/templates with request draining."""
         async with self._lock:
+            self._switch_event.clear()
             self._switching = True
             try:
                 # 等待正在处理的请求排干，最多等待 5 秒，避免直接切号杀进程导致进行中的流断连
@@ -307,7 +309,7 @@ class BrowserSession:
                 await self._close_internal()
             finally:
                 self._switching = False
-
+                self._switch_event.set()
     async def ensure_hook_page(self) -> bool:
         """Ensure page is navigated to AI Studio and hooks are installed."""
         page = await self.ensure_context()
@@ -367,12 +369,12 @@ class BrowserSession:
                 original_text = ""
                 try:
                     await page.wait_for_selector("textarea", timeout_s=20.0)
-                except Exception:
+                except Exception as err:
                     dbg_url = page.url
                     if "available-regions" in (dbg_url or ""):
                         raise RuntimeError(
                             "Google AI Studio 地区限制: 访问被重定向至 available-regions"
-                        )
+                        ) from err
                     dbg_title = await page.title()
                     raw_dbg_body = await page.evaluate(
                         "() => document.body?.innerText?.substring(0, 300) || ''"
@@ -380,7 +382,7 @@ class BrowserSession:
                     dbg_body = str(raw_dbg_body or "")
                     raise RuntimeError(
                         f"textarea not found while capturing BotGuardService; url={dbg_url}, title={dbg_title}, body={dbg_body[:200]}"
-                    )
+                    ) from err
                 original_text = str(
                     (await page.evaluate("() => document.querySelector('textarea')?.value || ''")) or ""
                 )
@@ -408,10 +410,8 @@ class BrowserSession:
                 raise RuntimeError("BotGuardService capture timeout")
             finally:
                 unsub()
-                try:
+                with suppress(Exception):
                     await page.fill("textarea", original_text)
-                except Exception:
-                    pass
 
     async def import_cookies(
         self, cookie_string: str, auth_file: str | None = None
@@ -532,10 +532,8 @@ class BrowserSession:
         finally:
             unsub_req()
             unsub_resp()
-            try:
+            with suppress(Exception):
                 await page.fill("textarea", original_text)
-            except Exception:
-                pass
 
     async def generate_snapshot(self, contents: list[AistudioContent]) -> str:
         """Generate a BotGuard snapshot token for given content payload."""
@@ -582,10 +580,8 @@ class BrowserSession:
                 )
                 if attempt < 2:
                     await page.wait_for_timeout(300)
-                    try:
+                    with suppress(Exception):
                         await self.ensure_botguard_service()
-                    except Exception:
-                        pass
 
         raise RuntimeError(
             f"Snapshot generation failed for content hash {content_hash[:8]}"
@@ -766,13 +762,11 @@ class BrowserSession:
                 if not status_sent:
                     raise RuntimeError("streaming request timeout: no response status")
             finally:
-                try:
+                with suppress(Exception):
                     await page.evaluate(
                         "(rid) => { if (window.__stream_abort && window.__stream_abort[rid]) window.__stream_abort[rid](); }",
                         rid,
                     )
-                except Exception:
-                    pass
 
     async def close(self) -> None:
         """Close browser session and free resources."""
@@ -781,17 +775,13 @@ class BrowserSession:
 
     async def _close_internal(self) -> None:
         if self._cdp_client is not None:
-            try:
+            with suppress(Exception):
                 await self._cdp_client.close()
-            except Exception:
-                pass
             self._cdp_client = None
 
         if self._proc is not None:
-            try:
+            with suppress(Exception):
                 self._proc.terminate()
-            except Exception:
-                pass
             self._proc = None
 
         self._page = None
@@ -950,17 +940,13 @@ class BrowserSession:
                     raise RuntimeError(
                         f"Cookie 认证失败，已被重定向到 Google 登录页。 (url={current_url})"
                     )
-                try:
+                with suppress(Exception):
                     await page.evaluate(DIALOG_CLEANUP_JS)
-                except Exception:
-                    pass
 
                 for _ in range(15):
-                    try:
+                    with suppress(Exception):
                         if await page.evaluate("() => !!window.default_MakerSuite"):
                             break
-                    except Exception:
-                        pass
                     await page.wait_for_timeout(500)
 
                 await self._verify_account_identity(page)

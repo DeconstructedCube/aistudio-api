@@ -18,7 +18,10 @@ from aistudio_api.application.api_service_common import (
 )
 from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
 from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
-from aistudio_api.infrastructure.gateway.capture import CapturedRequest, RequestCaptureService
+from aistudio_api.infrastructure.gateway.capture import (
+    CapturedRequest,
+    RequestCaptureService,
+)
 from aistudio_api.infrastructure.gateway.session import BrowserSession
 
 
@@ -27,7 +30,7 @@ async def test_capture_service_concurrency_and_caching():
     """并发请求抓取模板时，模板捕获只执行 1 次，其余直接命中缓存。"""
     mock_session = MagicMock(spec=BrowserSession)
     mock_session.generate_snapshot = AsyncMock(return_value="mock_snap")
-    
+
     call_count = 0
 
     async def fake_capture_template(model: str):

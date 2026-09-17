@@ -4,7 +4,6 @@ from aistudio_api.api.responses import (
 )
 
 
-
 def test_to_gemini_usage_metadata_uses_visible_and_reasoning_tokens():
     assert to_gemini_usage_metadata(
         {

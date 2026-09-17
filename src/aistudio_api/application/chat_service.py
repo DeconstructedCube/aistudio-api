@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import base64
-import os
+import contextlib
 import tempfile
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aistudio_api.api.schemas import GeminiGenerateContentRequest, GeminiTool
+
+from dataclasses import dataclass
 
 from aistudio_api.infrastructure.gateway.model_defaults import resolve_model_defaults
 from aistudio_api.infrastructure.gateway.wire_codec import build_tools_from_names
@@ -20,7 +23,6 @@ from aistudio_api.infrastructure.gateway.wire_types import (
     AistudioThinkingConfig,
     ThinkingLevel,
 )
-from dataclasses import dataclass
 
 
 @dataclass
@@ -59,20 +61,16 @@ SCHEMA_TYPE_CODES = {
 
 def cleanup_files(paths: list[str]):
     for path in paths:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
+        with contextlib.suppress(OSError):
+            Path(path).unlink()
 
 
 def inline_data_to_file(mime_type: str, data: str, tmp_dir: str | None = None) -> str:
-    effective_tmp = tmp_dir or tempfile.gettempdir()
+    effective_tmp = Path(tmp_dir) if tmp_dir else Path(tempfile.gettempdir())
     ext = mime_type.split("/")[-1].replace("jpeg", "jpg")
-    path = os.path.join(effective_tmp, f"aistudio_img_{uuid.uuid4().hex[:8]}.{ext}")
-    with open(path, "wb") as file:
-        file.write(base64.b64decode(data))
-    return path
-
+    path_obj = effective_tmp / f"aistudio_img_{uuid.uuid4().hex[:8]}.{ext}"
+    path_obj.write_bytes(base64.b64decode(data))
+    return str(path_obj)
 
 def encode_schema_to_wire(schema: dict[str, object], *, include_required: bool = True) -> list[object]:
     schema_type = str(schema.get("type") or "")
@@ -152,9 +150,8 @@ def _normalize_gemini_modalities(value: object) -> AistudioImageOutputMode | Non
 
 
 def _normalize_gemini_thinking_config(value: object) -> list[object] | dict[str, object] | None:
-    if value is None or isinstance(value, (list, dict)):
-        if value is None or isinstance(value, list):
-            return value
+    if value is None or isinstance(value, list):
+        return value
     if not isinstance(value, dict):
         raise ValueError(
             "generationConfig.thinkingConfig must be an object or wire array"

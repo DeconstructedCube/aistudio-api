@@ -10,7 +10,6 @@ import time
 import uuid
 from collections.abc import Iterable
 
-
 logger = logging.getLogger("aistudio.cookie_parser")
 
 DEFAULT_API_KEY = "AIzaSyDdP816MREB3SkjZO04QXbjsigfcI0GWOs"
@@ -62,7 +61,7 @@ def parse_raw_cookies(raw: object) -> dict[str, str]:
         text = re.sub(r"^cookie:\s*", "", text, flags=re.IGNORECASE)
 
     # 1. 尝试 JSON 格式
-    if text.startswith("{") or text.startswith("["):
+    if text.startswith(("{", "[")):
         try:
             obj = json.loads(text)
             if isinstance(obj, list):

@@ -62,7 +62,9 @@ def require_web_auth(request: Request) -> None:
 
 def require_api_key(request: Request) -> None:
     """保护对外 Gemini API 路由 (通过 config.yaml 中的 api_keys 配置)。"""
-    from aistudio_api.infrastructure.gateway.model_defaults import get_configured_api_keys
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        get_configured_api_keys,
+    )
 
     configured_keys = get_configured_api_keys()
     all_valid_keys = configured_keys | settings.api_keys
