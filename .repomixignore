@@ -1,0 +1,14 @@
+# Large test fixtures (e.g. base64 images)
+tests/fixtures/**
+
+# Compiled static assets (original Vue/TS source is in web/)
+src/aistudio_api/static/assets/**
+
+# Package lock files & build cache artifacts
+*.lock
+bun.lock
+uv.lock
+*.tsbuildinfo
+
+# Repomix output
+repomix-output.*

@@ -36,3 +36,7 @@ node_modules/
 web/node_modules/
 web/dist/
 
+# Repomix outputs
+repomix-output.*
+repomix.config.*
+
