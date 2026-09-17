@@ -27,9 +27,9 @@ _AUTH_COOKIE_NAMES = {
 }
 
 _DOMAIN_OVERRIDES: dict[str, list[str]] = {
-    "OSID": [".youtube.com"],
-    "__Secure-OSID": [".youtube.com"],
-    "__Secure-BUCKET": ["aistudio.google.com"],
+    "OSID": ["aistudio.google.com", ".google.com"],
+    "__Secure-OSID": ["aistudio.google.com", ".google.com"],
+    "__Secure-BUCKET": ["aistudio.google.com", ".google.com"],
     "OTZ": ["accounts.google.com"],
     "__Host-GAPS": ["accounts.google.com"],
     "__Host-1PLSID": ["accounts.google.com"],
@@ -38,8 +38,8 @@ _DOMAIN_OVERRIDES: dict[str, list[str]] = {
     "SMSV": ["accounts.google.com"],
     "LSOLH": ["accounts.google.com"],
     "ACCOUNT_CHOOSER": ["accounts.google.com"],
-    "__Secure-1PSIDTS": [".youtube.com"],
-    "__Secure-3PSIDTS": [".youtube.com"],
+    "__Secure-1PSIDTS": [".google.com", "aistudio.google.com", "accounts.google.com"],
+    "__Secure-3PSIDTS": [".google.com", "aistudio.google.com", "accounts.google.com"],
 }
 
 

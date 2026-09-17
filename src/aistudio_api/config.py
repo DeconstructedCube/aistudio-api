@@ -95,14 +95,26 @@ def discover_auth_file() -> str | None:
 
 
 def discover_proxy_url() -> str | None:
-    return (
+    env_proxy = (
         os.getenv("AISTUDIO_PROXY")
         or os.getenv("HTTPS_PROXY")
         or os.getenv("https_proxy")
         or os.getenv("HTTP_PROXY")
         or os.getenv("http_proxy")
     )
-
+    if env_proxy:
+        return env_proxy
+    # 尝试自动探测本地代理（如 Termux 下的 Clash / v2ray）
+    import socket
+    for port in (7890, 10808):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.05)
+                if s.connect_ex(("127.0.0.1", port)) == 0:
+                    return f"http://127.0.0.1:{port}"
+        except Exception:
+            pass
+    return None
 
 def build_browser_proxy(proxy_url: str | None) -> dict[str, str] | None:
     if not proxy_url:

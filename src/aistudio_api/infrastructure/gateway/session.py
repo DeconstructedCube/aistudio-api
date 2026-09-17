@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
 import time
 import uuid
@@ -18,6 +19,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from aistudio_api.config import settings
+from aistudio_api.domain.errors import SessionExpiredError
 from aistudio_api.infrastructure.account.account_store import AccountStore
 from aistudio_api.infrastructure.browser.browser_engine import (
     ChromiumProcess,
@@ -75,6 +77,8 @@ INSTALL_HOOKS_JS = r"""
 """
 
 DIALOG_CLEANUP_JS = """(() => {
+    const cookieBtn = document.querySelector('.glue-cookie-notification-bar__accept');
+    if (cookieBtn) { try { cookieBtn.click(); } catch(e) {} }
     document.querySelectorAll('button, mat-card, a, [role="button"]').forEach((el) => {
         const text = (el.textContent || el.innerText || '').trim().toLowerCase();
         if (['dismiss', 'close', 'accept', 'ok', 'agree', 'got it', 'start building', 'code and chat'].some(w => text.includes(w))) {
@@ -809,7 +813,14 @@ class BrowserSession:
 
         self._cdp_client = CDPClient(port=self.port)
         self._page = await self._cdp_client.connect_page(block_assets=True)
-
+        with suppress(Exception):
+            tz_id = os.getenv("AISTUDIO_TIMEZONE", "Asia/Tokyo")
+            await self._page.cdp.send(
+                "Emulation.setTimezoneOverride", {"timezoneId": tz_id}
+            )
+            await self._page.cdp.send(
+                "Emulation.setLocaleOverride", {"locale": "en-US"}
+            )
         if should_seed_from_auth and self._auth_file and Path(self._auth_file).exists():
             try:
                 data = json.loads(Path(self._auth_file).read_text(encoding="utf-8"))
@@ -937,8 +948,8 @@ class BrowserSession:
                     raise RuntimeError(
                         f"Google AI Studio 地区限制 (IP 漏了/不支持): {current_url}"
                     )
-                if "accounts.google.com" in current_url and "signin" in current_url:
-                    raise RuntimeError(
+                if "accounts.google.com" in current_url and ("signin" in current_url or "ServiceLogin" in current_url):
+                    raise SessionExpiredError(
                         f"Cookie 认证失败，已被重定向到 Google 登录页。 (url={current_url})"
                     )
                 with suppress(Exception):
@@ -988,7 +999,10 @@ class BrowserSession:
                 const buttons = Array.from(document.querySelectorAll('button'));
                 const runBtn = buttons.find(b => {
                     const t = (b.innerText || b.textContent || '').trim();
-                    return t === 'Run' || t.startsWith('Run\\n') || t.startsWith('Run Ctrl');
+                    return t === 'Run' || t.startsWith('Run\\n') || t.startsWith('Run Ctrl')
+                        || t === 'Build' || t.startsWith('Build\\n') || t.startsWith('BuildCtrl')
+                        || b.classList.contains('build-button')
+                        || b.classList.contains('ctrl-enter-submits');
                 });
                 if (runBtn) {
                     runBtn.click();
@@ -1003,7 +1017,11 @@ class BrowserSession:
         if await page.send_control_enter("textarea"):
             return True
 
+        if await page.click("button.build-button"):
+            return True
         if await page.click("button.ctrl-enter-submits"):
+            return True
+        if await page.click("button:has-text('Build')"):
             return True
         if await page.click("button:has-text('Run')"):
             return True
@@ -1011,20 +1029,41 @@ class BrowserSession:
 
     async def _has_run_button(self, page: CDPPage) -> bool:
         try:
-            has_stop = await page.query_selector("button:has-text('Stop')")
-            if has_stop:
-                return False
-            if await page.query_selector("button.ctrl-enter-submits"):
-                return True
-            return await page.query_selector("button:has-text('Run')")
+            return bool(
+                await page.evaluate(
+                    """(() => {
+                        const buttons = Array.from(document.querySelectorAll('button'));
+                        const hasStop = buttons.some(b => {
+                            const t = (b.innerText || b.textContent || '').trim();
+                            return t === 'Stop' || t.startsWith('Stop') || b.classList.contains('stop-button');
+                        });
+                        if (hasStop) return false;
+                        return buttons.some(b => {
+                            const t = (b.innerText || b.textContent || '').trim();
+                            return t === 'Run' || t.startsWith('Run')
+                                || t === 'Build' || t.startsWith('Build')
+                                || b.classList.contains('build-button')
+                                || b.classList.contains('ctrl-enter-submits');
+                        });
+                    })()"""
+                )
+            )
         except Exception:
             return False
 
     async def _wait_until_idle(self, page: CDPPage) -> None:
-        for _ in range(60):
+        for _ in range(25):
             if await self._has_run_button(page):
                 return
             await page.wait_for_timeout(1000)
+        is_running = await page.evaluate(
+            """(() => {
+                const buttons = Array.from(document.querySelectorAll('button'));
+                return buttons.some(b => (b.innerText || b.textContent || '').trim().startsWith('Stop') || b.classList.contains('stop-button'));
+            })()"""
+        )
+        if not is_running:
+            return
         raise RuntimeError("page never became idle")
 
     async def _verify_account_identity(self, page: CDPPage) -> None:

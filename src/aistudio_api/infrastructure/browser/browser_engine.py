@@ -226,11 +226,12 @@ def build_chromium_args(
     )
     if fingerprint_seed is not None:
         args.append(f"--fingerprint={fingerprint_seed}")
-    args.append(
-        "--fingerprint-platform=macos"
-        if platform.system() == "Darwin"
-        else "--fingerprint-platform=windows"
-    )
+    if platform.system() == "Darwin":
+        args.append("--fingerprint-platform=macos")
+    elif _is_termux() or platform.system() == "Linux":
+        args.append("--fingerprint-platform=linux")
+    else:
+        args.append("--fingerprint-platform=windows")
 
     if extra_args:
         args.extend(extra_args)

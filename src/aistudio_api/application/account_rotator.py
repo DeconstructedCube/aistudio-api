@@ -117,12 +117,15 @@ class AccountStats:
         cooldown_seconds = get_seconds_until_pacific_midnight()
 
         if model:
+            limit_count = self.model_rate_limited.get(model, 0) + 1
             self.model_requests[model] = self.model_requests.get(model, 0) + 1
-            self.model_rate_limited[model] = (
-                self.model_rate_limited.get(model, 0) + 1
-            )
-            self.model_cooldowns[model] = now + cooldown_seconds
-            self.model_rate_limited_dates[model] = la_date
+            self.model_rate_limited[model] = limit_count
+            # 前两次 429 设置 60s 短暂冷却（应对并发/RPM 抖动），连续第 3 次以上才视为当日配额耗尽锁定至美西午夜
+            if limit_count <= 2:
+                self.model_cooldowns[model] = now + 60.0
+            else:
+                self.model_cooldowns[model] = now + cooldown_seconds
+                self.model_rate_limited_dates[model] = la_date
         else:
             self.rate_limited_date_la = la_date
 

@@ -7,6 +7,9 @@ class AistudioError(Exception):
 class AuthError(AistudioError):
     pass
 
+class SessionExpiredError(AuthError):
+    """明确被 Google 重定向至登录页（Cookie 真正失效）。"""
+
 
 class UsageLimitExceeded(AistudioError):
     pass
