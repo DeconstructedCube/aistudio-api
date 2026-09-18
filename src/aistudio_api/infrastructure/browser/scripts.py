@@ -225,7 +225,7 @@ STREAMING_INIT_JS = """(args) => {
         }
         cleanup();
     });
-};
+}
 """
 
 STREAM_POLL_JS = """(rid) => window.__stream_next && window.__stream_next[rid] ? window.__stream_next[rid](250) : {type: 'error', message: 'stream_session_lost'}"""
@@ -274,7 +274,7 @@ HOOKED_REQUEST_JS = """(args) => {
             resolve({status: 0, body: msg});
         });
     });
-};
+}
 """
 
 SNAPSHOT_GENERATE_JS = """

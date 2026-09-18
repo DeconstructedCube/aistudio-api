@@ -102,6 +102,29 @@ async def test_cdp_page_evaluate_argument_wrapping():
 
 
 @pytest.mark.asyncio
+async def test_cdp_page_evaluate_trailing_semicolon_handling():
+    """Test CDPPage.evaluate strips trailing semicolons before wrapping into expression."""
+    conn = MagicMock(spec=CDPConnection)
+    conn.send = AsyncMock(
+        return_value={"result": {"type": "string", "value": "ok"}}
+    )
+    page = CDPPage(conn, target_id="target-1")
+
+    # 1. Function with trailing semicolon and arguments
+    await page.evaluate("(args) => { return args.val; };\n", {"val": "test"})
+    call_args = conn.send.call_args[0]
+    expr1 = call_args[1]["expression"]
+    assert ";)" not in expr1
+    assert expr1.startswith("((args) => { return args.val; })(")
+
+    # 2. Arrow function with trailing semicolon and without arguments
+    await page.evaluate("() => { return 42; };;;", None)
+    call_args2 = conn.send.call_args[0]
+    expr2 = call_args2[1]["expression"]
+    assert ";)" not in expr2
+    assert expr2 == "(() => { return 42; })()"
+
+@pytest.mark.asyncio
 async def test_cdp_page_set_cookies_normalization():
     """Test cookie normalization handles __Host- prefixes and domains properly."""
     conn = MagicMock(spec=CDPConnection)

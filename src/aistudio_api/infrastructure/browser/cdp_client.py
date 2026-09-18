@@ -304,9 +304,12 @@ class CDPPage:
             expr = expr[3:].strip()
 
         if args is not None:
-            expr = f"({expr})({json.dumps(args)})"
+            clean_expr = expr.rstrip()
+            while clean_expr.endswith(";"):
+                clean_expr = clean_expr[:-1].rstrip()
+            expr = f"({clean_expr})({json.dumps(args)})"
         else:
-            is_iife = bool(re.search(r"\)\s*\([^)]*\)\s*;?$", expr))
+            is_iife = bool(re.search(r"\)\s*\([^)]*\)\s*\)*\s*;?$", expr))
             if not is_iife:
                 is_arrow = bool(
                     re.match(
@@ -315,7 +318,10 @@ class CDPPage:
                 )
                 is_fn = bool(re.match(r"^(?:async\s+)?function\b", expr))
                 if is_arrow or is_fn:
-                    expr = f"({expr})()"
+                    clean_expr = expr.rstrip()
+                    while clean_expr.endswith(";"):
+                        clean_expr = clean_expr[:-1].rstrip()
+                    expr = f"({clean_expr})()"
         res = await self.cdp.send(
             "Runtime.evaluate",
             {
