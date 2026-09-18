@@ -50,7 +50,7 @@ class RequestCaptureService:
         self,
         prompt: str,
         model: str = DEFAULT_TEXT_MODEL,
-        images: list[str] | None = None,
+        images: list[str | tuple[str, str]] | None = None,
         contents: list[AistudioContent] | None = None,
         system_instruction: str | None = None,
         system_instruction_content: AistudioContent | None = None,
@@ -127,7 +127,26 @@ class RequestCaptureService:
             return template
 
     def _build_capture_content(
-        self, prompt: str, images: list[str] | None
+        self, prompt: str, images: list[str | tuple[str, str]] | None
     ) -> AistudioContent:
-        parts = [AistudioPart(text=prompt)]
+        parts = []
+        for item in images or []:
+            if isinstance(item, tuple) and len(item) == 2:
+                parts.append(AistudioPart(inline_data=item))
+            elif isinstance(item, str):
+                import base64
+                import mimetypes
+                from pathlib import Path
+
+                mime = mimetypes.guess_type(item)[0] or "image/jpeg"
+                data = Path(item).read_bytes()
+                parts.append(
+                    AistudioPart(
+                        inline_data=(
+                            mime,
+                            base64.b64encode(data).decode("ascii"),
+                        )
+                    )
+                )
+        parts.append(AistudioPart(text=prompt))
         return AistudioContent(role="user", parts=parts)

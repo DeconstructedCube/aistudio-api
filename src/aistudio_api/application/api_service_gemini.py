@@ -341,24 +341,8 @@ def _build_gemini_streaming_response(
                     ):
                         has_yielded_data = True
                         if event_type == "body" and text:
-                            yield (
-                                "data: "
-                                + json.dumps(
-                                    {
-                                        "candidates": [
-                                            {
-                                                "content": {
-                                                    "role": "model",
-                                                    "parts": [{"text": text}],
-                                                },
-                                                "index": 0,
-                                            }
-                                        ]
-                                    },
-                                    ensure_ascii=False,
-                                )
-                                + "\n\n"
-                            )
+                            safe_text = json.dumps(text, ensure_ascii=False)
+                            yield f'data: {{"candidates": [{{"content": {{"role": "model", "parts": [{{"text": {safe_text}}}]}}, "index": 0}}]}}\n\n'
                         elif event_type == "tool_calls" and text:
                             fc_list = text if isinstance(text, list) else []
                             yield (
@@ -388,26 +372,8 @@ def _build_gemini_streaming_response(
                                 + "\n\n"
                             )
                         elif event_type == "thought_signature" and text:
-                            yield (
-                                "data: "
-                                + json.dumps(
-                                    {
-                                        "candidates": [
-                                            {
-                                                "content": {
-                                                    "role": "model",
-                                                    "parts": [
-                                                        {"thoughtSignature": str(text)}
-                                                    ],
-                                                },
-                                                "index": 0,
-                                            }
-                                        ]
-                                    },
-                                    ensure_ascii=False,
-                                )
-                                + "\n\n"
-                            )
+                            safe_sig = json.dumps(str(text), ensure_ascii=False)
+                            yield f'data: {{"candidates": [{{"content": {{"role": "model", "parts": [{{"thoughtSignature": {safe_sig}}}]}}, "index": 0}}]}}\n\n'
                         elif event_type == "images" and text:
                             img_list = text if isinstance(text, list) else []
                             yield (
@@ -466,29 +432,8 @@ def _build_gemini_streaming_response(
                                 + "\n\n"
                             )
                         elif event_type == "thinking" and text:
-                            yield (
-                                "data: "
-                                + json.dumps(
-                                    {
-                                        "candidates": [
-                                            {
-                                                "content": {
-                                                    "role": "model",
-                                                    "parts": [
-                                                        {
-                                                            "text": text,
-                                                            "thought": True,
-                                                        }
-                                                    ],
-                                                },
-                                                "index": 0,
-                                            }
-                                        ]
-                                    },
-                                    ensure_ascii=False,
-                                )
-                                + "\n\n"
-                            )
+                            safe_text = json.dumps(text, ensure_ascii=False)
+                            yield f'data: {{"candidates": [{{"content": {{"role": "model", "parts": [{{"text": {safe_text}, "thought": true}}]}}, "index": 0}}]}}\n\n'
                         elif event_type == "usage":
                             final_usage = text if isinstance(text, dict) else None
                     break
@@ -510,28 +455,8 @@ def _build_gemini_streaming_response(
             if normalized is not None:
                 runtime_state.record(normalized.model, "success", final_usage)
             if final_usage:
-                yield (
-                    "data: "
-                    + json.dumps(
-                        {
-                            "candidates": [
-                                {
-                                    "content": {
-                                        "role": "model",
-                                        "parts": [],
-                                    },
-                                    "finishReason": "STOP",
-                                    "index": 0,
-                                }
-                            ],
-                            "usageMetadata": to_gemini_usage_metadata(
-                                final_usage
-                            ).model_dump(mode="json"),
-                        },
-                        ensure_ascii=False,
-                    )
-                    + "\n\n"
-                )
+                usage_json = to_gemini_usage_metadata(final_usage).model_dump_json()
+                yield f'data: {{"candidates": [{{"content": {{"role": "model", "parts": []}}, "finishReason": "STOP", "index": 0}}], "usageMetadata": {usage_json}}}\n\n'
         except Exception as exc:
             code, msg, status_str = classify_gemini_error_payload(exc)
             yield (

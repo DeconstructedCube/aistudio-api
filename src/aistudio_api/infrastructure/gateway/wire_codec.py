@@ -219,7 +219,7 @@ class AistudioWireCodec:
         system_instruction_content: AistudioContent | None = None,
         tools: list[list] | None = None,
         safety_settings: list[list] | None = None,
-        images: list[str] | None = None,
+        images: list[str | tuple[str, str]] | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
@@ -286,11 +286,14 @@ class AistudioWireCodec:
         return self.encode(request)
 
     def _build_user_content(
-        self, prompt: str, images: list[str] | None
+        self, prompt: str, images: list[str | tuple[str, str]] | None
     ) -> AistudioContent:
         parts = []
-        for img_path in images or []:
-            parts.append(AistudioPart(inline_data=_encode_image(img_path)))
+        for item in images or []:
+            if isinstance(item, tuple) and len(item) == 2:
+                parts.append(AistudioPart(inline_data=item))
+            elif isinstance(item, str):
+                parts.append(AistudioPart(inline_data=_encode_image(item)))
         parts.append(AistudioPart(text=prompt))
         return AistudioContent(role="user", parts=parts)
 
@@ -408,7 +411,7 @@ def modify_body(
     system_instruction_content: AistudioContent | None = None,
     tools: list[list] | None = None,
     safety_settings: list[list] | None = None,
-    images: list[str] | None = None,
+    images: list[str | tuple[str, str]] | None = None,
     temperature: float | None = None,
     top_p: float | None = None,
     top_k: int | None = None,

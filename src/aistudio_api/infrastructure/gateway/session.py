@@ -27,8 +27,10 @@ from aistudio_api.infrastructure.browser.cdp_client import CDPClient, CDPPage
 from aistudio_api.infrastructure.browser.scripts import (
     CHECK_IDENTITY_JS,
     DIALOG_CLEANUP_JS,
+    DOM_GC_CLEANUP_JS,
     INSTALL_HOOKS_JS,
     SNAPSHOT_GENERATE_JS,
+    STOP_GENERATION_JS,
 )
 from aistudio_api.infrastructure.gateway.transport import XHRStreamTransport
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
@@ -98,13 +100,12 @@ class BrowserSession:
             return await self._ensure_browser_cdp()
 
     async def switch_auth(self, auth_file: str | None) -> None:
-        """Switch active auth file and invalidate browser profile/templates with request draining."""
+        """Switch active auth file and reload cookies into current page without killing Chromium."""
         async with self._lock:
             self._switch_event.clear()
             self._switching = True
             try:
                 # 等待正在处理的请求排干，最多等待 15 秒，避免直接切号杀进程导致进行中的流断连
-                # 但也不能无期限等待，否则会造成所有新请求排队超时
                 for _ in range(150):
                     if self._in_flight <= 0:
                         break
@@ -113,8 +114,40 @@ class BrowserSession:
                 self._auth_file = auth_file
                 self._profile_dir = self._derive_profile_dir(auth_file)
                 self._templates.clear()
-                self._bootstrap_template = dict(DEFAULT_BOOTSTRAP_TEMPLATE)
-                await self._close_internal()
+                self._bootstrap_template = None
+
+                hot_switched = False
+                if self._page is not None and not self._page.is_closed():
+                    try:
+                        # 1. 清理当前会话 Cookie 与 Cache
+                        with suppress(Exception):
+                            await self._page.cdp.send("Network.clearBrowserCookies")
+                            await self._page.cdp.send("Network.clearBrowserCache")
+
+                        # 2. 读取目标账号的 Cookie 并注入当前页面上下文
+                        if auth_file and Path(auth_file).exists():
+                            data = json.loads(
+                                Path(auth_file).read_text(encoding="utf-8")
+                            )
+                            new_cookies = data.get("cookies") or []
+                            if new_cookies:
+                                await self._page.set_cookies(new_cookies)
+
+                        # 3. 页面导航至目标账号对应的 /u/{auth_user}/ 路径并执行 DOM GC 清理
+                        await self._goto_aistudio(self._page)
+                        await self._install_hooks(self._page)
+                        with suppress(Exception):
+                            await self._page.evaluate(DOM_GC_CLEANUP_JS)
+                        hot_switched = True
+                        log.info(
+                            "[switch_auth] 账号热切成功，复用单进程 (auth_file=%s)",
+                            auth_file,
+                        )
+                    except Exception as e:
+                        log.warning("[switch_auth] 账号热切失败，降级重启浏览器: %s", e)
+
+                if not hot_switched:
+                    await self._close_internal()
             finally:
                 self._switching = False
                 self._switch_event.set()
@@ -212,15 +245,19 @@ class BrowserSession:
                 for i in range(45):
                     await page.wait_for_timeout(1000)
                     if await page.evaluate("() => !!window.__bg_service"):
-                        await self._wait_until_idle(page)
+                        # 预热即刻截断：捕获到 BotGuardService 后立即停止生成，无需等待模型吐字
+                        with suppress(Exception):
+                            await page.evaluate(STOP_GENERATION_JS)
                         if captured and self._bootstrap_template is None:
                             self._bootstrap_template = dict(captured)
                         await page.fill("textarea", original_text)
+                        # 执行 DOM 垃圾回收，消除历史对话 DOM 堆积
+                        with suppress(Exception):
+                            await page.evaluate(DOM_GC_CLEANUP_JS)
                         log.debug(
                             f"[timing] botguard captured after {i + 1}s, total {time.time() - t0:.1f}s"
                         )
                         return page
-
                 raise RuntimeError("BotGuardService capture timeout")
             finally:
                 unsub()
@@ -341,8 +378,10 @@ class BrowserSession:
                 for _ in range(30):
                     await page.wait_for_timeout(1000)
                     if captured:
+                        # 模板捕获即刻截断：一旦拦截到请求，立即终止生成，避免无意义等待
+                        with suppress(Exception):
+                            await page.evaluate(STOP_GENERATION_JS)
                         break
-
                 if not captured:
                     if self._bootstrap_template:
                         log.warning(
@@ -358,8 +397,10 @@ class BrowserSession:
                         )
                     raise RuntimeError(f"template capture timeout for model={model}")
 
-                await self._wait_until_idle(page)
                 await page.fill("textarea", original_text)
+                # 模板捕获完成后执行 DOM 垃圾回收，保持低内存水位
+                with suppress(Exception):
+                    await page.evaluate(DOM_GC_CLEANUP_JS)
                 self._templates[model] = captured
                 self._templates[clean_model] = captured
                 return captured

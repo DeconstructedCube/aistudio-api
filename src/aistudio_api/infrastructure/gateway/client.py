@@ -125,7 +125,7 @@ class AIStudioClient:
         self,
         prompt: str,
         model: str = DEFAULT_TEXT_MODEL,
-        images: list[str] | None = None,
+        images: list[str | tuple[str, str]] | None = None,
         contents: list[AistudioContent] | None = None,
         system_instruction: str | None = None,
         system_instruction_content: AistudioContent | None = None,
@@ -167,7 +167,7 @@ class AIStudioClient:
         *,
         prompt: str,
         model: str = DEFAULT_TEXT_MODEL,
-        images: list[str] | None = None,
+        images: list[str | tuple[str, str]] | None = None,
         system_instruction: str | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
@@ -201,7 +201,7 @@ class AIStudioClient:
         *,
         model: str = DEFAULT_TEXT_MODEL,
         capture_prompt: str,
-        capture_images: list[str] | None = None,
+        capture_images: list[str | tuple[str, str]] | None = None,
         contents: list[AistudioContent] | None = None,
         system_instruction_content: AistudioContent | None = None,
         tools: list[list] | None = None,
@@ -254,7 +254,7 @@ class AIStudioClient:
         system_instruction: str | None = None,
         code_execution: bool = False,
         google_search: bool = False,
-        images: list[str] | None = None,
+        images: list[str | tuple[str, str]] | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
@@ -292,7 +292,7 @@ class AIStudioClient:
         *,
         model: str = DEFAULT_TEXT_MODEL,
         capture_prompt: str,
-        capture_images: list[str] | None = None,
+        capture_images: list[str | tuple[str, str]] | None = None,
         contents: list[AistudioContent] | None = None,
         system_instruction_content: AistudioContent | None = None,
         tools: list[list] | None = None,
@@ -354,7 +354,7 @@ class AIStudioClient:
         google_search: bool = False,
         image_search: bool = False,
         use_default_tools: bool = True,
-        images: list[str] | None = None,
+        images: list[str | tuple[str, str]] | None = None,
         contents: list[AistudioContent] | None = None,
     ) -> ModelOutput:
         logger.info(
@@ -429,23 +429,28 @@ class AIStudioClient:
         return output
 
     def _build_user_content(
-        self, prompt: str, images: list[str] | None = None
+        self,
+        prompt: str,
+        images: list[str | tuple[str, str]] | None = None,
     ) -> AistudioContent:
-        import base64
-        import mimetypes
-
         parts = []
-        for image_path in images or []:
-            mime = mimetypes.guess_type(image_path)[0] or "image/jpeg"
-            data = Path(image_path).read_bytes()
-            parts.append(
-                AistudioPart(
-                    inline_data=(
-                        mime,
-                        base64.b64encode(data).decode("ascii"),
+        for item in images or []:
+            if isinstance(item, tuple) and len(item) == 2:
+                parts.append(AistudioPart(inline_data=item))
+            elif isinstance(item, str):
+                import base64
+                import mimetypes
+
+                mime = mimetypes.guess_type(item)[0] or "image/jpeg"
+                data = Path(item).read_bytes()
+                parts.append(
+                    AistudioPart(
+                        inline_data=(
+                            mime,
+                            base64.b64encode(data).decode("ascii"),
+                        )
                     )
                 )
-            )
         parts.append(AistudioPart(text=prompt))
         return AistudioContent(role="user", parts=parts)
 

@@ -223,6 +223,9 @@ class CDPPage:
         await self.cdp.send("Runtime.enable")
         await self.cdp.send("Network.enable")
         await self.cdp.send("DOM.enable")
+        # Install native stream push binding
+        with contextlib.suppress(Exception):
+            await self.add_binding("__aistudio_stream_push__")
 
         # Track navigation URLs
         def on_navigated(params: dict[str, object]) -> None:
@@ -232,7 +235,6 @@ class CDPPage:
                 self._last_url = str(frame.get("url") or "")
 
         self.cdp.on("Page.frameNavigated", on_navigated)
-
         if block_assets:
             await self.set_blocked_urls(BLOCKED_URL_PATTERNS)
 
@@ -243,6 +245,22 @@ class CDPPage:
             log.debug("Configured Network.setBlockedURLs (%d patterns)", len(patterns))
         except Exception as e:
             log.warning("Failed to configure Network.setBlockedURLs: %s", e)
+
+    async def add_binding(self, name: str) -> None:
+        """Expose a global function in page JS that dispatches Runtime.bindingCalled events."""
+        await self.cdp.send("Runtime.addBinding", {"name": name})
+
+    def on_binding(
+        self, name: str, callback: Callable[[str], object]
+    ) -> Callable[[], None]:
+        """Listen for Runtime.bindingCalled events for a specific binding name."""
+
+        def listener(params: dict[str, object]) -> None:
+            if params.get("name") == name:
+                payload = str(params.get("payload") or "")
+                callback(payload)
+
+        return self.cdp.on("Runtime.bindingCalled", listener)
 
     async def evaluate(
         self,

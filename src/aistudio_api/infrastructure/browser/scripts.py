@@ -83,6 +83,12 @@ STREAMING_INIT_JS = """(args) => {
     window.__streams[rid] = state;
 
     function push(event) {
+        event.rid = rid;
+        if (typeof window.__aistudio_stream_push__ === 'function') {
+            try {
+                window.__aistudio_stream_push__(JSON.stringify(event));
+            } catch (e) {}
+        }
         if (state.waiter) {
             const waiter = state.waiter;
             state.waiter = null;
@@ -361,3 +367,31 @@ def build_hooked_request_args(
         "body": body,
         "timeout": timeout_s,
     }
+
+
+STOP_GENERATION_JS = """(() => {
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const stopBtn = buttons.find(b => {
+        const t = (b.innerText || b.textContent || '').trim();
+        return t === 'Stop' || t.startsWith('Stop') || b.classList.contains('stop-button');
+    });
+    if (stopBtn) {
+        try { stopBtn.click(); return true; } catch(e) {}
+    }
+    return false;
+})()"""
+
+DOM_GC_CLEANUP_JS = """(() => {
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const stopBtn = buttons.find(b => {
+        const t = (b.innerText || b.textContent || '').trim();
+        return t === 'Stop' || t.startsWith('Stop') || b.classList.contains('stop-button');
+    });
+    if (stopBtn) { try { stopBtn.click(); } catch(e) {} }
+
+    document.querySelectorAll('ms-chat-turn, ms-prompt-chunk, ms-chunk, ms-response-chunk, .chat-turn, .history-container').forEach(el => el.remove());
+    document.querySelectorAll('.cdk-overlay-backdrop, .cdk-overlay-container').forEach(el => el.remove());
+
+    const ta = document.querySelector('textarea');
+    if (ta) { ta.value = ''; }
+})()"""

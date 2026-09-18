@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
@@ -26,6 +27,37 @@ logger = logging.getLogger("aistudio.transport")
 
 class XHRStreamTransport:
     """Handles in-browser XHR request execution, streaming event collection, and resource cleanup."""
+
+    def __init__(self) -> None:
+        self._queues: dict[str, asyncio.Queue[dict[str, object]]] = {}
+        self._bound_page_ids: set[int] = set()
+
+    def _ensure_page_binding(self, page: CDPPage) -> None:
+        page_id = id(page)
+        if page_id in self._bound_page_ids:
+            return
+        self._bound_page_ids.add(page_id)
+
+        def on_stream_push(payload_str: str) -> None:
+            try:
+                data = json.loads(payload_str)
+                if isinstance(data, dict):
+                    rid = str(data.get("rid") or "")
+                    q = self._queues.get(rid)
+                    if q is not None:
+                        q.put_nowait(data)
+            except Exception as e:
+                logger.debug("Failed to dispatch stream push payload: %s", e)
+
+        if hasattr(page, "on_binding"):
+            page.on_binding("__aistudio_stream_push__", on_stream_push)
+        elif hasattr(page, "cdp") and hasattr(page.cdp, "on"):
+
+            def listener(params: dict[str, object]) -> None:
+                if params.get("name") == "__aistudio_stream_push__":
+                    on_stream_push(str(params.get("payload") or ""))
+
+            page.cdp.on("Runtime.bindingCalled", listener)
 
     async def send_hooked_request(
         self,
@@ -79,6 +111,20 @@ class XHRStreamTransport:
         }
         rid = uuid.uuid4().hex[:8]
 
+        # Ensure native binding on page and register local async queue
+        self._ensure_page_binding(page)
+        if hasattr(page, "add_binding"):
+            with suppress(Exception):
+                await page.add_binding("__aistudio_stream_push__")
+        elif hasattr(page, "cdp") and hasattr(page.cdp, "send"):
+            with suppress(Exception):
+                await page.cdp.send(
+                    "Runtime.addBinding", {"name": "__aistudio_stream_push__"}
+                )
+
+        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        self._queues[rid] = queue
+
         init_args = build_streaming_init_args(
             url=url,
             headers=clean_headers,
@@ -93,43 +139,47 @@ class XHRStreamTransport:
         is_terminal = False
 
         try:
-            while asyncio.get_running_loop().time() < deadline:
-                raw_event = await page.evaluate(STREAM_POLL_JS, rid)
-                if not raw_event or not isinstance(raw_event, dict):
-                    await asyncio.sleep(0.05)
-                    continue
-
-                event_type = str(raw_event.get("type") or "")
-                events_to_process: list[dict[str, object]] = []
-                if event_type == "batch":
-                    raw_list = raw_event.get("events")
-                    if isinstance(raw_list, list):
-                        events_to_process = [e for e in raw_list if isinstance(e, dict)]
+            while not is_terminal:
+                if not queue.empty():
+                    event = queue.get_nowait()
                 else:
-                    events_to_process = [raw_event]
-
-                for event in events_to_process:
-                    etype = str(event.get("type") or "")
-                    if etype == "idle":
-                        continue
-                    if etype == "status":
-                        status = int(str(event.get("status") or 0))
-                        yield ("status", status)
-                        status_sent = True
-                        continue
-                    if etype == "chunk":
-                        text = str(event.get("text") or "")
-                        if text:
-                            yield ("chunk", text.encode("utf-8"))
-                        continue
-                    if etype == "error":
-                        message = str(event.get("message") or "unknown error")
-                        raise RuntimeError(f"streaming request failed: {message}")
-                    if etype in ("done", "aborted"):
-                        is_terminal = True
+                    now = asyncio.get_running_loop().time()
+                    remaining = deadline - now
+                    if remaining <= 0:
                         break
 
-                if is_terminal:
+                    try:
+                        event = await asyncio.wait_for(
+                            queue.get(), timeout=min(remaining, 0.05)
+                        )
+                    except TimeoutError:
+                        with suppress(Exception):
+                            raw_event = await page.evaluate(STREAM_POLL_JS, rid)
+                            if isinstance(raw_event, dict):
+                                etype = str(raw_event.get("type") or "")
+                                if etype == "batch":
+                                    raw_events = raw_event.get("events")
+                                    if isinstance(raw_events, list):
+                                        for sub in raw_events:
+                                            if isinstance(sub, dict):
+                                                queue.put_nowait(sub)
+                                elif etype not in ("", "idle"):
+                                    queue.put_nowait(raw_event)
+                        continue
+                etype = str(event.get("type") or "")
+                if etype == "status":
+                    status = int(str(event.get("status") or 0))
+                    yield ("status", status)
+                    status_sent = True
+                elif etype == "chunk":
+                    text = str(event.get("text") or "")
+                    if text:
+                        yield ("chunk", text.encode("utf-8"))
+                elif etype == "error":
+                    message = str(event.get("message") or "unknown error")
+                    raise RuntimeError(f"streaming request failed: {message}")
+                elif etype in ("done", "aborted"):
+                    is_terminal = True
                     break
 
             if not status_sent:
@@ -137,5 +187,6 @@ class XHRStreamTransport:
             if not is_terminal:
                 raise TimeoutError("streaming response timed out before completion")
         finally:
+            self._queues.pop(rid, None)
             with suppress(Exception):
                 await page.evaluate(STREAM_CLEANUP_JS, rid)
