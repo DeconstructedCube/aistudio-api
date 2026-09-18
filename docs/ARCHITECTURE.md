@@ -37,37 +37,45 @@ flowchart TD
         AccountSvc["account_service.py<br/>账号激活与存储用例封装"]
     end
 
-    subgraph InfraLayer ["3. Infrastructure 基础设施层"]
-        subgraph GatewaySub ["协议转换与网关"]
-            CaptureSvc["capture.py<br/>单例模板缓存与捕获"]
-            WireCodec["wire_codec.py<br/>Protobuf-JSON 请求构造"]
-            WireParser["wire_parser.py<br/>Protobuf-JSON 响应解析"]
-            StreamingGateway["streaming.py<br/>增量 SSE 流式管道"]
-            Transport["transport.py<br/>CDP Native Binding 推送传输"]
+    subgraph DomainLayer ["3. Domain 领域层"]
+        Models["models.py<br/>纯净领域模型 (Candidate, ModelOutput)"]
+        Errors["errors.py<br/>统一异常体系 (AuthError, UsageLimitExceeded)"]
+    end
+
+    subgraph InfraLayer ["4. Infrastructure 基础设施层"]
+        subgraph GatewaySub ["协议网关与编解码"]
+            Client["client.py<br/>AIStudioClient 统一门面"]
+            CaptureSvc["capture.py<br/>单例模板捕获 (RequestCaptureService)"]
+            WireCodec["wire_codec.py<br/>Protobuf-JSON 请求构造与重写"]
+            WireParser["wire_parser.py<br/>Protobuf-JSON 响应解析器"]
+            StreamingGateway["streaming.py<br/>增量 SSE 流式管道调度"]
+            Transport["transport.py<br/>CDP Native Binding 推送传输与反压"]
+            ModelDefaults["model_defaults.py<br/>配置解析与 mtime 内存缓存"]
         end
         subgraph BrowserSub ["浏览器与 CDP 通信"]
             BrowserSession["session.py<br/>单实例会话与锁管理"]
             CDPClient["cdp_client.py<br/>纯 Python 异步 WebSocket CDP 客户端"]
             BrowserEngine["browser_engine.py<br/>跨平台 Chromium 探测与进程管理"]
+            Scripts["scripts.py<br/>Fetch + ReadableStream 与 DOM GC 脚本"]
         end
-
         subgraph StorageSub ["持久化与缓存"]
-            AccountStore["account_store.py<br/>原子 JSON 文件凭据库"]
-            SnapshotCache["snapshot_cache.py<br/>内存快照与元数据缓存"]
+            AccountStore["account_store.py<br/>原子紧凑 JSON 文件凭据库"]
+            SnapshotCache["snapshot_cache.py<br/>BotGuard 快照内存缓存 (TTL+LRU)"]
         end
     end
 
-    subgraph Upstream ["4. Google 上游服务"]
+    subgraph Upstream ["5. Google 上游服务"]
         AIStudio["Google AI Studio<br/>alkalimakersuite-pa"]
         Waa["Google WAA 反作弊网关<br/>waa-pa"]
     end
 
-    Client --> APILayer
+    ClientApp --> APILayer
     APILayer --> AppLayer
+    AppLayer --> DomainLayer
     AppLayer --> InfraLayer
+    InfraLayer --> DomainLayer
     BrowserSub --> Upstream
     GatewaySub --> Upstream
-```
 
 ---
 
@@ -93,19 +101,31 @@ flowchart TD
 | `account_service.py` | 账号领域用例（Cookie 保存、批量探活导入、凭据激活）封装，杜绝路由层穿透访问存储私有属性 |
 | `api_service_gemini.py` | 编排请求全生命周期，协调捕获模板、签名、传输重放及 SSE 流式响应 |
 
-### 2.3 基础设施层 (`src/aistudio_api/infrastructure/`)
+### 2.3 领域模型层 (`src/aistudio_api/domain/`)
+
+| 文件 | 核心职责 |
+|---|---|
+| `models.py` | 纯净领域数据结构定义（`Candidate`, `ModelOutput`, `GeneratedImage`），杜绝外部协议与 Protobuf 数组下标耦合 |
+| `errors.py` | 统一异常体系定义（`SessionExpiredError`, `AuthError`, `UsageLimitExceeded`, `RequestError` 等） |
+
+### 2.4 基础设施层 (`src/aistudio_api/infrastructure/`)
 
 - **浏览器与 CDP 子系统 (`browser/`)**：
   - `cdp_client.py`：基于纯 Python 异步 WebSocket 的 Chrome DevTools Protocol 客户端，支持网络层黑名单拦截与自动清理监听器。
   - `browser_engine.py`：负责 Chromium 跨平台路径探测，启用 `--max-old-space-size=128 --expose-gc` 进行严格内存压降。
   - `scripts.py`：浏览器端注入脚本，包含 Fetch + ReadableStream 分块推送、DOM GC 与停止生成控制。
 - **网关与编解码子系统 (`gateway/`)**：
+  - `client.py`：`AIStudioClient` 网关统一门面，组装会话、模板捕获、快照缓存与流式生成。
   - `transport.py`：CDP 原生 Binding 实时流式事件推送，辅以有界异步队列反压控制与 Python 端 SAPISIDHASH 鉴权注入。
   - `wire_codec.py`：负责 Google 内部 Protobuf-over-JSON 数组结构构造与请求重写。
   - `wire_parser.py`：从领域模型剥离出的纯粹 Protobuf-over-JSON 响应解析器，将上游分块与使用量转换为领域对象。
   - `capture.py`：集中统一的请求模板单例缓存管理（Single Source of Truth）。
-- **凭据与存储子系统 (`account/`)**：
+  - `streaming.py`：流式生成编排与异常转换网关。
+  - `model_defaults.py`：模型规则解析、工具默认注入及基于文件 mtime 的内存缓存。
+- **凭据与存储子系统 (`account/` & `cache/`)**：
   - `account_store.py`：基于文件系统的原子持久化凭据库（紧凑 JSON 格式，避免无效磁盘刷写）。
+  - `snapshot_cache.py`：基于 TTL 与 LRU 的 BotGuard 快照内存缓存。
+
 ---
 
 ## 3. 请求生命周期与执行时序
@@ -118,33 +138,48 @@ sequenceDiagram
     actor Client as 客户端调用方
     participant API as FastAPI 路由层
     participant Rotator as AccountRotator
+    participant APISvc as api_service_gemini
+    participant Facade as AIStudioClient
+    participant Capture as RequestCaptureService
     participant Session as BrowserSession
     participant Codec as WireCodec
+    participant Transport as XHRStreamTransport
     participant Page as Chromium (CDP)
-    participant Google as Google AI Studio
+    participant Google as Google AI Studio (alkali)
 
     Client->>API: POST /v1beta/models/gemini-3.7-flash:streamGenerateContent
     API->>Rotator: 获取目标模型可用账号 (Sticky 检查)
     Rotator-->>API: 返回当前可用账号 (如 u/0)
-    API->>Session: 进入 request_scope (追踪在途活跃请求)
-
-    opt 首次请求该模型
-        Session->>Page: 捕获该模型 GenerateContent 模板
-        Page-->>Session: 提取 URL、Headers 与结构基础
+    API->>APISvc: handle_gemini_generate_content(stream=True)
+    APISvc->>Facade: stream_generate_content(...)
+    
+    Facade->>Capture: capture_request(prompt, model, images...)
+    opt 首次请求该模型或强制刷新
+        Capture->>Session: capture_template(model)
+        Session->>Page: 拦截模型请求基础模板 (URL, Headers, Wire结构)
+        Page-->>Session: 截断生成并返回模板元数据
+        Session-->>Capture: 缓存模板至 RequestCaptureService
     end
 
-    Session->>Page: 计算内容哈希并请求 BotGuard 快照
-    Page-->>Session: 返回 !dXaldhL... (Wasm 签名)
-    Session->>Codec: 组装修改后的请求体 (注入 Prompt + 快照)
-    Codec-->>Session: 生成最终 Wire Payload
-    Session->>Page: 在页面上下文发起 Fetch + ReadableStream 流式请求 (credentials='include')
-    Page->>Google: 发送携带当前 Cookie 与 X-Goog-AuthUser 的 POST 请求
-    Google-->>Page: 分块推送数据流 (ReadableStream)
-    Page-->>Session: CDP Native Binding (__aistudio_stream_push__) 实时推送 Chunk
-    Session->>API: 解析 EventStream (提取 thinking / text / tool_calls)
-    API-->>Client: SSE 流式响应 (data: {"candidates": ...})
-```
+    Capture->>Session: generate_snapshot(contents)
+    Session->>Page: default_MakerSuite[snapKey](service, contentHash)
+    Page-->>Session: 返回 !dXaldhL... (Wasm 签名 Token)
+    Capture->>Codec: modify_body(template, prompt, snapshot...)
+    Codec-->>Capture: 返回最终组装的 Wire JSON Payload
+    Capture-->>Facade: 返回 CapturedRequest
 
+    Facade->>Transport: send_streaming_request(page, url, headers, body)
+    Transport->>Page: evaluate(STREAMING_INIT_JS) -> window.fetch(credentials='include')
+    Page->>Google: 发送携带 Cookie 与 X-Goog-AuthUser 的 POST 请求
+    Google-->>Page: 分块推送数据流 (ReadableStream getReader)
+    Page-->>Transport: CDP Native Binding (__aistudio_stream_push__) 实时推入 Queue
+    Transport-->>Facade: 异步迭代 yield ('chunk', bytes)
+    Facade-->>APISvc: 增量解析 candidate (wire_parser)
+    APISvc-->>Client: SSE 流式分发 (data: {"candidates": [...]})
+    
+    Note over Session,Page: 【流结束/异常后置清理】
+    Session->>Page: 执行 DOM_GC_CLEANUP_JS 与 collect_garbage() (V8 GC)
+```
 ---
 
 ## 4. 并发控制与高可用设计
