@@ -51,8 +51,7 @@
 | **Web Management Console** | Built-in web dashboard for account management, live request metrics, and runtime `config.yaml` hot reloading |
 
 > [!NOTE]
-> **Memory Footprint**: The standalone Python backend consumes ~30 - 85 MB RAM. When launching the controlled single-instance Chromium, total memory usage is ~150 - 250 MB. On Android Termux, ≥ 1 GB free RAM is recommended.
----
+> **Memory Footprint**: The standalone Python backend consumes ~35 - 45 MB RAM. With a single controlled Chromium instance, total actual system memory (PSS) is ~350 - 450 MB on Termux proot (~250 - 350 MB on native Linux). On Android Termux, ≥ 1 GB free RAM is recommended.
 
 ## Architecture & Documentation
 

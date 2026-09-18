@@ -10,7 +10,7 @@
 - [2. 阶段一：页面加载与服务初始化](#2-阶段一页面加载与服务初始化)
 - [3. 阶段二：WAA 挑战握手与 Wasm 运行时加载](#3-阶段二waa-挑战握手与-wasm-运行时加载)
 - [4. 阶段三：请求内容哈希与快照签名](#4-阶段三请求内容哈希与快照签名)
-- [5. 阶段四：Wire 协议组包与浏览器 XHR 重放](#5-阶段四wire-协议组包与浏览器-xhr-重放)
+- [5. 阶段四：Wire 协议组包与浏览器 Fetch/XHR 重放](#5-阶段四wire-协议组包与浏览器-fetchxhr-重放)
 - [6. 阶段五：服务端校验与统一报错响应](#6-阶段五服务端校验与统一报错响应)
 - [7. 生命周期与会话约束](#7-生命周期与会话约束)
 - [8. 核心报文结构参考](#8-核心报文结构参考)
@@ -70,8 +70,7 @@ sequenceDiagram
     WaaClient->>WaaClient: 收集环境/时钟指纹 + HMAC(内容哈希 + 凭据)
     WaaClient-->>Browser: 返回加密快照 Token (!dXaldhL...)
     Browser->>Browser: 组装 Wire 数据包 (body[4] = snapshot)
-    Browser->>Gateway: POST /GenerateContent (XHR withCredentials=true)
-
+    Browser->>Gateway: POST /GenerateContent (Fetch credentials='include')
     Note over Gateway: 【阶段五：服务端校验与响应】
     Gateway->>Gateway: 解密 Body[4] 快照，比对 HMAC 内容指纹
     Gateway->>Gateway: 校验快照内嵌 GAIA ID 与请求头 X-Goog-AuthUser
@@ -193,9 +192,7 @@ GET https://www.google.com/js/bg/gBetl7I-09yp6c3Nmm4ajwTxhDHStoNbVEOK3L3hfg4.js
 
 ---
 
-## 5. 阶段四：Wire 协议组包与浏览器 XHR 重放
-
-签名完成后，前端将快照填入 Google 内部 Protobuf-over-JSON 数组结构（Wire 格式）：
+## 5. 阶段四：Wire 协议组包与浏览器 Fetch/XHR 重放
 
 ```json
 [
@@ -219,7 +216,7 @@ GET https://www.google.com/js/bg/gBetl7I-09yp6c3Nmm4ajwTxhDHStoNbVEOK3L3hfg4.js
 - 索引 `3`：生成控制配置（GenerationConfig）；
 - **索引 `4`：BotGuard 快照签名 Token**。
 
-### 浏览器内 XHR 发送
+### 浏览器内 Fetch/XHR 发送
 
 ```http
 POST https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent
@@ -234,8 +231,7 @@ Referer: https://aistudio.google.com/
 Cookie: SID=...; HSID=...; SSID=...; SAPISID=...; __Secure-1PAPISID=...
 ```
 
-- 设置 `xhr.withCredentials = true`，自动附加浏览器内存储的完整会话 Cookie。
-- 请求头 `X-Goog-AuthUser` 与当前路由上下文保持一致。
+- 设置 `credentials: 'include'`（或 `xhr.withCredentials = true`），自动附加浏览器内存储的完整会话 Cookie。
 
 ---
 

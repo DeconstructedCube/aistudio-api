@@ -137,11 +137,10 @@ sequenceDiagram
     Page-->>Session: 返回 !dXaldhL... (Wasm 签名)
     Session->>Codec: 组装修改后的请求体 (注入 Prompt + 快照)
     Codec-->>Session: 生成最终 Wire Payload
-
-    Session->>Page: 在页面上下文发起原生 XHR (withCredentials=true)
+    Session->>Page: 在页面上下文发起 Fetch + ReadableStream 流式请求 (credentials='include')
     Page->>Google: 发送携带当前 Cookie 与 X-Goog-AuthUser 的 POST 请求
-    Google-->>Page: 分块推送数据流
-    Page-->>Session: CDP Runtime 事件推送 Chunk
+    Google-->>Page: 分块推送数据流 (ReadableStream)
+    Page-->>Session: CDP Native Binding (__aistudio_stream_push__) 实时推送 Chunk
     Session->>API: 解析 EventStream (提取 thinking / text / tool_calls)
     API-->>Client: SSE 流式响应 (data: {"candidates": ...})
 ```
@@ -153,9 +152,8 @@ sequenceDiagram
 ### 4.1 单进程受控 Chromium 架构
 
 - 全局维持 **单个受控 Chromium 进程**，避免多实例多进程导致的内存膨胀。
-- 启动限制参数：`--renderer-process-limit=1`、`--js-flags=--max-old-space-size=128`、`--disable-gpu`。
-- 并发请求通过 CDP 客户端在同一个浏览器页面上下文内以多路复用 XHR（`XMLHttpRequest`）执行，兼具低内存开销与高并发能力。
-
+- 启动限制参数：`--renderer-process-limit=1`、`--js-flags=--max-old-space-size=128 --expose-gc`、`--disable-gpu`。
+- 并发请求通过 CDP 客户端在同一个浏览器页面上下文内以轻量 `Fetch + ReadableStream` 执行，并由 `DOM_GC_CLEANUP_JS` 与 V8 原生垃圾回收保持极致内存水位。
 ### 4.2 模型独立限流与 Sticky 调度
 
 - **模型级配额隔离**：各账号针对不同模型（如 `gemini-3.7-flash`、`gemini-3.8-flash`）的 429 状态独立记录，单模型额度耗尽不影响其他模型的正常调用。
@@ -174,11 +172,9 @@ sequenceDiagram
 
 | 平台 | 运行模式 | 浏览器后端 | 内存基准 |
 |---|---|---|---|
-| **Android (Termux)** | `proot-distro` Linux 容器隔离运行 | CloakBrowser (aarch64) | 约 500 - 650 MB（建议空闲 RAM ≥ 1 GB） |
-| **Linux (x86_64 / arm64)** | 原生宿主运行 | 系统 Chrome / Chromium / CloakBrowser | 约 350 - 500 MB |
-| **macOS (Apple Silicon / Intel)** | 原生宿主运行 | Google Chrome / Chromium / Edge | 约 400 MB |
-| **Windows (x64)** | 原生宿主运行 | Chrome / Edge | 约 450 MB |
-| **Docker 容器** | Debian 基础镜像 | 容器内 headless Chromium | 约 400 MB |
-
-> [!TIP]
+| **Android (Termux)** | `proot-distro` Linux 容器隔离运行 | CloakBrowser (aarch64) | 约 350 - 450 MB PSS（建议空闲 RAM ≥ 1 GB） |
+| **Linux (x86_64 / arm64)** | 原生宿主运行 | 系统 Chrome / Chromium / CloakBrowser | 约 250 - 350 MB PSS |
+| **macOS (Apple Silicon / Intel)** | 原生宿主运行 | Google Chrome / Chromium / Edge | 约 250 - 350 MB |
+| **Windows (x64)** | 原生宿主运行 | Chrome / Edge | 约 280 - 380 MB |
+| **Docker 容器** | Debian 基础镜像 | 容器内 headless Chromium | 约 250 - 350 MB |
 > 依赖管理推荐使用 `uv`。在 Android Termux 环境下定向适配预编译 wheel，在 Linux/macOS/Windows 下解析官方 wheel，保障全平台构建的一致性与稳定性。
