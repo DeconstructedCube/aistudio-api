@@ -307,12 +307,35 @@ def _resolve_config_path(config_path: str | os.PathLike[str] | None) -> Path:
     return _DEFAULT_CONFIG_PATH
 
 
+_CONFIG_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
+_API_KEYS_CACHE: dict[str, tuple[float, frozenset[str], list[dict[str, str]]]] = {}
+
+
+def invalidate_config_cache() -> None:
+    """Clear in-memory configuration and API keys cache."""
+    _CONFIG_CACHE.clear()
+    _API_KEYS_CACHE.clear()
+    _compiled_profiles.cache_clear()
+    _compiled_model_overrides.cache_clear()
+
+
 def _load_yaml_config(config_path: Path) -> dict[str, object]:
     if not config_path.exists():
         return _default_config()
-    loaded = yaml.safe_load(config_path.read_text()) or {}
+
+    path_key = str(config_path.resolve())
+    try:
+        mtime = config_path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+
+    cached = _CONFIG_CACHE.get(path_key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+
+    loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     if not isinstance(loaded, dict):
-        return _default_config()
+        loaded = {}
     merged: dict[str, object] = _default_config()
     merged.update(loaded)
     raw_merged_defaults = merged.get("model_defaults")
@@ -323,6 +346,7 @@ def _load_yaml_config(config_path: Path) -> dict[str, object]:
         merged_model_defaults = dict(def_md if isinstance(def_md, dict) else {})
         merged_model_defaults.update(raw_loaded_defaults)
         merged["model_defaults"] = merged_model_defaults
+    _CONFIG_CACHE[path_key] = (mtime, merged)
     return merged
 
 
@@ -383,6 +407,16 @@ def get_configured_api_key_items(
 ) -> list[dict[str, str]]:
     """获取 config.yaml 中配置的结构化 API Key 列表（含备注名与创建时间）。"""
     resolved_path = _resolve_config_path(config_path)
+    path_key = str(resolved_path.resolve())
+    try:
+        mtime = resolved_path.stat().st_mtime if resolved_path.exists() else 0.0
+    except OSError:
+        mtime = 0.0
+
+    cached = _API_KEYS_CACHE.get(path_key)
+    if cached is not None and cached[0] == mtime:
+        return list(cached[2])
+
     config = _load_yaml_config(resolved_path)
     raw_keys = config.get("api_keys")
     items: list[dict[str, str]] = []
@@ -404,6 +438,9 @@ def get_configured_api_key_items(
                 s = part.strip()
                 if s:
                     items.append({"key": s, "name": "API Key", "created_at": ""})
+
+    keys_set = frozenset(item["key"] for item in items if item.get("key"))
+    _API_KEYS_CACHE[path_key] = (mtime, keys_set, items)
     return items
 
 
@@ -411,5 +448,16 @@ def get_configured_api_keys(
     config_path: str | os.PathLike[str] | None = None,
 ) -> frozenset[str]:
     """获取 config.yaml 中配置的所有有效 API Key 集合。"""
+    resolved_path = _resolve_config_path(config_path)
+    path_key = str(resolved_path.resolve())
+    try:
+        mtime = resolved_path.stat().st_mtime if resolved_path.exists() else 0.0
+    except OSError:
+        mtime = 0.0
+
+    cached = _API_KEYS_CACHE.get(path_key)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+
     items = get_configured_api_key_items(config_path)
     return frozenset(item["key"] for item in items if item.get("key"))

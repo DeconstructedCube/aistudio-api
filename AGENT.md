@@ -163,18 +163,17 @@ aistudio-api/
 │   │   ├── account_rotator.py     # 黏性账号调度器 (按模型记录 429 与太平洋午夜重置)
 │   │   ├── account_service.py     # 账号存储与激活上下文协调
 │   │   ├── api_service_gemini.py  # Gemini 请求生命周期与流式处理
-│   │   ├── api_service_common.py  # _switch_lock 防雪崩锁与统计汇聚
+│   │   ├── account_orchestrator.py# _switch_lock 防雪崩切号与故障转移编排
 │   │   ├── api_service.py         # 应用层对外统一导出
 │   │   └── chat_service.py        # 消息规范化与多模态数据处理
-│   ├── domain/                    # 领域模型与异常体系
+│   ├── domain/                    # 纯净领域模型与异常体系
 │   │   ├── errors.py              # 业务异常定义 (AuthError, UsageLimitExceeded 等)
-│   │   └── models.py              # 响应 Candidate 与 Chunk 内部模型
+│   │   └── models.py              # 领域数据结构 (Candidate, ModelOutput 等)
 │   ├── infrastructure/            # 基础设施层
 │   │   ├── account/               # Cookie 解析与凭据持久化 (account_store)
 │   │   ├── browser/               # 异步 CDP 客户端与 Chromium 进程管理
 │   │   ├── cache/                 # 内存快照与元数据缓存
-│   │   └── gateway/               # Wire Codec (Protobuf-JSON) 与流式网关
-│   └── static/                    # 前端构建产物目录
+│   │   └── gateway/               # Wire Codec/Parser、传输层 (transport) 与流式网关
 ├── config.yaml                    # 模型规则与工具默认行为配置 (支持在线热重载)
 └── main.py                        # 本地统一启动入口
 ```

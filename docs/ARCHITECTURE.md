@@ -31,20 +31,20 @@ flowchart TD
 
     subgraph AppLayer ["2. Application 应用服务层"]
         APISvc["api_service_gemini.py<br/>请求生命周期与流式处理"]
-        CommonSvc["api_service_common.py<br/>_switch_lock 防雪崩切号与指标"]
+        Orchestrator["account_orchestrator.py<br/>_switch_lock 防雪崩切号编排"]
         ChatSvc["chat_service.py<br/>多模态请求规范化"]
         AccountRotator["account_rotator.py<br/>模型级 Sticky 调度与 429 隔离"]
-        AccountSvc["account_service.py<br/>账号激活与存储协调"]
+        AccountSvc["account_service.py<br/>账号激活与存储用例封装"]
     end
 
     subgraph InfraLayer ["3. Infrastructure 基础设施层"]
         subgraph GatewaySub ["协议转换与网关"]
-            CaptureSvc["capture.py<br/>模板缓存与捕获"]
-            WireCodec["wire_codec.py<br/>Protobuf-JSON 编解码"]
-            StreamingGateway["streaming.py<br/>增量 SSE 流式解析"]
-            ReplaySvc["replay.py<br/>浏览器内 XHR 重放"]
+            CaptureSvc["capture.py<br/>单例模板缓存与捕获"]
+            WireCodec["wire_codec.py<br/>Protobuf-JSON 请求构造"]
+            WireParser["wire_parser.py<br/>Protobuf-JSON 响应解析"]
+            StreamingGateway["streaming.py<br/>增量 SSE 流式管道"]
+            Transport["transport.py<br/>CDP Native Binding 推送传输"]
         end
-
         subgraph BrowserSub ["浏览器与 CDP 通信"]
             BrowserSession["session.py<br/>单实例会话与锁管理"]
             CDPClient["cdp_client.py<br/>纯 Python 异步 WebSocket CDP 客户端"]
@@ -87,22 +87,25 @@ flowchart TD
 
 | 文件 | 核心职责 |
 |---|---|
-| `chat_service.py` | 将客户端提交的 Gemini 标准请求转换为内部通用结构，处理 Base64 媒体、系统提示与工具参数 |
+| `chat_service.py` | 将客户端提交的 Gemini 标准请求转换为内部通用结构，内存处理 Base64 媒体、系统提示与工具参数 |
 | `account_rotator.py` | 负责多账号的 Sticky 黏性调度，为每个账号按模型维护独立的 429 限流状态，每日美西午夜重置 |
-| `api_service_common.py` | 提供全局防雪崩互斥锁（`_switch_lock`），在并发 429 时实现安全有序切号，避免级联风暴 |
-| `api_service_gemini.py` | 编排请求全生命周期，协调捕获模板、签名、XHR 重放及 SSE 流式响应 |
+| `account_orchestrator.py` | 提供全局防雪崩互斥锁（`_switch_lock`），在并发 429 时实现安全有序故障转移切号，避免级联风暴 |
+| `account_service.py` | 账号领域用例（Cookie 保存、批量探活导入、凭据激活）封装，杜绝路由层穿透访问存储私有属性 |
+| `api_service_gemini.py` | 编排请求全生命周期，协调捕获模板、签名、传输重放及 SSE 流式响应 |
 
 ### 2.3 基础设施层 (`src/aistudio_api/infrastructure/`)
 
 - **浏览器与 CDP 子系统 (`browser/`)**：
-  - `cdp_client.py`：基于纯 Python 异步 WebSocket 的 Chrome DevTools Protocol 客户端，无外置 Node.js 或驱动依赖。
-  - `browser_engine.py`：负责 Chromium 跨平台路径探测（支持 Linux、macOS、Windows、Termux `proot`）与子进程生命周期管理。
+  - `cdp_client.py`：基于纯 Python 异步 WebSocket 的 Chrome DevTools Protocol 客户端，支持网络层黑名单拦截与自动清理监听器。
+  - `browser_engine.py`：负责 Chromium 跨平台路径探测，启用 `--max-old-space-size=128 --expose-gc` 进行严格内存压降。
+  - `scripts.py`：浏览器端注入脚本，包含 Fetch + ReadableStream 分块推送、DOM GC 与停止生成控制。
 - **网关与编解码子系统 (`gateway/`)**：
-  - `wire_codec.py`：负责 Google 内部 Protobuf-over-JSON 数组结构（`body[0]` 模型、`body[1]` 会话、`body[3]` 配置、`body[4]` BotGuard 快照）的双向编解码。
-  - `stream_parser.py`：增量 JSON 流式解析器，从原始数据块中提取 `thinking`、文本内容、图片及 `tool_calls`。
+  - `transport.py`：CDP 原生 Binding 实时流式事件推送，辅以有界异步队列反压控制与 Python 端 SAPISIDHASH 鉴权注入。
+  - `wire_codec.py`：负责 Google 内部 Protobuf-over-JSON 数组结构构造与请求重写。
+  - `wire_parser.py`：从领域模型剥离出的纯粹 Protobuf-over-JSON 响应解析器，将上游分块与使用量转换为领域对象。
+  - `capture.py`：集中统一的请求模板单例缓存管理（Single Source of Truth）。
 - **凭据与存储子系统 (`account/`)**：
-  - `account_store.py`：基于文件系统的原子持久化凭据库（`registry.json` + `auth.json` + `meta.json`），保障并发读写安全。
-
+  - `account_store.py`：基于文件系统的原子持久化凭据库（紧凑 JSON 格式，避免无效磁盘刷写）。
 ---
 
 ## 3. 请求生命周期与执行时序

@@ -60,8 +60,8 @@ STREAMING_INIT_JS = """(args) => {
     if (!window.__streams) window.__streams = {};
 
     const existing = window.__streams[rid];
-    if (existing && existing.xhr && existing.xhr.readyState !== 4) {
-        try { existing.xhr.abort(); } catch (e) {}
+    if (existing && existing.abort) {
+        try { existing.abort(); } catch (e) {}
     }
 
     function cleanup() {
@@ -72,11 +72,12 @@ STREAMING_INIT_JS = """(args) => {
         } catch (e) {}
     }
 
+    const abortController = new AbortController();
     const state = {
-        xhr: null,
+        reader: null,
+        abortController: abortController,
         events: [],
         waiter: null,
-        recvPos: 0,
         statusSent: false,
         cleaned: false,
     };
@@ -96,20 +97,6 @@ STREAMING_INIT_JS = """(args) => {
             return;
         }
         state.events.push(event);
-    }
-
-    function pushStatus(xhr) {
-        if (state.statusSent || xhr.readyState < 2) return;
-        state.statusSent = true;
-        push({type: 'status', status: xhr.status || 0});
-    }
-
-    function pushChunk(xhr) {
-        if (xhr.readyState < 3) return;
-        const chunk = xhr.responseText.substring(state.recvPos);
-        if (!chunk) return;
-        state.recvPos = xhr.responseText.length;
-        push({type: 'chunk', text: chunk});
     }
 
     function isTerminalEvent(ev) {
@@ -162,81 +149,84 @@ STREAMING_INIT_JS = """(args) => {
     };
 
     if (!window.__stream_abort) window.__stream_abort = {};
-    window.__stream_abort[rid] = function() {
-        if (state.xhr && state.xhr.readyState !== 4) {
-            try { state.xhr.abort(); } catch (e) {}
+    const doAbort = function() {
+        if (state.reader) {
+            try { state.reader.cancel(); } catch (e) {}
+        }
+        if (state.abortController) {
+            try { state.abortController.abort(); } catch (e) {}
         }
         cleanup();
     };
+    window.__stream_abort[rid] = doAbort;
+    state.abort = doAbort;
 
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', args.url);
-    var h = args.headers || {};
-    for (var k in h) {
-        if (k.toLowerCase() === 'authorization') continue;
-        xhr.setRequestHeader(k, h[k]);
-    }
-    xhr.withCredentials = true;
-    xhr.timeout = args.timeout * 1000;
-
-    xhr.onreadystatechange = function() {
-        pushStatus(xhr);
-        pushChunk(xhr);
-    };
-    xhr.onprogress = function() {
-        pushStatus(xhr);
-        pushChunk(xhr);
-    };
-    xhr.onload = function() {
-        pushStatus(xhr);
-        pushChunk(xhr);
-        push({type: 'done'});
-    };
-    xhr.onerror = function() {
-        push({type: 'error', message: 'network error'});
-    };
-    xhr.ontimeout = function() {
+    const timeoutMs = (args.timeout || 60) * 1000;
+    const timeoutId = setTimeout(() => {
         push({type: 'error', message: 'timeout'});
-    };
-    xhr.onabort = function() {
-        push({type: 'aborted'});
-    };
+        doAbort();
+    }, timeoutMs);
 
-    state.xhr = xhr;
-    function getCookie(name) {
-        var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-        return m ? decodeURIComponent(m[1]) : '';
-    }
-    var sapisid = getCookie('SAPISID') || getCookie('__Secure-1PAPISID') || getCookie('__Secure-3PAPISID');
-    if (sapisid && window.crypto && window.crypto.subtle) {
-        var sapisid1p = getCookie('__Secure-1PAPISID') || sapisid;
-        var sapisid3p = getCookie('__Secure-3PAPISID') || sapisid;
-        var ts = Math.floor(Date.now() / 1000);
-        var origin = 'https://aistudio.google.com';
-        function sha1(str) {
-            return crypto.subtle.digest('SHA-1', new TextEncoder().encode(str)).then(function(buf) {
-                return Array.from(new Uint8Array(buf)).map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
+    const headers = Object.assign({}, args.headers || {});
+
+    window.fetch(args.url, {
+        method: 'POST',
+        headers: headers,
+        body: args.body,
+        credentials: 'include',
+        signal: abortController.signal,
+    }).then(response => {
+        state.statusSent = true;
+        push({type: 'status', status: response.status || 0});
+
+        if (!response.body) {
+            clearTimeout(timeoutId);
+            push({type: 'done'});
+            cleanup();
+            return;
+        }
+
+        const reader = response.body.getReader();
+        state.reader = reader;
+        const decoder = new TextDecoder('utf-8');
+
+        function readLoop() {
+            reader.read().then(({done, value}) => {
+                if (done) {
+                    clearTimeout(timeoutId);
+                    push({type: 'done'});
+                    cleanup();
+                    return;
+                }
+                if (value) {
+                    const text = decoder.decode(value, {stream: true});
+                    if (text) {
+                        push({type: 'chunk', text: text});
+                    }
+                }
+                readLoop();
+            }).catch(err => {
+                clearTimeout(timeoutId);
+                if (err && err.name === 'AbortError') {
+                    push({type: 'aborted'});
+                } else {
+                    push({type: 'error', message: (err && err.message) || 'stream read error'});
+                }
+                cleanup();
             });
         }
-        Promise.all([
-            sha1(ts + ' ' + sapisid + ' ' + origin),
-            sha1(ts + ' ' + sapisid1p + ' ' + origin),
-            sha1(ts + ' ' + sapisid3p + ' ' + origin)
-        ]).then(function(res) {
-            var auth = 'SAPISIDHASH ' + ts + '_' + res[0] + ' SAPISID1PHASH ' + ts + '_' + res[1] + ' SAPISID3PHASH ' + ts + '_' + res[2];
-            xhr.setRequestHeader('Authorization', auth);
-            xhr.send(args.body);
-        }).catch(function() {
-            var fallbackAuth = h['Authorization'] || h['authorization'];
-            if (fallbackAuth) xhr.setRequestHeader('Authorization', fallbackAuth);
-            xhr.send(args.body);
-        });
-    } else {
-        var fallbackAuth = h['Authorization'] || h['authorization'];
-        if (fallbackAuth) xhr.setRequestHeader('Authorization', fallbackAuth);
-        xhr.send(args.body);
-    }
-}"""
+        readLoop();
+    }).catch(err => {
+        clearTimeout(timeoutId);
+        if (err && err.name === 'AbortError') {
+            push({type: 'aborted'});
+        } else {
+            push({type: 'error', message: (err && err.message) || 'network error'});
+        }
+        cleanup();
+    });
+};
+"""
 
 STREAM_POLL_JS = """(rid) => window.__stream_next && window.__stream_next[rid] ? window.__stream_next[rid](250) : {type: 'error', message: 'stream_session_lost'}"""
 
@@ -255,59 +245,37 @@ STREAM_CLEANUP_JS = """(rid) => {
 
 HOOKED_REQUEST_JS = """(args) => {
     return new Promise((resolve) => {
-        var xhr = new XMLHttpRequest();
-        xhr.open('POST', args.url);
-        var h = args.headers || {};
-        for (var k in h) {
-            if (k.toLowerCase() === 'authorization') continue;
-            xhr.setRequestHeader(k, h[k]);
-        }
-        xhr.withCredentials = true;
-        xhr.timeout = args.timeout * 1000;
-        xhr.onload = function() {
-            resolve({status: xhr.status, body: xhr.responseText});
-        };
-        xhr.onerror = function() {
-            resolve({status: 0, body: 'network error'});
-        };
-        xhr.ontimeout = function() {
+        const timeoutMs = (args.timeout || 60) * 1000;
+        const controller = new AbortController();
+        const timer = setTimeout(() => {
+            controller.abort();
             resolve({status: 0, body: 'timeout'});
-        };
-        function getCookie(name) {
-            var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
-            return m ? decodeURIComponent(m[1]) : '';
-        }
-        var sapisid = getCookie('SAPISID') || getCookie('__Secure-1PAPISID') || getCookie('__Secure-3PAPISID');
-        if (sapisid && window.crypto && window.crypto.subtle) {
-            var sapisid1p = getCookie('__Secure-1PAPISID') || sapisid;
-            var sapisid3p = getCookie('__Secure-3PAPISID') || sapisid;
-            var ts = Math.floor(Date.now() / 1000);
-            var origin = 'https://aistudio.google.com';
-            function sha1(str) {
-                return crypto.subtle.digest('SHA-1', new TextEncoder().encode(str)).then(function(buf) {
-                    return Array.from(new Uint8Array(buf)).map(function(b) { return b.toString(16).padStart(2, '0'); }).join('');
-                });
+        }, timeoutMs);
+
+        const headers = Object.assign({}, args.headers || {});
+
+        window.fetch(args.url, {
+            method: 'POST',
+            headers: headers,
+            body: args.body,
+            credentials: 'include',
+            signal: controller.signal,
+        }).then(async (response) => {
+            clearTimeout(timer);
+            try {
+                const text = await response.text();
+                resolve({status: response.status, body: text});
+            } catch (e) {
+                resolve({status: response.status, body: ''});
             }
-            Promise.all([
-                sha1(ts + ' ' + sapisid + ' ' + origin),
-                sha1(ts + ' ' + sapisid1p + ' ' + origin),
-                sha1(ts + ' ' + sapisid3p + ' ' + origin)
-            ]).then(function(res) {
-                var auth = 'SAPISIDHASH ' + ts + '_' + res[0] + ' SAPISID1PHASH ' + ts + '_' + res[1] + ' SAPISID3PHASH ' + ts + '_' + res[2];
-                xhr.setRequestHeader('Authorization', auth);
-                xhr.send(args.body);
-            }).catch(function() {
-                var fallbackAuth = h['Authorization'] || h['authorization'];
-                if (fallbackAuth) xhr.setRequestHeader('Authorization', fallbackAuth);
-                xhr.send(args.body);
-            });
-        } else {
-            var fallbackAuth = h['Authorization'] || h['authorization'];
-            if (fallbackAuth) xhr.setRequestHeader('Authorization', fallbackAuth);
-            xhr.send(args.body);
-        }
+        }).catch((err) => {
+            clearTimeout(timer);
+            const msg = (err && err.name === 'AbortError') ? 'timeout' : 'network error';
+            resolve({status: 0, body: msg});
+        });
     });
-}"""
+};
+"""
 
 SNAPSHOT_GENERATE_JS = """
 async (hash) => {

@@ -5,18 +5,60 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING
 
+import yaml
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from aistudio_api.api.dependencies import get_runtime_state
-from aistudio_api.api.response_models import HealthResponse, StatsResponse
-from aistudio_api.application.api_service import health_response, stats_response
+from aistudio_api.api.response_models import (
+    HealthResponse,
+    ModelStatsResponse,
+    StatsResponse,
+    StatsTotalsResponse,
+)
+from aistudio_api.infrastructure.gateway.model_defaults import (
+    _resolve_config_path,
+    invalidate_config_cache,
+)
 
 if TYPE_CHECKING:
     from aistudio_api.api.state import RuntimeState
 
 public_router = APIRouter()
 protected_router = APIRouter()
+
+
+def health_response() -> HealthResponse:
+    return HealthResponse(status="ok", busy=False)
+
+
+def stats_response() -> StatsResponse:
+    from aistudio_api.api.state import runtime_state
+
+    stats = dict(runtime_state.model_stats)
+    totals = StatsTotalsResponse(
+        requests=sum(s.requests for s in stats.values()),
+        success=sum(s.success for s in stats.values()),
+        rate_limited=sum(s.rate_limited for s in stats.values()),
+        errors=sum(s.errors for s in stats.values()),
+        prompt_tokens=sum(s.prompt_tokens for s in stats.values()),
+        completion_tokens=sum(s.completion_tokens for s in stats.values()),
+        total_tokens=sum(s.total_tokens for s in stats.values()),
+    )
+    models = {
+        name: ModelStatsResponse(
+            requests=s.requests,
+            success=s.success,
+            rate_limited=s.rate_limited,
+            errors=s.errors,
+            prompt_tokens=s.prompt_tokens,
+            completion_tokens=s.completion_tokens,
+            total_tokens=s.total_tokens,
+            last_used=s.last_used,
+        )
+        for name, s in stats.items()
+    }
+    return StatsResponse(models=models, totals=totals)
 
 
 @public_router.get("/health", response_model=HealthResponse)
@@ -162,8 +204,6 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
     """更新 config.yaml 文件内容并热重载默认配置。"""
     from pathlib import Path
 
-    import yaml
-
     try:
         parsed = yaml.safe_load(req.yaml_content)
         if parsed is not None and not isinstance(parsed, dict):
@@ -173,13 +213,7 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
     config_yaml_path = Path(__file__).resolve().parents[3] / "config.yaml"
     try:
         config_yaml_path.write_text(req.yaml_content, encoding="utf-8")
-        from aistudio_api.infrastructure.gateway.model_defaults import (
-            _compiled_model_overrides,
-            _compiled_profiles,
-        )
-
-        _compiled_profiles.cache_clear()
-        _compiled_model_overrides.cache_clear()
+        invalidate_config_cache()
         return {"ok": True, "message": "配置已保存并重载"}
     except Exception as e:
         raise HTTPException(500, detail=f"写入配置文件失败: {e}") from e
@@ -227,14 +261,6 @@ async def create_api_key(req: CreateApiKeyRequest) -> ApiKeyItemModel:
     import secrets
     from datetime import UTC, datetime
 
-    import yaml
-
-    from aistudio_api.infrastructure.gateway.model_defaults import (
-        _compiled_model_overrides,
-        _compiled_profiles,
-        _resolve_config_path,
-    )
-
     new_key = (
         req.key.strip()
         if req.key and req.key.strip()
@@ -272,8 +298,7 @@ async def create_api_key(req: CreateApiKeyRequest) -> ApiKeyItemModel:
     config_path.write_text(
         yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
-    _compiled_profiles.cache_clear()
-    _compiled_model_overrides.cache_clear()
+    invalidate_config_cache()
 
     return ApiKeyItemModel(name=name, key=new_key, created_at=created_at)
 
@@ -281,13 +306,6 @@ async def create_api_key(req: CreateApiKeyRequest) -> ApiKeyItemModel:
 @protected_router.delete("/api-keys/{key_value}")
 async def delete_api_key(key_value: str) -> dict[str, bool]:
     """在 config.yaml 中删除指定 API Key。"""
-    import yaml
-
-    from aistudio_api.infrastructure.gateway.model_defaults import (
-        _compiled_model_overrides,
-        _compiled_profiles,
-        _resolve_config_path,
-    )
 
     config_path = _resolve_config_path(None)
     content = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
@@ -322,8 +340,7 @@ async def delete_api_key(key_value: str) -> dict[str, bool]:
     config_path.write_text(
         yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
-    _compiled_profiles.cache_clear()
-    _compiled_model_overrides.cache_clear()
+    invalidate_config_cache()
 
     return {"ok": True}
 
@@ -333,13 +350,6 @@ async def update_api_key_name(
     key_value: str, req: UpdateApiKeyRequest
 ) -> ApiKeyItemModel:
     """在 config.yaml 中更新指定 API Key 的备注名。"""
-    import yaml
-
-    from aistudio_api.infrastructure.gateway.model_defaults import (
-        _compiled_model_overrides,
-        _compiled_profiles,
-        _resolve_config_path,
-    )
 
     config_path = _resolve_config_path(None)
     content = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
@@ -378,7 +388,6 @@ async def update_api_key_name(
     config_path.write_text(
         yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
-    _compiled_profiles.cache_clear()
-    _compiled_model_overrides.cache_clear()
+    invalidate_config_cache()
 
     return updated_item

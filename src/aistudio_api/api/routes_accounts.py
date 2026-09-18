@@ -226,7 +226,7 @@ async def import_cookies(
     import secrets
 
     cid = f"cookie_{secrets.token_hex(4)}"
-    account = account_service._store.save_account(
+    account = account_service.save_account_from_cookies(
         name=name,
         email=req.email,
         storage_state=storage_state,
@@ -239,7 +239,7 @@ async def import_cookies(
             runtime_state.client._session if runtime_state.client else None
         )
         if browser_session:
-            auth_path = account_service._store.get_auth_path(account.id)
+            auth_path = account_service.get_account_auth_path(account.id)
             count = await browser_session.import_cookies(
                 req.cookies,
                 auth_file=str(auth_path) if auth_path else None,
@@ -274,38 +274,28 @@ async def probe_and_import(
         raise HTTPException(status_code=400, detail="未探测到有效已登录 Google 账号")
 
     storage_state = parse_cookie_string(req.cookies)
-    imported_accounts: list[AccountResponse] = []
     prefix = req.name_prefix.strip() if req.name_prefix else "Google Account"
     import secrets
 
     cid = f"cookie_{secrets.token_hex(4)}"
-    for p in probed:
-        u_idx = str(p["auth_user"])
-        acc_name = (
-            f"{prefix} (u/{u_idx})" if len(probed) > 1 or u_idx != "0" else prefix
+    metas = account_service.batch_import_accounts(
+        probed_list=probed,
+        storage_state=storage_state,
+        prefix=prefix,
+        cookie_id=cid,
+    )
+    imported_accounts = [
+        AccountResponse(
+            id=account.id,
+            name=account.name,
+            email=account.email,
+            created_at=account.created_at,
+            last_used=account.last_used,
+            auth_user=account.auth_user,
+            cookie_id=account.cookie_id or cid,
         )
-        account = account_service._store.save_account(
-            name=acc_name,
-            email=None,
-            storage_state=storage_state,
-            auth_user=u_idx,
-            cookie_id=cid,
-        )
-        imported_accounts.append(
-            AccountResponse(
-                id=account.id,
-                name=account.name,
-                email=account.email,
-                created_at=account.created_at,
-                last_used=account.last_used,
-                auth_user=account.auth_user,
-                cookie_id=cid,
-            )
-        )
-
-    # 如果当前没有激活的账号，默认激活第一个
-    if not account_service.get_active_account() and imported_accounts:
-        account_service.set_active_account(imported_accounts[0].id)
+        for account in metas
+    ]
 
     return ProbeAndImportResponse(
         imported_count=len(imported_accounts),

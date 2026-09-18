@@ -66,23 +66,24 @@ async def test_browser_session_generate_snapshot(mock_cdp_page):
 async def test_browser_session_send_hooked_request(mock_cdp_page):
     session = BrowserSession(port=9222)
     session._page = mock_cdp_page
-    session._templates["test_model"] = {
-        "url": "https://alkalimakersuite-pa.clients6.google.com/test",
-        "headers": {"content-type": "application/json"},
-    }
 
     async def fake_evaluate(expr, args=None, *a, **kw):
         if "window.default_MakerSuite" in expr or "window.__bg_hooked" in expr:
             return "already_hooked"
         if "!window.__bg_service" in expr:
             return True
-        if "XMLHttpRequest" in expr:
+        if "XMLHttpRequest" in expr or "fetch(" in expr or "fetch" in expr:
             return {"status": 200, "body": '["response_data"]'}
         return None
 
     mock_cdp_page.evaluate.side_effect = fake_evaluate
 
-    status, body = await session.send_hooked_request(body='["test"]', timeout_ms=5000)
+    status, body = await session.send_hooked_request(
+        url="https://alkalimakersuite-pa.clients6.google.com/test",
+        headers={"content-type": "application/json"},
+        body='["test"]',
+        timeout_ms=5000,
+    )
     assert status == 200
     assert body == b'["response_data"]'
 
@@ -91,10 +92,6 @@ async def test_browser_session_send_hooked_request(mock_cdp_page):
 async def test_browser_session_send_streaming_request(mock_cdp_page):
     session = BrowserSession(port=9222)
     session._page = mock_cdp_page
-    session._templates["test_model"] = {
-        "url": "https://alkalimakersuite-pa.clients6.google.com/stream",
-        "headers": {"content-type": "application/json"},
-    }
 
     events = [
         {"type": "status", "status": 200},
@@ -108,7 +105,7 @@ async def test_browser_session_send_streaming_request(mock_cdp_page):
             return "already_hooked"
         if "window.__bg_service" in expr:
             return True
-        if "(rid) => window.__stream_next" in expr:
+        if "stream_session_lost" in expr:
             if events:
                 return events.pop(0)
             return {"type": "done"}
@@ -120,7 +117,10 @@ async def test_browser_session_send_streaming_request(mock_cdp_page):
 
     collected = []
     async for tag, data in session.send_streaming_request(
-        body='["stream"]', timeout_ms=5000
+        url="https://alkalimakersuite-pa.clients6.google.com/stream",
+        headers={"content-type": "application/json"},
+        body='["stream"]',
+        timeout_ms=5000,
     ):
         collected.append((tag, data))
 

@@ -118,7 +118,5 @@ async def test_session_template_capture_per_model():
 
     result_tpl = await session.capture_template("gemini-3.1-pro-preview")
     assert result_tpl["url"] == "http://pro.com/GenerateContent"
-    assert (
-        session._templates["gemini-3.1-pro-preview"]["url"]
-        == "http://pro.com/GenerateContent"
-    )
+    hdrs = result_tpl.get("headers")
+    assert isinstance(hdrs, dict) and hdrs.get("x-model") == "pro"

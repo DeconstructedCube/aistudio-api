@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aistudio_api.application.api_service_common import health_response, stats_response
+from aistudio_api.api.routes_system import health_response, stats_response
 from aistudio_api.application.api_service_gemini import handle_gemini_generate_content
 
 __all__ = [

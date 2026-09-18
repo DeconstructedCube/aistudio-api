@@ -1,4 +1,4 @@
-from aistudio_api.domain.models import parse_response_chunk
+from aistudio_api.infrastructure.gateway.wire_parser import parse_response_chunk
 
 
 def test_parse_response_chunk_keeps_raw_function_call_and_response():

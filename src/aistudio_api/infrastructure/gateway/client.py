@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import tempfile
 from pathlib import Path
 from typing import ClassVar
 
@@ -15,11 +14,7 @@ from aistudio_api.config import (
     settings,
 )
 from aistudio_api.domain.errors import RequestError, classify_error
-from aistudio_api.domain.models import (
-    ModelOutput,
-    parse_image_output,
-    parse_text_output,
-)
+from aistudio_api.domain.models import ModelOutput
 from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
 from aistudio_api.infrastructure.gateway.capture import (
     CapturedRequest,
@@ -33,6 +28,10 @@ from aistudio_api.infrastructure.gateway.wire_codec import (
     TOOLS_TEMPLATES,
     build_image_generation_search_tool,
     build_tools_from_names,
+)
+from aistudio_api.infrastructure.gateway.wire_parser import (
+    parse_image_output,
+    parse_text_output,
 )
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
 
@@ -414,14 +413,13 @@ class AIStudioClient:
         output = parse_image_output(raw_text)
         output.model = model
 
-        if output.images:
+        if output.images and save_path:
             img = output.images[0]
             ext = "jpg" if "jpeg" in img.mime else "png"
-            default_img_path = Path(tempfile.gettempdir()) / f"aistudio_generated.{ext}"
             path = (
                 Path(save_path)
-                if save_path and save_path.endswith(f".{ext}")
-                else (Path(f"{save_path}.{ext}") if save_path else default_img_path)
+                if save_path.endswith(f".{ext}")
+                else Path(f"{save_path}.{ext}")
             )
             path.write_bytes(img.data)
             logger.info("图片已保存: %s (%s bytes)", path, img.size)

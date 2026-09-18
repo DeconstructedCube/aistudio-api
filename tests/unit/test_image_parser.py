@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from aistudio_api.domain.models import parse_image_output
+from aistudio_api.infrastructure.gateway.wire_parser import parse_image_output
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 

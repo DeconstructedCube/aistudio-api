@@ -10,6 +10,7 @@ from collections.abc import AsyncGenerator
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
+from aistudio_api.infrastructure.account.cookie_parser import calculate_sapisid_hash
 from aistudio_api.infrastructure.browser.scripts import (
     HOOKED_REQUEST_JS,
     STREAM_CLEANUP_JS,
@@ -25,18 +26,42 @@ if TYPE_CHECKING:
 logger = logging.getLogger("aistudio.transport")
 
 
+async def _ensure_authorization_header(
+    page: CDPPage, headers: dict[str, str]
+) -> dict[str, str]:
+    """Ensure fresh SAPISIDHASH Authorization header is populated in Python."""
+    clean_headers = dict(headers)
+    auth_val = next(
+        (v for k, v in clean_headers.items() if k.lower() == "authorization"), None
+    )
+    if not auth_val or auth_val.startswith("SAPISIDHASH"):
+        with suppress(Exception):
+            raw_cookies = await page.get_cookies()
+            if raw_cookies:
+                cookie_dict = {
+                    str(c.get("name") or ""): str(c.get("value") or "")
+                    for c in raw_cookies
+                    if c.get("name")
+                }
+                fresh_auth = calculate_sapisid_hash(cookie_dict)
+                if fresh_auth:
+                    for k in list(clean_headers.keys()):
+                        if k.lower() == "authorization":
+                            del clean_headers[k]
+                    clean_headers["Authorization"] = fresh_auth
+    return clean_headers
+
+
 class XHRStreamTransport:
     """Handles in-browser XHR request execution, streaming event collection, and resource cleanup."""
 
     def __init__(self) -> None:
         self._queues: dict[str, asyncio.Queue[dict[str, object]]] = {}
-        self._bound_page_ids: set[int] = set()
 
     def _ensure_page_binding(self, page: CDPPage) -> None:
-        page_id = id(page)
-        if page_id in self._bound_page_ids:
+        if getattr(page, "has_stream_binding", False):
             return
-        self._bound_page_ids.add(page_id)
+        page.has_stream_binding = True
 
         def on_stream_push(payload_str: str) -> None:
             try:
@@ -45,7 +70,13 @@ class XHRStreamTransport:
                     rid = str(data.get("rid") or "")
                     q = self._queues.get(rid)
                     if q is not None:
-                        q.put_nowait(data)
+                        try:
+                            q.put_nowait(data)
+                        except asyncio.QueueFull:
+                            logger.warning(
+                                "Stream queue full for rid=%s, applying backpressure",
+                                rid,
+                            )
             except Exception as e:
                 logger.debug("Failed to dispatch stream push payload: %s", e)
 
@@ -75,6 +106,7 @@ class XHRStreamTransport:
             for k, v in headers.items()
             if k.lower() not in ("host", "content-length")
         }
+        clean_headers = await _ensure_authorization_header(page, clean_headers)
         args = build_hooked_request_args(
             url=url,
             headers=clean_headers,
@@ -109,6 +141,7 @@ class XHRStreamTransport:
             for k, v in headers.items()
             if k.lower() not in ("host", "content-length")
         }
+        clean_headers = await _ensure_authorization_header(page, clean_headers)
         rid = uuid.uuid4().hex[:8]
 
         # Ensure native binding on page and register local async queue
@@ -122,7 +155,7 @@ class XHRStreamTransport:
                     "Runtime.addBinding", {"name": "__aistudio_stream_push__"}
                 )
 
-        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue(maxsize=64)
         self._queues[rid] = queue
 
         init_args = build_streaming_init_args(

@@ -32,12 +32,28 @@ BLOCKED_URL_PATTERNS: list[str] = [
     "*.ttf",
     "*.eot",
     "*.otf",
+    "*.mp4",
+    "*.webm",
+    "*.mp3",
+    "*.ogg",
+    "*.wav",
+    "*.flac",
+    "*monaco-editor*",
+    "*codemirror*",
+    "*vs/editor*",
+    "*vs/base*",
+    "*mathjax*",
+    "*katex*",
     "*google-analytics.com*",
     "*googletagmanager.com*",
     "*play.google.com/log*",
     "*bat.bing.com*",
     "*adservice.google.com*",
     "*pagead2.googlesyndication.com*",
+    "*doubleclick*",
+    "*doubleclick.net*",
+    "*recaptcha*",
+    "*google.com/recaptcha*",
 ]
 
 
@@ -209,6 +225,18 @@ class CDPPage:
         self.target_id = target_id
         self._is_closed = False
         self._last_url: str = ""
+        self._unsubscribers: list[Callable[[], None]] = []
+        self.has_stream_binding: bool = False
+
+    def _track_listener(self, unsub: Callable[[], None]) -> Callable[[], None]:
+        self._unsubscribers.append(unsub)
+
+        def wrapped() -> None:
+            if unsub in self._unsubscribers:
+                self._unsubscribers.remove(unsub)
+            unsub()
+
+        return wrapped
 
     @property
     def url(self) -> str:
@@ -234,7 +262,7 @@ class CDPPage:
             if not frame.get("parentId"):  # Main frame
                 self._last_url = str(frame.get("url") or "")
 
-        self.cdp.on("Page.frameNavigated", on_navigated)
+        self._track_listener(self.cdp.on("Page.frameNavigated", on_navigated))
         if block_assets:
             await self.set_blocked_urls(BLOCKED_URL_PATTERNS)
 
@@ -260,7 +288,7 @@ class CDPPage:
                 payload = str(params.get("payload") or "")
                 callback(payload)
 
-        return self.cdp.on("Runtime.bindingCalled", listener)
+        return self._track_listener(self.cdp.on("Runtime.bindingCalled", listener))
 
     async def evaluate(
         self,
@@ -641,7 +669,7 @@ class CDPPage:
             }
             callback(data)
 
-        return self.cdp.on("Network.requestWillBeSent", listener)
+        return self._track_listener(self.cdp.on("Network.requestWillBeSent", listener))
 
     def on_response(
         self, callback: Callable[[dict[str, object]], object]
@@ -660,7 +688,7 @@ class CDPPage:
             }
             callback(data)
 
-        return self.cdp.on("Network.responseReceived", listener)
+        return self._track_listener(self.cdp.on("Network.responseReceived", listener))
 
     async def get_response_body(self, request_id: str) -> str:
         """Get response body for a completed request."""
@@ -678,9 +706,24 @@ class CDPPage:
             log.debug("get_response_body(%s) failed: %s", request_id, e)
             return ""
 
+    async def collect_garbage(self) -> None:
+        """Trigger V8 garbage collection via HeapProfiler or window.gc()."""
+        try:
+            await self.cdp.send("HeapProfiler.collectGarbage", timeout_s=5.0)
+        except Exception:
+            with contextlib.suppress(Exception):
+                await self.evaluate(
+                    "() => { if (typeof window.gc === 'function') window.gc(); }",
+                    timeout_s=5.0,
+                )
+
     async def close(self) -> None:
-        """Close this page target."""
+        """Close this page target and clear all registered listeners."""
         self._is_closed = True
+        for unsub in list(self._unsubscribers):
+            with contextlib.suppress(Exception):
+                unsub()
+        self._unsubscribers.clear()
         with contextlib.suppress(Exception):
             await self.cdp.send("Page.close")
         await self.cdp.close()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -84,3 +85,56 @@ class AccountService:
     def update_account(self, account_id: str, name: str) -> AccountMeta | None:
         """更新账号名称。"""
         return self._store.update_account(account_id, name)
+
+    def save_account_from_cookies(
+        self,
+        *,
+        name: str,
+        email: str | None,
+        storage_state: dict[str, object],
+        account_id: str | None = None,
+        auth_user: str = "0",
+        cookie_id: str | None = None,
+    ) -> AccountMeta:
+        """从 Cookie 存储状态保存新账号。"""
+        return self._store.save_account(
+            name=name,
+            email=email,
+            storage_state=storage_state,
+            account_id=account_id,
+            auth_user=auth_user,
+            cookie_id=cookie_id,
+        )
+
+    def batch_import_accounts(
+        self,
+        probed_list: list[dict[str, object]],
+        storage_state: dict[str, object],
+        prefix: str = "Google Account",
+        cookie_id: str | None = None,
+    ) -> list[AccountMeta]:
+        """批量导入探活到的账号列表。"""
+        imported: list[AccountMeta] = []
+        for p in probed_list:
+            u_idx = str(p.get("auth_user") or "0")
+            acc_name = (
+                f"{prefix} (u/{u_idx})"
+                if len(probed_list) > 1 or u_idx != "0"
+                else prefix
+            )
+            account = self._store.save_account(
+                name=acc_name,
+                email=None,
+                storage_state=storage_state,
+                auth_user=u_idx,
+                cookie_id=cookie_id,
+            )
+            imported.append(account)
+
+        if not self.get_active_account() and imported:
+            self.set_active_account(imported[0].id)
+        return imported
+
+    def get_account_auth_path(self, account_id: str) -> Path | None:
+        """获取指定账号的 auth.json 路径。"""
+        return self._store.get_auth_path(account_id)

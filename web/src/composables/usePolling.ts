@@ -1,6 +1,8 @@
 import { onUnmounted } from 'vue'
 
 export interface PollingOptions {
+  /** 任务唯一标识（可选，用于跨组件去重） */
+  key?: string
   /** 是否在挂载或恢复可见时立即执行一次（默认 true） */
   immediate?: boolean
 }
@@ -14,57 +16,117 @@ export interface PollingHandle {
   resume: () => void
 }
 
+interface ActiveTask {
+  fn: () => void | Promise<void>
+  intervalMs: number
+  timer?: number
+  paused: boolean
+  running: boolean
+}
+
+const activeTasks = new Map<string, ActiveTask>()
+let visibilityListenerRegistered = false
+
+function setupGlobalVisibilityListener() {
+  if (visibilityListenerRegistered || typeof window === 'undefined') return
+  visibilityListenerRegistered = true
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      for (const task of activeTasks.values()) {
+        if (task.timer) {
+          clearInterval(task.timer)
+          task.timer = undefined
+        }
+      }
+    } else {
+      for (const task of activeTasks.values()) {
+        if (!task.paused) {
+          void runTask(task)
+          startTaskTimer(task)
+        }
+      }
+    }
+  })
+}
+
+async function runTask(task: ActiveTask) {
+  if (task.running || (typeof document !== 'undefined' && document.hidden)) return
+  task.running = true
+  try {
+    await task.fn()
+  } catch (err) {
+    console.debug('[usePolling] task execution error:', err)
+  } finally {
+    task.running = false
+  }
+}
+
+function startTaskTimer(task: ActiveTask) {
+  if (task.timer || task.paused || (typeof document !== 'undefined' && document.hidden)) return
+  task.timer = window.setInterval(() => {
+    void runTask(task)
+  }, task.intervalMs)
+}
+
+function stopTaskTimer(task: ActiveTask) {
+  if (task.timer) {
+    clearInterval(task.timer)
+    task.timer = undefined
+  }
+}
+
+let autoKeyCounter = 0
+
 /**
- * 页面隐藏时自动暂停的轮询。
- * 默认在挂载时立即执行一次回调，页面可见时按指定周期循环拉取。
+ * 页面可见时周期性调度的统一轮询管理。
+ * 支持页面隐藏自动冻结、销毁自动释放与全局并发去重。
  */
 export function usePolling(
   fn: () => void | Promise<void>,
   intervalMs: number,
   options: PollingOptions = {}
 ): PollingHandle {
+  setupGlobalVisibilityListener()
+
+  const taskId = options.key || `poll_${++autoKeyCounter}`
   const immediate = options.immediate !== false
-  let timer: ReturnType<typeof setInterval> | undefined
 
-  function run() {
-    void fn()
+  const task: ActiveTask = {
+    fn,
+    intervalMs,
+    paused: false,
+    running: false,
   }
-
-  function start() {
-    if (timer) return
-    timer = setInterval(run, intervalMs)
-  }
-
-  function stop() {
-    clearInterval(timer)
-    timer = undefined
-  }
+  activeTasks.set(taskId, task)
 
   if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
-    const onVisibility = () => {
-      if (document.hidden) {
-        stop()
-      } else {
-        run()
-        start()
-      }
-    }
-    document.addEventListener('visibilitychange', onVisibility)
-    onUnmounted(() => {
-      document.removeEventListener('visibilitychange', onVisibility)
-      stop()
-    })
-
     if (!document.hidden) {
       if (immediate) {
-        run()
+        void runTask(task)
       }
-      start()
+      startTaskTimer(task)
     }
   }
-  return {
-    run,
-    pause: stop,
-    resume: start,
+
+  const handle: PollingHandle = {
+    run: () => {
+      void runTask(task)
+    },
+    pause: () => {
+      task.paused = true
+      stopTaskTimer(task)
+    },
+    resume: () => {
+      task.paused = false
+      startTaskTimer(task)
+    },
   }
+
+  onUnmounted(() => {
+    stopTaskTimer(task)
+    activeTasks.delete(taskId)
+  })
+
+  return handle
 }

@@ -6,7 +6,7 @@ import json
 from collections.abc import Generator
 from contextlib import suppress
 
-from aistudio_api.domain.models import parse_response_chunk
+from aistudio_api.infrastructure.gateway.wire_parser import parse_response_chunk
 
 XSSI_PREFIX = ")]}'"
 

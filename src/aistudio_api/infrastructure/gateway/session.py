@@ -69,7 +69,6 @@ class BrowserSession:
         self._cdp_client: CDPClient | None = None
         self._page: CDPPage | None = None
         self._snap_key: str | None = None
-        self._templates: dict[str, dict[str, object]] = {}
         self._bootstrap_template: dict[str, object] | None = None
         self._transport = XHRStreamTransport()
         self._lock = asyncio.Lock()
@@ -113,9 +112,7 @@ class BrowserSession:
 
                 self._auth_file = auth_file
                 self._profile_dir = self._derive_profile_dir(auth_file)
-                self._templates.clear()
                 self._bootstrap_template = None
-
                 hot_switched = False
                 if self._page is not None and not self._page.is_closed():
                     try:
@@ -318,24 +315,13 @@ class BrowserSession:
                 await self.switch_auth(original_auth_file)
                 self._profile_dir = original_profile_dir
 
-    async def capture_template(self, model: str) -> dict[str, object]:
-        """Capture GenerateContent request headers and URL template for the given model."""
-        if model in self._templates:
-            return self._templates[model]
-
+    async def capture_template_flow(self, model: str) -> dict[str, object]:
+        """Execute browser action flow to capture request template without caching in session."""
         clean_model = model.removeprefix("models/")
         async with self._template_lock:
-            if model in self._templates:
-                return self._templates[model]
-            if clean_model in self._templates:
-                return self._templates[clean_model]
-
             page = await self.ensure_botguard_service()
             if clean_model == "gemini-3.7-flash" and self._bootstrap_template:
-                bootstrap = dict(self._bootstrap_template)
-                self._templates[model] = bootstrap
-                self._templates[clean_model] = bootstrap
-                return bootstrap
+                return dict(self._bootstrap_template)
 
             captured: dict[str, object] = {}
             last_response: dict[str, object] | None = None
@@ -378,7 +364,6 @@ class BrowserSession:
                 for _ in range(30):
                     await page.wait_for_timeout(1000)
                     if captured:
-                        # 模板捕获即刻截断：一旦拦截到请求，立即终止生成，避免无意义等待
                         with suppress(Exception):
                             await page.evaluate(STOP_GENERATION_JS)
                         break
@@ -388,9 +373,7 @@ class BrowserSession:
                             "Dynamic template capture for model=%s timed out; falling back to bootstrap template",
                             model,
                         )
-                        bootstrap = dict(self._bootstrap_template)
-                        self._templates[model] = bootstrap
-                        return bootstrap
+                        return dict(self._bootstrap_template)
                     if last_response is not None:
                         raise RuntimeError(
                             f"template capture failed after request: status={last_response.get('status')} url={last_response.get('url')}"
@@ -398,17 +381,18 @@ class BrowserSession:
                     raise RuntimeError(f"template capture timeout for model={model}")
 
                 await page.fill("textarea", original_text)
-                # 模板捕获完成后执行 DOM 垃圾回收，保持低内存水位
                 with suppress(Exception):
                     await page.evaluate(DOM_GC_CLEANUP_JS)
-                self._templates[model] = captured
-                self._templates[clean_model] = captured
                 return captured
             finally:
                 unsub_req()
                 unsub_resp()
                 with suppress(Exception):
                     await page.fill("textarea", original_text)
+
+    async def capture_template(self, model: str) -> dict[str, object]:
+        """Capture template flow forwarder."""
+        return await self.capture_template_flow(model)
 
     async def generate_snapshot(self, contents: list[AistudioContent]) -> str:
         """Generate a BotGuard snapshot token for given content payload.
@@ -470,11 +454,17 @@ class BrowserSession:
         """Replay request via XHR inside the browser context."""
         async with self.request_scope():
             page = await self.ensure_botguard_service()
-            if url and headers:
+            if url and headers is not None:
                 captured_url = url
                 captured_headers = headers
             else:
-                captured_url, captured_headers = self._get_captured_info()
+                template = await self.capture_template_flow(model="gemini-3.7-flash")
+                captured_url = str(template.get("url") or "")
+                raw_hdrs = template.get("headers")
+                captured_headers = {
+                    str(k): str(v)
+                    for k, v in (raw_hdrs.items() if isinstance(raw_hdrs, dict) else [])
+                }
 
             return await self._transport.send_hooked_request(
                 page,
@@ -494,21 +484,38 @@ class BrowserSession:
     ) -> AsyncGenerator[tuple[str, object], None]:
         """Send a streaming request, yielding ('status', int) and ('chunk', bytes) events."""
         async with self.request_scope():
-            if url and headers:
-                page = await self.ensure_botguard_service()
+            page = await self.ensure_botguard_service()
+            if url and headers is not None:
                 captured_url = url
                 captured_headers = headers
             else:
-                page, captured_url, captured_headers = await self._prepare_streaming()
+                template = await self.capture_template_flow(model="gemini-3.7-flash")
+                captured_url = str(template.get("url") or "")
+                raw_hdrs = template.get("headers")
+                captured_headers = {
+                    str(k): str(v)
+                    for k, v in (raw_hdrs.items() if isinstance(raw_hdrs, dict) else [])
+                }
 
-            async for event in self._transport.send_streaming_request(
-                page,
-                url=captured_url,
-                headers=captured_headers,
-                body=body,
-                timeout_ms=timeout_ms,
-            ):
-                yield event
+            try:
+                async for event in self._transport.send_streaming_request(
+                    page,
+                    url=captured_url,
+                    headers=captured_headers,
+                    body=body,
+                    timeout_ms=timeout_ms,
+                ):
+                    yield event
+            finally:
+                await self.cleanup_stream_page()
+
+    async def cleanup_stream_page(self) -> None:
+        """Execute post-stream DOM cleanup and V8 garbage collection."""
+        if self._page is not None and not self._page.is_closed():
+            with suppress(Exception):
+                await self._page.evaluate(DOM_GC_CLEANUP_JS)
+            with suppress(Exception):
+                await self._page.collect_garbage()
 
     async def close(self) -> None:
         """Close browser session and free resources."""
@@ -528,7 +535,6 @@ class BrowserSession:
 
         self._page = None
         self._snap_key = None
-        self._templates.clear()
         self._bootstrap_template = None
 
     async def _ensure_browser_cdp(self) -> CDPPage:
@@ -583,30 +589,18 @@ class BrowserSession:
 
     async def _prepare_streaming(self) -> tuple[CDPPage, str, dict[str, str]]:
         page = await self.ensure_botguard_service()
-        if not self._templates:
-            from aistudio_api.config import DEFAULT_TEXT_MODEL
+        from aistudio_api.config import DEFAULT_TEXT_MODEL
 
-            try:
-                await self.capture_template(DEFAULT_TEXT_MODEL)
-            except Exception as e:
-                log.warning("auto template capture failed: %s", e)
-        url, headers = self._get_captured_info()
-        return page, url, headers
-
-    def _get_captured_info(self) -> tuple[str, dict[str, str]]:
-        for tpl in self._templates.values():
-            raw_url = tpl.get("url")
-            if raw_url:
-                url = str(raw_url)
-                raw_headers = tpl.get("headers")
-                headers_dict = raw_headers if isinstance(raw_headers, dict) else {}
-                headers = {
-                    str(k): str(v)
-                    for k, v in headers_dict.items()
-                    if str(k).lower() not in ("host", "content-length")
-                }
-                return url, headers
-        raise RuntimeError("no captured URL available for replay")
+        tpl = await self.capture_template_flow(DEFAULT_TEXT_MODEL)
+        raw_url = str(tpl.get("url") or "")
+        raw_headers = tpl.get("headers")
+        headers_dict = raw_headers if isinstance(raw_headers, dict) else {}
+        headers = {
+            str(k): str(v)
+            for k, v in headers_dict.items()
+            if str(k).lower() not in ("host", "content-length")
+        }
+        return page, raw_url, headers
 
     async def _bootstrap_google_session(self, page: CDPPage) -> None:
         await page.goto(

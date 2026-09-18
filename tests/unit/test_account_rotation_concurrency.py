@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from aistudio_api.application.account_orchestrator import (
+    try_switch_account,
+)
 from aistudio_api.application.account_rotator import (
     AccountRotator,
     AccountStats,
     get_seconds_until_pacific_midnight,
-)
-from aistudio_api.application.api_service_common import (
-    try_switch_account,
 )
 from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
 from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
@@ -333,17 +333,20 @@ async def test_browser_session_send_streaming_batch_events():
             return "already_hooked"
         if "window.__bg_service" in expr:
             return True
-        if "window.__stream_next" in expr:
+        if "stream_session_lost" in expr:
             return batch_events
         return None
 
     page.evaluate = AsyncMock(side_effect=fake_eval)
     session = BrowserSession(port=9222)
     session._page = page
-    session._templates["test"] = {"url": "https://example.com", "headers": {}}
-
     results = []
-    async for tag, data in session.send_streaming_request(body="[]", timeout_ms=5000):
+    async for tag, data in session.send_streaming_request(
+        url="https://example.com",
+        headers={},
+        body="[]",
+        timeout_ms=5000,
+    ):
         results.append((tag, data))
 
     assert ("status", 200) in results

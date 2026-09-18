@@ -20,7 +20,8 @@ def _atomic_write_json(path: Path, data: object) -> None:
     tmp_path = path.with_suffix(f".tmp.{os.getpid()}_{time.time_ns()}")
     try:
         tmp_path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
         )
         tmp_path.replace(path)
     except Exception:
@@ -241,10 +242,12 @@ class AccountStore:
         registry = self._load_registry()
         if account_id not in registry.accounts:
             return None
+        changed = registry.active_account_id != account_id
         registry.active_account_id = account_id
         now = datetime.now(UTC).isoformat()
         registry.accounts[account_id].last_used = now
-        self._save_registry(registry)
+        if changed:
+            self._save_registry(registry)
         return registry.accounts[account_id]
 
     def save_account(

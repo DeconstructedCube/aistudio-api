@@ -203,7 +203,7 @@ def build_chromium_args(
         "--mute-audio",
         "--disable-audio",
         "--disable-site-isolation-trials",
-        "--js-flags=--max-old-space-size=128",
+        "--js-flags=--max-old-space-size=128 --expose-gc",
         "--disk-cache-size=16777216",
         "--media-cache-size=1",
         "--disable-extensions",

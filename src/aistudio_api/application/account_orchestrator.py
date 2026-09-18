@@ -1,16 +1,10 @@
-"""Shared helpers for API service handlers."""
+"""Account failover and concurrency orchestration."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 
-from aistudio_api.api.response_models import (
-    HealthResponse,
-    ModelStatsResponse,
-    StatsResponse,
-    StatsTotalsResponse,
-)
 from aistudio_api.api.state import runtime_state
 
 logger = logging.getLogger("aistudio.server")
@@ -72,6 +66,7 @@ async def try_switch_account(
 
 
 async def ensure_active_account(attempt: int, model: str | None = None) -> None:
+    """确保在初次尝试时存在活跃账号，且该账号对目标模型可用。"""
     if attempt != 0:
         return
     account_svc = runtime_state.account_service
@@ -90,6 +85,7 @@ def record_rotator_event(
     event: str,
     model: str | None = None,
 ) -> None:
+    """记录调度器事件（成功、限流、错误）。"""
     rotator = runtime_state.rotator
     account_service = runtime_state.account_service
     account = account_service.get_active_account() if account_service else None
@@ -103,32 +99,9 @@ def record_rotator_event(
         rotator.record_error(account.id, model=model)
 
 
-def health_response() -> HealthResponse:
-    return HealthResponse(status="ok", busy=False)
-
-
-def stats_response() -> StatsResponse:
-    stats = dict(runtime_state.model_stats)
-    totals = StatsTotalsResponse(
-        requests=sum(s.requests for s in stats.values()),
-        success=sum(s.success for s in stats.values()),
-        rate_limited=sum(s.rate_limited for s in stats.values()),
-        errors=sum(s.errors for s in stats.values()),
-        prompt_tokens=sum(s.prompt_tokens for s in stats.values()),
-        completion_tokens=sum(s.completion_tokens for s in stats.values()),
-        total_tokens=sum(s.total_tokens for s in stats.values()),
-    )
-    models = {
-        name: ModelStatsResponse(
-            requests=s.requests,
-            success=s.success,
-            rate_limited=s.rate_limited,
-            errors=s.errors,
-            prompt_tokens=s.prompt_tokens,
-            completion_tokens=s.completion_tokens,
-            total_tokens=s.total_tokens,
-            last_used=s.last_used,
-        )
-        for name, s in stats.items()
-    }
-    return StatsResponse(models=models, totals=totals)
+__all__ = [
+    "MAX_RETRIES",
+    "ensure_active_account",
+    "record_rotator_event",
+    "try_switch_account",
+]
