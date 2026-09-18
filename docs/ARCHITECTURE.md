@@ -69,13 +69,14 @@ flowchart TD
         Waa["Google WAA 反作弊网关<br/>waa-pa"]
     end
 
-    ClientApp --> APILayer
+    Client --> APILayer
     APILayer --> AppLayer
     AppLayer --> DomainLayer
     AppLayer --> InfraLayer
     InfraLayer --> DomainLayer
     BrowserSub --> Upstream
     GatewaySub --> Upstream
+```
 
 ---
 
