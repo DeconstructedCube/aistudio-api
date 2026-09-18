@@ -357,9 +357,19 @@ DOM_GC_CLEANUP_JS = """(() => {
     });
     if (stopBtn) { try { stopBtn.click(); } catch(e) {} }
 
-    document.querySelectorAll('ms-chat-turn, ms-prompt-chunk, ms-chunk, ms-response-chunk, .chat-turn, .history-container').forEach(el => el.remove());
-    document.querySelectorAll('.cdk-overlay-backdrop, .cdk-overlay-container').forEach(el => el.remove());
+    document.querySelectorAll('ms-chat-session, ms-chat-turn, ms-chat-turn-options, ms-chat-loading-indicator, ms-prompt-chunk, ms-chunk, ms-response-chunk, .chat-turn, .history-container').forEach(el => el.remove());
+    document.querySelectorAll('.cdk-overlay-backdrop, .cdk-overlay-container, mat-menu, ms-updates, ms-nav-popover').forEach(el => el.remove());
+    document.querySelectorAll('canvas, video, audio').forEach(el => el.remove());
 
     const ta = document.querySelector('textarea');
     if (ta) { ta.value = ''; }
+
+    if (!document.getElementById('__aistudio_perf_style__')) {
+        try {
+            const style = document.createElement('style');
+            style.id = '__aistudio_perf_style__';
+            style.textContent = '* { animation: none !important; transition: none !important; }';
+            (document.head || document.documentElement).appendChild(style);
+        } catch(e) {}
+    }
 })()"""

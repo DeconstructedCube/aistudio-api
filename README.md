@@ -51,8 +51,7 @@
 | **Web 管理面板** | 提供现代化的管理控制台，支持账号管理、调用量监控、在线编辑与热重载 `config.yaml` |
 
 > [!NOTE]
-> **内存占用参考**：纯 Python 后端服务常驻内存约 30 - 85 MB；拉起内置单实例受控 Chromium 后总内存约 500 - 650 MB。Android Termux 环境建议空闲 RAM ≥ 1 GB。
-
+> **内存占用参考**：纯 Python 后端服务常驻内存约 30 - 85 MB；拉起内置单实例受控 Chromium 后总内存约 150 - 250 MB。Android Termux 环境建议空闲 RAM ≥ 1 GB。
 ---
 
 ## 技术架构与文档
@@ -342,8 +341,7 @@ Python 端质量检查与测试：
 
 ```bash
 # 执行代码风格与 Lint 检查
-ruff check .
-
+uv run ruff check .
 # 执行静态类型检查
 bun x pyright
 
