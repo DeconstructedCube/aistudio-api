@@ -283,16 +283,28 @@ class AistudioPart:
 
 def _encode_wire_args(value):
     if isinstance(value, dict):
-        return [[[key, _encode_wire_value(val)] for key, val in value.items()]]
+        return [_encode_wire_struct_fields(value)]
     return value
 
 
+def _encode_wire_struct_fields(d: dict):
+    return [[key, _encode_wire_value(val)] for key, val in d.items()]
+
+
 def _encode_wire_value(value):
+    if value is None:
+        return [0]
+    if isinstance(value, bool):
+        return [None, None, None, value]
+    if isinstance(value, (int, float)):
+        return [1, value]
+    if isinstance(value, str):
+        return [None, None, value]
     if isinstance(value, dict):
-        return [None, _encode_wire_args(value)]
+        return [None, _encode_wire_struct_fields(value)]
     if isinstance(value, list):
         return [None, None, [_encode_wire_value(item) for item in value]]
-    return [None, None, value]
+    return [None, None, str(value)]
 
 
 @dataclass

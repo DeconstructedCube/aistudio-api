@@ -113,7 +113,11 @@ def to_gemini_parts(
             raw_val = function_call.get("raw")
             if isinstance(raw_val, list) and len(raw_val) > 1:
                 payload.args = raw_val[1]
-        parts.append(GeminiPartResponse(functionCall=payload))
+        fc_id = function_call.get("call_id") or function_call.get("id")
+        if fc_id:
+            payload.id = str(fc_id)
+        sig = str(function_call.get("thought_signature") or "") or None
+        parts.append(GeminiPartResponse(functionCall=payload, thoughtSignature=sig))
     for function_response in function_responses or []:
         fr_name = str(function_response.get("name") or "unknown")
         resp_payload = GeminiFunctionResponsePayload(name=fr_name)
@@ -125,6 +129,9 @@ def to_gemini_parts(
             raw_val = function_response.get("raw")
             if isinstance(raw_val, list) and len(raw_val) > 1:
                 resp_payload.response = raw_val[1]
+        fr_id = function_response.get("call_id") or function_response.get("id")
+        if fr_id:
+            resp_payload.id = str(fr_id)
         parts.append(GeminiPartResponse(functionResponse=resp_payload))
     if not parts:
         parts.append(GeminiPartResponse(text=""))

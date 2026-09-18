@@ -131,7 +131,7 @@ class StreamingGateway:
                             yield ("images", candidate.images)
                         if candidate.text:
                             yield ("body", candidate.text)
-                        if candidate.thought_signature:
+                        if candidate.thought_signature and not candidate.function_calls:
                             yield ("thought_signature", candidate.thought_signature)
         finally:
             if hasattr(self._session, "cleanup_stream_page"):

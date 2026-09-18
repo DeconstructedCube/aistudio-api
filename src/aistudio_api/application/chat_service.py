@@ -53,8 +53,11 @@ class NormalizedGeminiRequest:
 SCHEMA_TYPE_CODES = {
     "string": 1,
     "number": 2,
+    "float": 2,
     "integer": 3,
+    "int": 3,
     "boolean": 4,
+    "bool": 4,
     "array": 5,
     "object": 6,
 }
@@ -77,7 +80,7 @@ def inline_data_to_file(mime_type: str, data: str, tmp_dir: str | None = None) -
 def encode_schema_to_wire(
     schema: dict[str, object], *, include_required: bool = True
 ) -> list[object]:
-    schema_type = str(schema.get("type") or "")
+    schema_type = str(schema.get("type") or "").split(".")[-1].strip().lower()
     type_code = SCHEMA_TYPE_CODES.get(schema_type, 0)
     wire: list[object] = [type_code]
 
@@ -129,7 +132,7 @@ def encode_function_declaration_to_wire(declaration: dict[str, object]) -> list[
     if isinstance(parameters, dict):
         while len(wire) <= 2:
             wire.append(None)
-        wire[2] = encode_schema_to_wire(parameters, include_required=False)
+        wire[2] = encode_schema_to_wire(parameters, include_required=True)
 
     return wire
 
@@ -324,7 +327,7 @@ def normalize_gemini_request(
 
         for part in content.parts:
             if part.text is not None:
-                is_thought = bool(part.thought) or bool(part.thoughtSignature)
+                is_thought = bool(part.thought)
                 parts.append(
                     AistudioPart(
                         text=part.text,

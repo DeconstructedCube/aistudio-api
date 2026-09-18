@@ -120,5 +120,6 @@ def test_chat_service_does_not_guess_thought_for_multi_parts():
     )
     norm_thought = normalize_gemini_request(req_with_thought, "gemini-3.5-flash")
     assert norm_thought.contents[0].parts[0].thought is True
-    assert norm_thought.contents[0].parts[1].thought is True
+    assert norm_thought.contents[0].parts[1].thought is False
+    assert norm_thought.contents[0].parts[1].thought_signature == "sig123"
     assert norm_thought.contents[0].parts[2].thought is False

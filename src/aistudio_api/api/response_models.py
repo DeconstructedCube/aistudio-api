@@ -36,12 +36,12 @@ class GeminiUsageMetadata(BaseModel):
 class GeminiFunctionCallPayload(BaseModel):
     name: str
     args: object | None = None
-
+    id: str | None = None
 
 class GeminiFunctionResponsePayload(BaseModel):
     name: str
     response: object | None = None
-
+    id: str | None = None
 
 class GeminiInlineDataResponse(BaseModel):
     mimeType: str
