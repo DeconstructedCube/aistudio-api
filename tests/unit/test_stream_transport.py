@@ -19,11 +19,8 @@ from aistudio_api.infrastructure.gateway.transport import XHRStreamTransport
 def test_streaming_scripts_include_window_deletions():
     """Verify V8 memory cleanup logic is present in scripts."""
     assert "delete window.__streams[rid]" in STREAMING_INIT_JS
-    assert "delete window.__stream_next[rid]" in STREAMING_INIT_JS
     assert "delete window.__stream_abort[rid]" in STREAMING_INIT_JS
-
     assert "delete window.__streams[rid]" in STREAM_CLEANUP_JS
-    assert "delete window.__stream_next[rid]" in STREAM_CLEANUP_JS
     assert "delete window.__stream_abort[rid]" in STREAM_CLEANUP_JS
 
 
@@ -91,22 +88,34 @@ async def test_transport_streaming_timeout_raises():
     """Verify stream timeout before completion explicitly raises TimeoutError."""
     transport = XHRStreamTransport()
     page = MagicMock(spec=CDPPage)
+    binding_listener = None
 
-    call_count = 0
+    def mock_on_binding(name: str, callback):
+        nonlocal binding_listener
+        if name == "__aistudio_stream_push__":
+            binding_listener = callback
+
+    page.on_binding = MagicMock(side_effect=mock_on_binding)
+    page.add_binding = AsyncMock()
+
+    captured_rid = None
 
     async def fake_evaluate(expr, args=None, *a, **kw):
-        nonlocal call_count
-        if "stream_session_lost" in expr or "window.__stream_next[rid](250)" in expr:
-            call_count += 1
-            if call_count == 1:
-                return {"type": "status", "status": 200}
-            if call_count == 2:
-                return {"type": "chunk", "text": "partial chunk"}
-            return {"type": "idle"}
-        return None
+        nonlocal captured_rid
+        if isinstance(args, dict) and "rid" in args:
+            captured_rid = args["rid"]
+        return
 
     page.evaluate = AsyncMock(side_effect=fake_evaluate)
 
+    async def push_status_only():
+        while captured_rid is None or binding_listener is None:
+            await asyncio.sleep(0.01)
+        binding_listener(
+            json.dumps({"rid": captured_rid, "type": "status", "status": 200})
+        )
+
+    push_task = asyncio.create_task(push_status_only())
     with pytest.raises(
         TimeoutError, match="streaming response timed out before completion"
     ):
@@ -115,6 +124,7 @@ async def test_transport_streaming_timeout_raises():
             url="http://test.com",
             headers={},
             body="{}",
-            timeout_ms=300,
+            timeout_ms=100,
         ):
             pass
+    await push_task

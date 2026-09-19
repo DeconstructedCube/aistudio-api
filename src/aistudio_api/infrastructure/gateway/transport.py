@@ -14,7 +14,6 @@ from aistudio_api.infrastructure.account.cookie_parser import calculate_sapisid_
 from aistudio_api.infrastructure.browser.scripts import (
     HOOKED_REQUEST_JS,
     STREAM_CLEANUP_JS,
-    STREAM_POLL_JS,
     STREAMING_INIT_JS,
     build_hooked_request_args,
     build_streaming_init_args,
@@ -173,32 +172,16 @@ class XHRStreamTransport:
 
         try:
             while not is_terminal:
-                if not queue.empty():
-                    event = queue.get_nowait()
-                else:
-                    now = asyncio.get_running_loop().time()
-                    remaining = deadline - now
-                    if remaining <= 0:
-                        break
+                now = asyncio.get_running_loop().time()
+                remaining = deadline - now
+                if remaining <= 0:
+                    break
 
-                    try:
-                        event = await asyncio.wait_for(
-                            queue.get(), timeout=min(remaining, 0.05)
-                        )
-                    except TimeoutError:
-                        with suppress(Exception):
-                            raw_event = await page.evaluate(STREAM_POLL_JS, rid)
-                            if isinstance(raw_event, dict):
-                                etype = str(raw_event.get("type") or "")
-                                if etype == "batch":
-                                    raw_events = raw_event.get("events")
-                                    if isinstance(raw_events, list):
-                                        for sub in raw_events:
-                                            if isinstance(sub, dict):
-                                                queue.put_nowait(sub)
-                                elif etype not in ("", "idle"):
-                                    queue.put_nowait(raw_event)
-                        continue
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=remaining)
+                except TimeoutError:
+                    break
+
                 etype = str(event.get("type") or "")
                 if etype == "status":
                     status = int(str(event.get("status") or 0))
@@ -214,7 +197,6 @@ class XHRStreamTransport:
                 elif etype in ("done", "aborted"):
                     is_terminal = True
                     break
-
             if not status_sent:
                 raise RuntimeError("streaming request timeout: no response status")
             if not is_terminal:

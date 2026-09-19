@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -93,6 +94,15 @@ async def test_browser_session_send_streaming_request(mock_cdp_page):
     session = BrowserSession(port=9222)
     session._page = mock_cdp_page
 
+    binding_callback = None
+
+    def mock_on_binding(name, cb):
+        nonlocal binding_callback
+        if name == "__aistudio_stream_push__":
+            binding_callback = cb
+
+    mock_cdp_page.on_binding = MagicMock(side_effect=mock_on_binding)
+
     events = [
         {"type": "status", "status": 200},
         {"type": "chunk", "text": "data: hello "},
@@ -105,11 +115,12 @@ async def test_browser_session_send_streaming_request(mock_cdp_page):
             return "already_hooked"
         if "window.__bg_service" in expr:
             return True
-        if "stream_session_lost" in expr:
-            if events:
-                return events.pop(0)
-            return {"type": "done"}
-        if "STREAMING_INIT" in expr or "window.__streams" in expr:
+        if isinstance(args, dict) and "rid" in args and binding_callback:
+            rid = args["rid"]
+            for ev in events:
+                ev_copy = dict(ev)
+                ev_copy["rid"] = rid
+                binding_callback(json.dumps(ev_copy))
             return None
         return None
 

@@ -105,9 +105,7 @@ async def test_cdp_page_evaluate_argument_wrapping():
 async def test_cdp_page_evaluate_trailing_semicolon_handling():
     """Test CDPPage.evaluate strips trailing semicolons before wrapping into expression."""
     conn = MagicMock(spec=CDPConnection)
-    conn.send = AsyncMock(
-        return_value={"result": {"type": "string", "value": "ok"}}
-    )
+    conn.send = AsyncMock(return_value={"result": {"type": "string", "value": "ok"}})
     page = CDPPage(conn, target_id="target-1")
 
     # 1. Function with trailing semicolon and arguments
@@ -123,6 +121,7 @@ async def test_cdp_page_evaluate_trailing_semicolon_handling():
     expr2 = call_args2[1]["expression"]
     assert ";)" not in expr2
     assert expr2 == "(() => { return 42; })()"
+
 
 @pytest.mark.asyncio
 async def test_cdp_page_set_cookies_normalization():

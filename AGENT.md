@@ -105,15 +105,30 @@ uv run python3 main.py server --port 8080
   # 自动格式化与 import 排序修复
   ruff check . --fix
   ```
-### 3.3 自动化检查命令与执行守则
+### 3.3 智能体工具调用与文件操作守则
+
+为保障代码修改的准确性并最大化利用大上下文模型能力，智能体与开发者应遵循以下操作准则：
+
+1. **优先读取完整文件（Avoid Range Truncation）**：
+   - 读取代码、测试及文档文件时，**优先读取完整文件（不带行号范围选择器）**。避免盲目切片读取导致上下文断裂，消除局部修改时因行号漂移或快照版本不匹配导致的编辑拦截。
+   - 本项目单个代码与文档文件通常在千行以内，直接完整读取能确保类型推导与全局引用的完整语义。
+2. **批量并发读取（Batch / Parallel Reads）**：
+   - 涉及多个独立文件、测试文件或配置的调研与比对时，**在单个响应轮次中批量发起多个 read 调用**，提升执行吞吐，避免串行多轮交互浪费上下文与时间。
+3. **大型嵌入脚本独立管理与 Write 习惯**：
+   - 浏览器端执行的大型复杂 JavaScript 逻辑（如流式注入、DOM GC、鉴权探活等）必须**独立提取为 `src/aistudio_api/infrastructure/browser/js/*.js` 独立文件**，由 `scripts.py` 在模块加载时读取，便于 JS 语法检查与独立维护。
+   - 新建文件、全量重构或脚本提取优先使用 `write` 工具进行整文件原子覆写；局部微创修改使用 `edit`。
+
+### 3.4 自动化检查命令与执行守则
 
 在提交代码改动前，必须确保以下工具链检查通过：
 
 | 工具 / 阶段 | 命令 | 判定标准 |
 |---|---|---|
-| **Python 代码风格与 Lint** | `ruff check .` | 0 errors |
-| **Python 类型检查** | `bun x pyright` | 0 errors |
-| **Python 单元测试** | `uv run pytest` | 全部通过 |
+| **Python 代码风格与 Lint** | `uv run ruff check .` | 0 errors |
+| **Python 代码格式化** | `uv run ruff format --check .` | 71 files already formatted |
+| **Python 类型检查** | `bun x pyright src tests` | 0 errors |
+| **Python 单元测试** | `uv run pytest` | 全部通过 (132+ passed) |
+| **浏览器 JS 语法校验** | `bun build src/aistudio_api/infrastructure/browser/js/*.js --no-bundle` | 0 errors |
 | **前端代码规范** | `cd web && bun run lint` | 0 errors, 0 warnings |
 | **前端类型检查** | `cd web && bun run type-check` | 0 errors |
 | **前端生产构建** | `cd web && bun run build` | 构建成功并更新 static 产物 |
@@ -125,7 +140,6 @@ uv run python3 main.py server --port 8080
 
 > [!TIP]
 > **避免无效重跑**：若在当前交互轮次中未发生代码或配置文件的实质性变动，无需重复执行全量类型与测试套件检查。
----
 
 ## 4. 并发安全与多账号守则
 

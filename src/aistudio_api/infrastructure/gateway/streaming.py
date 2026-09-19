@@ -137,7 +137,6 @@ class StreamingGateway:
             if hasattr(self._session, "cleanup_stream_page"):
                 with suppress(Exception):
                     await self._session.cleanup_stream_page()
-
         raw_response = "".join(raw_parts)
         _dump_stream_exchange(
             model=model,

@@ -38,10 +38,12 @@ class GeminiFunctionCallPayload(BaseModel):
     args: object | None = None
     id: str | None = None
 
+
 class GeminiFunctionResponsePayload(BaseModel):
     name: str
     response: object | None = None
     id: str | None = None
+
 
 class GeminiInlineDataResponse(BaseModel):
     mimeType: str

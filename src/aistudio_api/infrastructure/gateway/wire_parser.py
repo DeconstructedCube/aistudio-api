@@ -84,6 +84,13 @@ def parse_response_part(raw_part: object) -> ResponsePart:
     if not isinstance(raw_part, list):
         return ResponsePart()
 
+    # A content block [parts, role] or nested list is not a part.
+    if len(raw_part) > 0 and isinstance(raw_part[0], list):
+        return ResponsePart()
+
+    # Guard against role name in 2-element structure where index 1 is role
+    if len(raw_part) == 2 and raw_part[1] in ("model", "user", "system", "assistant"):
+        return ResponsePart()
     thought = False
     if len(raw_part) > 10 and isinstance(raw_part[10], bool):
         thought = raw_part[10]

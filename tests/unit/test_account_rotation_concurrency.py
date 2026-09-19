@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -317,24 +318,34 @@ async def test_browser_session_send_streaming_batch_events():
     page = MagicMock(spec=CDPPage)
     page.url = "https://aistudio.google.com/prompts/new_chat"
     page.is_closed = MagicMock(return_value=False)
+    binding_callback = None
 
-    batch_events = {
-        "type": "batch",
-        "events": [
-            {"type": "status", "status": 200},
-            {"type": "chunk", "text": "hello "},
-            {"type": "chunk", "text": "world"},
-            {"type": "done"},
-        ],
-    }
+    def mock_on_binding(name, cb):
+        nonlocal binding_callback
+        if name == "__aistudio_stream_push__":
+            binding_callback = cb
 
-    async def fake_eval(expr, *args, **kwargs):
+    page.on_binding = MagicMock(side_effect=mock_on_binding)
+
+    events = [
+        {"type": "status", "status": 200},
+        {"type": "chunk", "text": "hello "},
+        {"type": "chunk", "text": "world"},
+        {"type": "done"},
+    ]
+
+    async def fake_eval(expr, args=None, *a, **kwargs):
         if "default_MakerSuite" in expr or "window.__bg_hooked" in expr:
             return "already_hooked"
         if "window.__bg_service" in expr:
             return True
-        if "stream_session_lost" in expr:
-            return batch_events
+        if isinstance(args, dict) and "rid" in args and binding_callback:
+            rid = args["rid"]
+            for ev in events:
+                ev_copy = dict(ev)
+                ev_copy["rid"] = rid
+                binding_callback(json.dumps(ev_copy))
+            return None
         return None
 
     page.evaluate = AsyncMock(side_effect=fake_eval)

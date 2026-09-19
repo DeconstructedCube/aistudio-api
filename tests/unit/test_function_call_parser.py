@@ -1,3 +1,5 @@
+from typing import Any, cast
+
 from aistudio_api.infrastructure.gateway.wire_parser import parse_response_chunk
 
 
@@ -103,6 +105,7 @@ def test_parse_response_chunk_extracts_real_aistudio_function_call_shape():
         }
     ]
 
+
 def test_to_gemini_parts_preserves_thought_signature_and_id():
     from aistudio_api.api.responses import to_gemini_parts
 
@@ -158,7 +161,7 @@ def test_encode_schema_to_wire_case_insensitive_and_aliases():
 
     wire = encode_schema_to_wire(schema)
     assert wire[0] == 6  # OBJECT
-    props = dict(wire[6])
+    props = dict(cast(list[tuple[str, Any]], wire[6]))
     assert props["location"] == [1]  # STRING
     assert props["count"] == [3]  # INTEGER
     assert props["ratio"] == [2]  # FLOAT
@@ -179,17 +182,17 @@ def test_wire_args_nested_struct_encoding():
     encoded = _encode_wire_args(nested_data)
     # Must be [ [ [key, val], ... ] ]
     assert isinstance(encoded, list) and len(encoded) == 1
-    fields = dict(encoded[0])
+    fields = dict(cast(list[tuple[str, Any]], encoded[0]))
     assert fields["name"] == [None, None, "get_current_weather"]
     # content should be [None, [ [key, val], ... ] ]
     content_val = fields["content"]
     assert content_val[0] is None
-    content_fields = dict(content_val[1])
+    content_fields = dict(cast(list[tuple[str, Any]], content_val[1]))
     assert content_fields["temperature"] == [None, None, "15C"]
     assert content_fields["condition"] == [None, None, "Sunny"]
     metrics_val = content_fields["metrics"]
     assert metrics_val[0] is None
-    metrics_fields = dict(metrics_val[1])
+    metrics_fields = dict(cast(list[tuple[str, Any]], metrics_val[1]))
     assert metrics_fields["uv"] == [1, 3]
 
 

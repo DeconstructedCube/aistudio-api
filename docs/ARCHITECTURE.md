@@ -114,19 +114,19 @@ flowchart TD
 - **浏览器与 CDP 子系统 (`browser/`)**：
   - `cdp_client.py`：基于纯 Python 异步 WebSocket 的 Chrome DevTools Protocol 客户端，支持网络层黑名单拦截与自动清理监听器。
   - `browser_engine.py`：负责 Chromium 跨平台路径探测，启用 `--max-old-space-size=128 --expose-gc` 进行严格内存压降。
-  - `scripts.py`：浏览器端注入脚本，包含 Fetch + ReadableStream 分块推送、DOM GC 与停止生成控制。
+  - `scripts.py`：浏览器自动化脚本加载器，将注入脚本从 Python 源码完全剥离至 `js/*.js` 独立管理。
+  - `js/`：独立 JavaScript 模块库，包含 `install_hooks.js`（快照挂载）、`streaming_init.js`（Fetch+ReadableStream 绑定推送）、`stream_cleanup.js`、`dialog_cleanup.js`、`dom_gc_cleanup.js` 等，支持静态语法检查与独立维护。
 - **网关与编解码子系统 (`gateway/`)**：
   - `client.py`：`AIStudioClient` 网关统一门面，组装会话、模板捕获、快照缓存与流式生成。
-  - `transport.py`：CDP 原生 Binding 实时流式事件推送，辅以有界异步队列反压控制与 Python 端 SAPISIDHASH 鉴权注入。
+  - `transport.py`：纯 CDP 原生 Binding (`__aistudio_stream_push__`) 实时事件驱动流式管道，消除冗余轮询与时间竞争，辅以有界异步队列反压控制与 Python 端 SAPISIDHASH 鉴权注入。
   - `wire_codec.py`：负责 Google 内部 Protobuf-over-JSON 数组结构构造与请求重写。
-  - `wire_parser.py`：从领域模型剥离出的纯粹 Protobuf-over-JSON 响应解析器，将上游分块与使用量转换为领域对象。
+  - `wire_parser.py`：从领域模型剥离出的纯粹 Protobuf-over-JSON 响应解析器，防范 JSPB `[parts, role]` 结构混淆，将上游分块与使用量转换为领域对象。
   - `capture.py`：集中统一的请求模板单例缓存管理（Single Source of Truth）。
   - `streaming.py`：流式生成编排与异常转换网关。
   - `model_defaults.py`：模型规则解析、工具默认注入及基于文件 mtime 的内存缓存。
 - **凭据与存储子系统 (`account/` & `cache/`)**：
   - `account_store.py`：基于文件系统的原子持久化凭据库（紧凑 JSON 格式，避免无效磁盘刷写）。
   - `snapshot_cache.py`：基于 TTL 与 LRU 的 BotGuard 快照内存缓存。
-
 ---
 
 ## 3. 请求生命周期与执行时序

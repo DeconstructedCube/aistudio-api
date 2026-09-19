@@ -132,6 +132,16 @@ def test_parse_response_part():
     assert parsed_code.executable_code == "print('hello')"
     assert parsed_code.code_execution_result == "output: hello"
 
+    # Guard against content blocks [parts, role] or role string misinterpreted as text part
+    content_block = [[[None, "actual content"]], "model"]
+    parsed_cb = parse_response_part(content_block)
+    assert parsed_cb.text == ""
+
+    # Guard against 2-element role tuple
+    role_part = [["nested"], "model"]
+    assert parse_response_part(role_part).text == ""
+    assert parse_response_part(["user", "user"]).text == ""
+
 
 def test_parse_response_chunk_empty():
     assert parse_response_chunk([]).text == ""
