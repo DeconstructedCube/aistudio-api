@@ -44,7 +44,7 @@
 |---|---|
 | **原生 Gemini 协议** | 完整兼容 `/v1beta/...` 接口规范，支持 Thinking 思维链、Multimodal 多模态、Function Calling 工具调用及图片生成 |
 | **动态模型发现** | 自动向上游同步可用模型列表，支持 `gemini-3.7-flash`、`gemini-3.8-flash` 等最新模型 |
-| **多账号黏性调度** | 维护账号状态，支持按模型独立记录 429 配额并在限流时自动切换，每日美西午夜自动重置冷却 |
+| **多账号黏性调度** | 维护账号状态，支持按模型独立记录 429 配额与 403 鉴权异常隔离并在故障时自动切换，每日美西午夜自动重置配额 |
 | **批量子账号探活** | 导入单个包含多个 Google 身份的 Cookie 后，自动递归探活子账号（`u/0`, `u/1`...）并分别建档 |
 | **内置搜索与工具** | 支持 Google Search 联网搜索、Google Maps、代码执行沙箱等官方扩展能力 |
 | **轻量 CDP 驱动** | 基于纯 Python 异步 WebSocket 直连 Chrome DevTools Protocol，无需 Node.js、Playwright 或 Selenium |

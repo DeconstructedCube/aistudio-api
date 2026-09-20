@@ -127,7 +127,7 @@ uv run python3 main.py server --port 8080
 | **Python 代码风格与 Lint** | `uv run ruff check .` | 0 errors |
 | **Python 代码格式化** | `uv run ruff format --check .` | 71 files already formatted |
 | **Python 类型检查** | `bun x pyright src tests` | 0 errors |
-| **Python 单元测试** | `uv run pytest` | 全部通过 (132+ passed) |
+| **Python 单元测试** | `uv run pytest` | 全部通过 (134+ passed) |
 | **浏览器 JS 语法校验** | `bun build src/aistudio_api/infrastructure/browser/js/*.js --no-bundle` | 0 errors |
 | **前端代码规范** | `cd web && bun run lint` | 0 errors, 0 warnings |
 | **前端类型检查** | `cd web && bun run type-check` | 0 errors |
@@ -146,9 +146,9 @@ uv run python3 main.py server --port 8080
 > [!IMPORTANT]
 > 1. **原子化文件持久化**：所有持久化文件（`registry.json`、`auth.json`、`meta.json` 等）操作必须使用 `account_store._atomic_write_json`（写入临时文件后通过 `os.replace` 原子替换），防止并发写入截断。
 > 2. **账号切换排干机制**：切换账号时通过 `BrowserSession.request_scope()` 追踪在途请求，等待进行中的流式请求完成后再清理上下文。
-> 3. **缓存与模板隔离**：账号切换或 429 限流重试时，调用 `clear_snapshot_cache()` 与 `capture_service.clear_templates()`，避免跨账号复用 BotGuard 快照或请求模板。
-> 4. **无全局 DOM 污染**：页面内 JavaScript 交互使用局部闭包 `Promise` 返回数据，不在 `window` 对象上遗留全局共享状态。
-
+> 3. **缓存与模板隔离**：账号切换、429 限流或 403 鉴权重试时，调用 `clear_snapshot_cache()` 与 `capture_service.clear_templates()`，避免跨账号复用 BotGuard 快照或请求模板。
+> 4. **鉴权故障快速隔离与自愈**：当遇到 `The caller does not have permission` (403) 时，立即将当前账号置入 `auth_cooldown` 并快速故障转移至健康账号；单账号或备用号耗尽时自动触发在位强制刷新与 BotGuard 重握手自愈。
+> 5. **无全局 DOM 污染**：页面内 JavaScript 交互使用局部闭包 `Promise` 返回数据，不在 `window` 对象上遗留全局共享状态。
 ---
 
 ## 5. 代码结构索引

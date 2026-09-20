@@ -44,7 +44,7 @@
 |---|---|
 | **Native Gemini API** | Full compatibility with the official `/v1beta/...` specification, supporting Thinking process, Multimodal inputs, Function Calling, and Image Generation |
 | **Dynamic Model Discovery** | Automatically synchronizes and discovers available models from upstream Google AI Studio |
-| **Sticky Account Dispatch** | Maintains account state per model, tracks 429 rate-limit quotas independently, and resets cooldowns at midnight Pacific Time |
+| **Sticky Account Dispatch** | Maintains account state per model, tracks 429 rate-limit quotas & 403 authorization isolation independently, and resets cooldowns at midnight Pacific Time |
 | **Multi-Account Probing** | Extracts and verifies sub-accounts (`u/0`, `u/1`...) automatically when importing a multi-session Cookie |
 | **Built-in Tools** | Supports official tools such as Google Search, Google Maps, and Code Execution sandbox |
 | **Pure Python CDP** | Direct Chrome DevTools Protocol communication over asynchronous WebSockets without Node.js, Playwright, or Selenium |
