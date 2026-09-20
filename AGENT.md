@@ -127,7 +127,7 @@ uv run python3 main.py server --port 8080
 | **Python 代码风格与 Lint** | `uv run ruff check .` | 0 errors |
 | **Python 代码格式化** | `uv run ruff format --check .` | 71 files already formatted |
 | **Python 类型检查** | `bun x pyright src tests` | 0 errors |
-| **Python 单元测试** | `uv run pytest` | 全部通过 (134+ passed) |
+| **Python 单元测试** | `uv run pytest` | 全部通过 (136+ passed) |
 | **浏览器 JS 语法校验** | `bun build src/aistudio_api/infrastructure/browser/js/*.js --no-bundle` | 0 errors |
 | **前端代码规范** | `cd web && bun run lint` | 0 errors, 0 warnings |
 | **前端类型检查** | `cd web && bun run type-check` | 0 errors |
