@@ -184,16 +184,18 @@ def test_wire_args_nested_struct_encoding():
     assert isinstance(encoded, list) and len(encoded) == 1
     fields = dict(cast(list[tuple[str, Any]], encoded[0]))
     assert fields["name"] == [None, None, "get_current_weather"]
-    # content should be [None, [ [key, val], ... ] ]
+    # content should be [None, None, None, None, [ [ [key, val], ... ] ]]
     content_val = fields["content"]
     assert content_val[0] is None
-    content_fields = dict(cast(list[tuple[str, Any]], content_val[1]))
+    assert content_val[4] is not None
+    content_fields = dict(cast(list[tuple[str, Any]], content_val[4][0]))
     assert content_fields["temperature"] == [None, None, "15C"]
     assert content_fields["condition"] == [None, None, "Sunny"]
     metrics_val = content_fields["metrics"]
     assert metrics_val[0] is None
-    metrics_fields = dict(cast(list[tuple[str, Any]], metrics_val[1]))
-    assert metrics_fields["uv"] == [1, 3]
+    assert metrics_val[4] is not None
+    metrics_fields = dict(cast(list[tuple[str, Any]], metrics_val[4][0]))
+    assert metrics_fields["uv"] == [None, 3]
 
 
 def test_chat_service_does_not_convert_signed_text_into_thought():

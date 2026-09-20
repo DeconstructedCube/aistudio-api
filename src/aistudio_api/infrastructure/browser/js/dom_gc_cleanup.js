@@ -1,10 +1,4 @@
 (() => {
-    const buttons = Array.from(document.querySelectorAll('button'));
-    const stopBtn = buttons.find(b => {
-        const t = (b.innerText || b.textContent || '').trim();
-        return t === 'Stop' || t.startsWith('Stop') || b.classList.contains('stop-button');
-    });
-    if (stopBtn) { try { stopBtn.click(); } catch(e) {} }
 
     document.querySelectorAll('ms-chat-session, ms-chat-turn, ms-chat-turn-options, ms-chat-loading-indicator, ms-prompt-chunk, ms-chunk, ms-response-chunk, .chat-turn, .history-container').forEach(el => el.remove());
     document.querySelectorAll('.cdk-overlay-backdrop, .cdk-overlay-container, mat-menu, ms-updates, ms-nav-popover').forEach(el => el.remove());

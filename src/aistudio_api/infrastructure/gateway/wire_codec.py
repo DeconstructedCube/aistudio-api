@@ -200,8 +200,11 @@ class AistudioWireCodec:
         else:
             if request.tools or request.location is not None:
                 self._ensure_len(body, self.TIMEZONE_INDEX + 1)
+                tz_str = os.getenv("AISTUDIO_TIMEZONE", "Asia/Tokyo")
                 body[self.TIMEZONE_INDEX] = request.location or [
-                    [None, None, os.getenv("AISTUDIO_TIMEZONE", "Asia/Tokyo")]
+                    [None, None, tz_str],
+                    None,
+                    1,
                 ]
             else:
                 while len(body) > self.CACHED_CONTENT_INDEX + 1 and body[-1] is None:

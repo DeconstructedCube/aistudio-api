@@ -79,6 +79,25 @@ class BrowserSession:
         self._switch_event = asyncio.Event()
         self._switch_event.set()
 
+    def get_current_auth_user(self) -> str:
+        """获取当前活跃账号的 auth_user 编号（0, 1, 2...）。"""
+        if self._auth_file:
+            try:
+                meta_path = Path(self._auth_file).parent / "meta.json"
+                if meta_path.exists():
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                    return str(meta.get("auth_user") or "0")
+            except Exception:
+                pass
+        try:
+            store = AccountStore()
+            acc = store.get_active_account()
+            if acc and acc.auth_user:
+                return str(acc.auth_user)
+        except Exception:
+            pass
+        return "0"
+
     @asynccontextmanager
     async def request_scope(self):
         """追踪正在进行的请求，防止切号时进程被强杀造成断流。"""
@@ -113,14 +132,20 @@ class BrowserSession:
                 self._auth_file = auth_file
                 self._profile_dir = self._derive_profile_dir(auth_file)
                 self._bootstrap_template = None
+                self._snap_key = None
                 hot_switched = False
                 if self._page is not None and not self._page.is_closed():
                     try:
+                        # 0. 清理页面中上一个账号的 BotGuardService 和快照状态
+                        with suppress(Exception):
+                            await self._page.evaluate(
+                                "() => { window.__bg_service = null; window.__bg_snapshot = null; window.__bg_hooked = false; window.__snap_key = null; }"
+                            )
+
                         # 1. 清理当前会话 Cookie 与 Cache
                         with suppress(Exception):
                             await self._page.cdp.send("Network.clearBrowserCookies")
                             await self._page.cdp.send("Network.clearBrowserCache")
-
                         # 2. 读取目标账号的 Cookie 并注入当前页面上下文
                         if auth_file and Path(auth_file).exists():
                             data = json.loads(
@@ -472,6 +497,7 @@ class BrowserSession:
                 headers=captured_headers,
                 body=body,
                 timeout_ms=timeout_ms,
+                auth_user=self.get_current_auth_user(),
             )
 
     async def send_streaming_request(
@@ -504,6 +530,7 @@ class BrowserSession:
                     headers=captured_headers,
                     body=body,
                     timeout_ms=timeout_ms,
+                    auth_user=self.get_current_auth_user(),
                 ):
                     yield event
             finally:
@@ -694,8 +721,8 @@ class BrowserSession:
                             break
                     await page.wait_for_timeout(500)
 
-                await self._verify_account_identity(page)
-                await self._save_cookies()
+                if await self._verify_account_identity(page):
+                    await self._save_cookies()
                 return
             except Exception as exc:
                 if "地区限制" in str(exc) or "Cookie 认证失败" in str(exc):
@@ -799,20 +826,20 @@ class BrowserSession:
             return
         raise RuntimeError("page never became idle")
 
-    async def _verify_account_identity(self, page: CDPPage) -> None:
+    async def _verify_account_identity(self, page: CDPPage) -> bool:
         auth_file = self._auth_file
         if not auth_file:
-            return
+            return True
         meta_path = Path(auth_file).parent / "meta.json"
         if not meta_path.exists():
-            return
+            return True
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
-            return
+            return True
         expected_email = meta.get("email") or ""
         if not expected_email:
-            return
+            return True
 
         is_verified = False
         with suppress(Exception):
@@ -832,18 +859,15 @@ class BrowserSession:
                         is_verified = True
                         break
         if is_verified:
-            return
+            return True
 
         account_id = meta.get("id", "unknown")
         log.warning(
-            "[account-guard] 页面未多重校验到期望账号 %s (%s)，已阻断本次写入以防交叉污染",
+            "[account-guard] 页面未校验到期望账号 %s (%s)，跳过本次 Cookie 回写以防覆盖",
             expected_email,
             account_id,
         )
-        raise RuntimeError(
-            f"页面未登录期望的账号 {expected_email} ({account_id})，"
-            f"已阻断写入，请确认该账号凭据是否有效"
-        )
+        return False
 
     async def _save_cookies(
         self,

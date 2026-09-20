@@ -62,8 +62,7 @@ class AccountService:
                 logger.error("账号 %s 的账号目录不存在", account_id)
                 return None
 
-            await browser_session.switch_auth(str(auth_path))
-            await browser_session.ensure_botguard_service()
+            self._store.set_active_account(account_id)
             if not keep_snapshot_cache:
                 if snapshot_cache is not None:
                     snapshot_cache.clear()
@@ -72,7 +71,9 @@ class AccountService:
                 if runtime_state.client is not None:
                     runtime_state.client.clear_snapshot_cache()
                 logger.info("已清除 snapshot 与模板缓存")
-            self._store.set_active_account(account_id)
+
+            await browser_session.switch_auth(str(auth_path))
+            await browser_session.ensure_botguard_service()
             logger.info("已切换到账号: %s (%s)", account_id, account.name)
             return account
 

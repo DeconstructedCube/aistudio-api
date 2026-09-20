@@ -73,8 +73,7 @@ async def test_verify_account_identity_does_not_rmtree(tmp_path):
     page.content = AsyncMock(return_value="<html>other page</html>")
     page.get_cookies = AsyncMock(return_value=[])
 
-    with pytest.raises(RuntimeError, match="页面未登录期望的账号"):
-        await session._verify_account_identity(page)
+    assert await session._verify_account_identity(page) is False
 
     assert fake_profile.exists()
     assert (fake_profile / "data.txt").exists()

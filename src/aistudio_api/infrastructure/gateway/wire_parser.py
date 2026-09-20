@@ -192,6 +192,18 @@ def _decode_wire_argument_pairs(raw_args: object) -> object:
 
 def _decode_wire_value(value: object) -> object:
     if isinstance(value, list):
+        if len(value) == 1 and value[0] == 0:
+            return None
+        if len(value) >= 2 and isinstance(value[1], (int, float)):
+            return value[1]
+        if len(value) >= 3 and isinstance(value[2], str):
+            return value[2]
+        if len(value) >= 4 and isinstance(value[3], bool):
+            return value[3]
+        if len(value) >= 5 and isinstance(value[4], list):
+            return _decode_wire_argument_pairs(value[4])
+        if len(value) >= 6 and isinstance(value[5], list):
+            return _decode_wire_argument_pairs(value[5])
         if len(value) >= 3 and value[2] is not None:
             return value[2]
         decoded = _decode_wire_argument_pairs(value)

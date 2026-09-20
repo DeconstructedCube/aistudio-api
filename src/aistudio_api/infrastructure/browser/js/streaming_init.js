@@ -75,6 +75,12 @@
             reader.read().then(({done, value}) => {
                 if (done) {
                     clearTimeout(timeoutId);
+                    try {
+                        const remaining = decoder.decode();
+                        if (remaining) {
+                            push({type: 'chunk', text: remaining});
+                        }
+                    } catch (e) {}
                     push({type: 'done'});
                     cleanup();
                     return;

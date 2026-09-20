@@ -349,11 +349,14 @@ def format_sse_event(event_type: str, text: object) -> str | None:
     return None
 
 
-def format_sse_usage(final_usage: dict[str, object] | None) -> str | None:
+def format_sse_usage(final_usage: dict[str, object] | None) -> str:
     """Format final completion usage metadata into SSE chunk string."""
-    if not final_usage:
-        return None
-    usage_json = to_gemini_usage_metadata(final_usage).model_dump_json()
+    effective_usage = final_usage or {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+    }
+    usage_json = to_gemini_usage_metadata(effective_usage).model_dump_json()
     return f'data: {{"candidates": [{{"content": {{"role": "model", "parts": []}}, "finishReason": "STOP", "index": 0}}], "usageMetadata": {usage_json}}}\n\n'
 
 
@@ -395,9 +398,10 @@ def _build_gemini_streaming_response(
             final_usage: dict[str, object] | None = None
             for stream_attempt in range(MAX_RETRIES):
                 has_yielded_data = False
+                await ensure_active_account(stream_attempt, model=model_path)
+                normalized = normalize_gemini_request(req, model_path)
                 try:
                     async for event_type, text in client.stream_generate_content(
-                        model=normalized.model,
                         capture_prompt=normalized.capture_prompt,
                         capture_images=normalized.capture_images,
                         contents=normalized.contents,
@@ -436,9 +440,7 @@ def _build_gemini_streaming_response(
             record_rotator_event("success", model=target_model)
             if normalized is not None:
                 runtime_state.record(normalized.model, "success", final_usage)
-            usage_chunk = format_sse_usage(final_usage)
-            if usage_chunk:
-                yield usage_chunk
+            yield format_sse_usage(final_usage)
         except Exception as exc:
             yield format_sse_error(exc)
         finally:

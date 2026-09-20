@@ -26,10 +26,11 @@ logger = logging.getLogger("aistudio.transport")
 
 
 async def _ensure_authorization_header(
-    page: CDPPage, headers: dict[str, str]
+    page: CDPPage, headers: dict[str, str], auth_user: str = "0"
 ) -> dict[str, str]:
-    """Ensure fresh SAPISIDHASH Authorization header is populated in Python."""
+    """Ensure fresh SAPISIDHASH Authorization and X-Goog-AuthUser header are populated in Python."""
     clean_headers = dict(headers)
+    clean_headers["X-Goog-AuthUser"] = str(auth_user or "0")
     auth_val = next(
         (v for k, v in clean_headers.items() if k.lower() == "authorization"), None
     )
@@ -97,6 +98,7 @@ class XHRStreamTransport:
         headers: dict[str, str],
         body: str,
         timeout_ms: int,
+        auth_user: str = "0",
     ) -> tuple[int, bytes]:
         """Replay request via XHR inside the browser page context."""
         timeout_s = timeout_ms / 1000
@@ -105,7 +107,9 @@ class XHRStreamTransport:
             for k, v in headers.items()
             if k.lower() not in ("host", "content-length")
         }
-        clean_headers = await _ensure_authorization_header(page, clean_headers)
+        clean_headers = await _ensure_authorization_header(
+            page, clean_headers, auth_user=auth_user
+        )
         args = build_hooked_request_args(
             url=url,
             headers=clean_headers,
@@ -129,6 +133,7 @@ class XHRStreamTransport:
         headers: dict[str, str],
         body: str,
         timeout_ms: int,
+        auth_user: str = "0",
     ) -> AsyncGenerator[tuple[str, object], None]:
         """Send a streaming request, yielding ('status', int) and ('chunk', bytes) events.
 
@@ -140,7 +145,9 @@ class XHRStreamTransport:
             for k, v in headers.items()
             if k.lower() not in ("host", "content-length")
         }
-        clean_headers = await _ensure_authorization_header(page, clean_headers)
+        clean_headers = await _ensure_authorization_header(
+            page, clean_headers, auth_user=auth_user
+        )
         rid = uuid.uuid4().hex[:8]
 
         # Ensure native binding on page and register local async queue
@@ -195,6 +202,15 @@ class XHRStreamTransport:
                     message = str(event.get("message") or "unknown error")
                     raise RuntimeError(f"streaming request failed: {message}")
                 elif etype in ("done", "aborted"):
+                    while not queue.empty():
+                        try:
+                            remaining_event = queue.get_nowait()
+                            if str(remaining_event.get("type") or "") == "chunk":
+                                r_text = str(remaining_event.get("text") or "")
+                                if r_text:
+                                    yield ("chunk", r_text.encode("utf-8"))
+                        except asyncio.QueueEmpty:
+                            break
                     is_terminal = True
                     break
             if not status_sent:

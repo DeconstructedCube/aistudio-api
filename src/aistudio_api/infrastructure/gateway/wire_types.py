@@ -297,13 +297,20 @@ def _encode_wire_value(value):
     if isinstance(value, bool):
         return [None, None, None, value]
     if isinstance(value, (int, float)):
-        return [1, value]
+        return [None, value]
     if isinstance(value, str):
         return [None, None, value]
     if isinstance(value, dict):
-        return [None, _encode_wire_struct_fields(value)]
+        return [None, None, None, None, [_encode_wire_struct_fields(value)]]
     if isinstance(value, list):
-        return [None, None, [_encode_wire_value(item) for item in value]]
+        return [
+            None,
+            None,
+            None,
+            None,
+            None,
+            [[_encode_wire_value(item) for item in value]],
+        ]
     return [None, None, str(value)]
 
 
