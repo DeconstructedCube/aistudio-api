@@ -57,17 +57,25 @@ class AccountStats:
     success: int = 0
     rate_limited: int = 0
     errors: int = 0
+    auth_errors: int = 0
     last_used: float = 0.0
     last_rate_limited: float = 0.0
+    last_auth_error: float = 0.0
+    auth_cooldown: float = 0.0
     rate_limited_date_la: str | None = None
     model_cooldowns: dict[str, float] = field(default_factory=dict)
     model_rate_limited_dates: dict[str, str] = field(default_factory=dict)
     model_requests: dict[str, int] = field(default_factory=dict)
     model_rate_limited: dict[str, int] = field(default_factory=dict)
 
-    def is_available(self, model: str | None = None) -> bool:
+    def is_available(
+        self, model: str | None = None, *, ignore_auth_cooldown: bool = False
+    ) -> bool:
         """检查账号在指定模型下是否可用（美西 0 点自动刷新）。"""
         now = time.time()
+        if not ignore_auth_cooldown and self.auth_cooldown > now:
+            return False
+
         current_la = get_pacific_date_key(now)
 
         # 检查全局 429 标记是否已跨过美西午夜
@@ -97,6 +105,8 @@ class AccountStats:
         if self.is_available(model):
             return 0.0
         now = time.time()
+        if self.auth_cooldown > now:
+            return max(0.0, self.auth_cooldown - now)
         if model:
             cd = self.model_cooldowns.get(model, 0.0)
             if cd > now:
@@ -108,6 +118,8 @@ class AccountStats:
         self.requests += 1
         self.success += 1
         self.last_used = now
+        self.auth_errors = 0
+        self.auth_cooldown = 0.0
         if model:
             self.model_requests[model] = self.model_requests.get(model, 0) + 1
             self.model_cooldowns.pop(model, None)
@@ -141,8 +153,24 @@ class AccountStats:
         if model:
             self.model_requests[model] = self.model_requests.get(model, 0) + 1
 
+    def record_auth_error(
+        self, model: str | None = None, cooldown_seconds: float = 300.0
+    ) -> None:
+        """记录鉴权/权限错误（403/401），立即冷却该账号以便快速故障转移。"""
+        now = time.time()
+        self.requests += 1
+        self.errors += 1
+        self.auth_errors += 1
+        self.last_auth_error = now
+        self.last_used = now
+        self.auth_cooldown = now + cooldown_seconds
+        if model:
+            self.model_requests[model] = self.model_requests.get(model, 0) + 1
+
     def clear_cooldown(self, model: str | None = None) -> None:
-        """手动清除冷却与 429 锁定。"""
+        """手动清除冷却与 429/403 锁定。"""
+        self.auth_cooldown = 0.0
+        self.auth_errors = 0
         if model:
             self.model_cooldowns.pop(model, None)
             self.model_rate_limited_dates.pop(model, None)
@@ -213,14 +241,14 @@ class AccountRotator:
         return result
 
     def _get_available_accounts(
-        self, model: str | None = None
+        self, model: str | None = None, *, ignore_auth_cooldown: bool = False
     ) -> list[tuple[AccountMeta, AccountStats]]:
-        """获取在指定模型下尚未耗尽当日额度的账号列表。"""
+        """获取在指定模型下尚未耗尽当日额度且未被鉴权锁定的账号列表。"""
         accounts = self._store.list_accounts()
         available: list[tuple[AccountMeta, AccountStats]] = []
         for account in accounts:
             stats = self._stats.get(account.id, AccountStats(account_id=account.id))
-            if stats.is_available(model):
+            if stats.is_available(model, ignore_auth_cooldown=ignore_auth_cooldown):
                 available.append((account, stats))
         return available
 
@@ -228,48 +256,91 @@ class AccountRotator:
         self,
         model: str | None = None,
         current_account_id: str | None = None,
+        failed_account_id: str | None = None,
     ) -> AccountMeta | None:
-        """获取下一个可用账号（优先保持当前账号，若限流则平滑顺延）。"""
+        """获取下一个可用账号（排除失败账号，优先平滑故障转移至健康账号）。"""
         async with self._lock:
             available = self._get_available_accounts(model)
             if not available:
-                return None
+                # 保底：若所有账号都处于 auth_cooldown 中，允许 fallback 尝试恢复
+                available = self._get_available_accounts(
+                    model, ignore_auth_cooldown=True
+                )
+                if not available:
+                    return None
 
-            # 黏性策略：如果当前账号对该模型依然可用，继续使用
-            if current_account_id:
+            # 优先在排除失败账号的候选集中挑选
+            candidates = [
+                (a, s)
+                for a, s in available
+                if not (failed_account_id and a.id == failed_account_id)
+            ]
+            if candidates:
+                # 黏性策略：如果当前账号未失败且在候选列表中，继续复用
+                if current_account_id and not (
+                    failed_account_id and current_account_id == failed_account_id
+                ):
+                    for a, _ in candidates:
+                        if a.id == current_account_id:
+                            return a
+                # 故障转移：按最少 auth_errors、最少 errors、最久未用挑选
+                account, _ = min(
+                    candidates,
+                    key=lambda x: (x[1].auth_errors, x[1].errors, x[1].last_used),
+                )
+                if current_account_id and account.id != current_account_id:
+                    logger.info(
+                        "故障转移调度切换账号: %s (model=%s)", account.name, model
+                    )
+                return account
+
+            # 如果没有其他可用账号（如单账号或全部其他账号均 429 耗尽）：
+            if failed_account_id:
                 for a, _ in available:
-                    if a.id == current_account_id:
+                    if a.id == failed_account_id:
                         return a
 
-            # 故障转移：按最少错误/最久未用挑选下一个可用账号
-            pick = min(
-                available,
-                key=lambda x: (x[1].errors, x[1].last_used),
-            )
-            account, _ = pick
-            logger.info("黏性调度切换账号: %s (model=%s)", account.name, model)
-            return account
+            return available[0][0]
 
     async def get_next_account_with_stats(
         self,
         model: str | None = None,
         current_account_id: str | None = None,
+        failed_account_id: str | None = None,
     ) -> tuple[AccountMeta, AccountStats] | None:
         """获取下一个可用账号及其统计。"""
         async with self._lock:
             available = self._get_available_accounts(model)
             if not available:
-                return None
+                available = self._get_available_accounts(
+                    model, ignore_auth_cooldown=True
+                )
+                if not available:
+                    return None
 
-            if current_account_id:
+            candidates = [
+                (a, s)
+                for a, s in available
+                if not (failed_account_id and a.id == failed_account_id)
+            ]
+            if candidates:
+                if current_account_id and not (
+                    failed_account_id and current_account_id == failed_account_id
+                ):
+                    for a, s in candidates:
+                        if a.id == current_account_id:
+                            return a, s
+                return min(
+                    candidates,
+                    key=lambda x: (x[1].auth_errors, x[1].errors, x[1].last_used),
+                )
+
+            if failed_account_id:
                 for a, s in available:
-                    if a.id == current_account_id:
+                    if a.id == failed_account_id:
                         return a, s
 
-            return min(
-                available,
-                key=lambda x: (x[1].errors, x[1].last_used),
-            )
+            return available[0]
 
     def record_success(self, account_id: str, model: str | None = None) -> None:
         if account_id not in self._stats:
@@ -290,6 +361,23 @@ class AccountRotator:
         if account_id not in self._stats:
             self._stats[account_id] = AccountStats(account_id=account_id)
         self._stats[account_id].record_error(model)
+
+    def record_auth_error(
+        self,
+        account_id: str,
+        model: str | None = None,
+        cooldown_seconds: float = 300.0,
+    ) -> None:
+        if account_id not in self._stats:
+            self._stats[account_id] = AccountStats(account_id=account_id)
+        self._stats[account_id].record_auth_error(
+            model, cooldown_seconds=cooldown_seconds
+        )
+        logger.warning(
+            "账号 %s 发生鉴权/权限异常 (The caller does not have permission / 403)，进入 %ds 快速隔离",
+            account_id,
+            int(cooldown_seconds),
+        )
 
     def clear_cooldown(self, account_id: str, model: str | None = None) -> None:
         """清除指定账号的 429 锁定。"""

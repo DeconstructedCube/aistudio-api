@@ -16,6 +16,8 @@ _switch_lock = asyncio.Lock()
 async def try_switch_account(
     model: str | None = None,
     failed_account_id: str | None = None,
+    *,
+    is_auth_error: bool = False,
 ) -> bool:
     """尝试切换到下一个对目标 model 可用的账号。防止并发级联切号。"""
     async with _switch_lock:
@@ -34,6 +36,10 @@ async def try_switch_account(
         current_active = account_service.get_active_account()
         current_id = current_active.id if current_active else None
 
+        # 遇到鉴权错误时，立即记录 auth_error 并触发该账号的短时隔离
+        if failed_account_id and is_auth_error:
+            rotator.record_auth_error(failed_account_id, model=model)
+
         # 双重检查：如果已经由并发协程切换到了新账号，且新账号对当前 model 可用，则直接复用
         if failed_account_id and current_id and current_id != failed_account_id:
             stats = rotator._stats.get(current_id)
@@ -46,23 +52,41 @@ async def try_switch_account(
                 return True
 
         next_account = await rotator.get_next_account(
-            model=model, current_account_id=current_id
+            model=model,
+            current_account_id=current_id,
+            failed_account_id=failed_account_id,
         )
         if next_account is None:
             return False
 
-        if current_id and next_account.id == current_id:
-            stats = rotator._stats.get(current_id)
-            return bool(stats and stats.is_available(model))
+        if current_id is None or next_account.id != current_id:
+            result = await account_service.activate_account(
+                next_account.id,
+                client._session,
+                runtime_state.snapshot_cache,
+                None,
+                keep_snapshot_cache=False,
+            )
+            return result is not None
 
-        result = await account_service.activate_account(
-            next_account.id,
-            client._session,
-            runtime_state.snapshot_cache,
-            None,
-            keep_snapshot_cache=False,
-        )
-        return result is not None
+        # 单账号模式或所有其他账号均不可用时，如果指定了 failed_account_id，强制刷新当前会话与 BotGuard
+        if failed_account_id and failed_account_id == current_id:
+            logger.info(
+                "单账号或无备用账号，立即执行会话与 BotGuard 上下文强制重建: %s",
+                current_id,
+            )
+            client.clear_snapshot_cache()
+            result = await account_service.activate_account(
+                current_id,
+                client._session,
+                runtime_state.snapshot_cache,
+                None,
+                keep_snapshot_cache=False,
+            )
+            return result is not None
+
+        stats = rotator._stats.get(current_id)
+        return bool(stats and stats.is_available(model))
 
 
 async def ensure_active_account(attempt: int, model: str | None = None) -> None:
@@ -85,7 +109,7 @@ def record_rotator_event(
     event: str,
     model: str | None = None,
 ) -> None:
-    """记录调度器事件（成功、限流、错误）。"""
+    """记录调度器事件（成功、限流、错误、鉴权异常）。"""
     rotator = runtime_state.rotator
     account_service = runtime_state.account_service
     account = account_service.get_active_account() if account_service else None
@@ -95,6 +119,8 @@ def record_rotator_event(
         rotator.record_success(account.id, model=model)
     elif event == "rate_limited":
         rotator.record_rate_limited(account.id, model=model)
+    elif event == "auth_error":
+        rotator.record_auth_error(account.id, model=model)
     elif event == "error":
         rotator.record_error(account.id, model=model)
 

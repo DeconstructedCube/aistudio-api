@@ -182,20 +182,29 @@ class BrowserSession:
         await self._install_hooks(page)
         return True
 
-    async def ensure_botguard_service(self) -> CDPPage:
+    async def ensure_botguard_service(self, force_refresh: bool = False) -> CDPPage:
         """Ensure BotGuardService is captured in page context."""
         page = await self.ensure_context()
         if "aistudio.google.com" not in (page.url or ""):
             await self._goto_aistudio(page)
         await self._install_hooks(page)
 
-        if await page.evaluate("() => !!window.__bg_service"):
+        if not force_refresh and await page.evaluate("() => !!window.__bg_service"):
             return page
 
         async with self._botguard_lock:
-            if await page.evaluate("() => !!window.__bg_service"):
+            if not force_refresh and await page.evaluate("() => !!window.__bg_service"):
                 return page
 
+            if force_refresh:
+                with suppress(Exception):
+                    await page.evaluate(
+                        "() => { window.__bg_service = null; window.__bg_snapshot = null; window.__bg_hooked = false; window.__snap_key = null; }"
+                    )
+                self._snap_key = None
+                self._bootstrap_template = None
+                await self._goto_aistudio(page)
+                await self._install_hooks(page)
             current_url = page.url or ""
             if "available-regions" in current_url:
                 raise RuntimeError(
@@ -646,21 +655,11 @@ class BrowserSession:
 
     def _get_aistudio_url(self, model: str = "gemini-3.7-flash") -> list[str]:
         """根据当前活跃账号的 auth_user 生成访问 URL。"""
-        auth_user = "0"
-        if self._auth_file:
-            try:
-                meta_path = Path(self._auth_file).parent / "meta.json"
-                if meta_path.exists():
-                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                    auth_user = str(meta.get("auth_user") or "0")
-            except Exception:
-                pass
-
+        auth_user = self.get_current_auth_user()
         if auth_user and auth_user != "0":
             return [
                 f"https://aistudio.google.com/u/{auth_user}/prompts/new_chat?model={model}",
                 f"https://aistudio.google.com/u/{auth_user}/app/prompts/new_chat",
-                AI_STUDIO_URL,
             ]
         return [AI_STUDIO_URL, AI_STUDIO_URL_FALLBACK]
 
@@ -682,7 +681,16 @@ class BrowserSession:
                                 curr = str(eval_url)
                         except Exception:
                             pass
-                        if "aistudio.google.com" in curr:
+                        auth_user = self.get_current_auth_user()
+                        expected_match = (
+                            f"/u/{auth_user}/"
+                            if auth_user and auth_user != "0"
+                            else "aistudio.google.com"
+                        )
+                        if "aistudio.google.com" in curr and (
+                            expected_match in curr
+                            or expected_match == "aistudio.google.com"
+                        ):
                             log.debug(
                                 "page.goto encountered net::ERR_ABORTED but already on aistudio: %s",
                                 curr,

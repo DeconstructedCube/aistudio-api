@@ -152,6 +152,41 @@ async def test_rotator_sticky_mode():
 
 
 @pytest.mark.asyncio
+async def test_rotator_auth_error_failover():
+    """测试 403 鉴权异常时，立即故障转移切换至健康账号，并在后续请求中自动规避故障账号。"""
+    store = MagicMock(spec=AccountStore)
+    acc1 = AccountMeta(
+        id="acc_1", name="Account 1", email="acc1@example.com", created_at="2026-01-01"
+    )
+    acc2 = AccountMeta(
+        id="acc_2", name="Account 2", email="acc2@example.com", created_at="2026-01-01"
+    )
+    store.list_accounts.return_value = [acc1, acc2]
+
+    rotator = AccountRotator(account_store=store)
+
+    # acc1 发生 403 / The caller does not have permission
+    rotator.record_auth_error("acc_1", model="gemini-3.8-flash")
+
+    # 尝试切号：明确指定 failed_account_id=acc_1，应当秒级切换到 acc_2
+    next_acc = await rotator.get_next_account(
+        model="gemini-3.8-flash",
+        current_account_id=acc1.id,
+        failed_account_id=acc1.id,
+    )
+    assert next_acc is not None
+    assert next_acc.id == "acc_2"
+
+    # 新进请求（未指定 failed_account_id）也应该自动规避仍在 auth_cooldown 的 acc_1，直接选择 acc_2
+    new_req_acc = await rotator.get_next_account(
+        model="gemini-3.8-flash",
+        current_account_id=None,
+    )
+    assert new_req_acc is not None
+    assert new_req_acc.id == "acc_2"
+
+
+@pytest.mark.asyncio
 async def test_try_switch_account_avalanche_protection():
     """测试并发多个 429 时，_switch_lock 防止级联切号。"""
     from aistudio_api.api.state import runtime_state
@@ -232,9 +267,9 @@ async def test_goto_aistudio_net_err_aborted_tolerance():
     page.wait_for_timeout = AsyncMock()
 
     session = BrowserSession(port=9222)
+    session.get_current_auth_user = MagicMock(return_value="0")
     session._verify_account_identity = AsyncMock()
     session._save_cookies = AsyncMock()
-
     # 应该正常完成，不抛出 net::ERR_ABORTED 异常
     await session._goto_aistudio(page)
     assert session._verify_account_identity.called

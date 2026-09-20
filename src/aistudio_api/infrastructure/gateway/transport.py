@@ -29,26 +29,24 @@ async def _ensure_authorization_header(
     page: CDPPage, headers: dict[str, str], auth_user: str = "0"
 ) -> dict[str, str]:
     """Ensure fresh SAPISIDHASH Authorization and X-Goog-AuthUser header are populated in Python."""
-    clean_headers = dict(headers)
+    clean_headers = {
+        k: v
+        for k, v in headers.items()
+        if k.lower()
+        not in ("host", "content-length", "authorization", "x-goog-authuser")
+    }
     clean_headers["X-Goog-AuthUser"] = str(auth_user or "0")
-    auth_val = next(
-        (v for k, v in clean_headers.items() if k.lower() == "authorization"), None
-    )
-    if not auth_val or auth_val.startswith("SAPISIDHASH"):
-        with suppress(Exception):
-            raw_cookies = await page.get_cookies()
-            if raw_cookies:
-                cookie_dict = {
-                    str(c.get("name") or ""): str(c.get("value") or "")
-                    for c in raw_cookies
-                    if c.get("name")
-                }
-                fresh_auth = calculate_sapisid_hash(cookie_dict)
-                if fresh_auth:
-                    for k in list(clean_headers.keys()):
-                        if k.lower() == "authorization":
-                            del clean_headers[k]
-                    clean_headers["Authorization"] = fresh_auth
+    with suppress(Exception):
+        raw_cookies = await page.get_cookies()
+        if raw_cookies:
+            cookie_dict = {
+                str(c.get("name") or ""): str(c.get("value") or "")
+                for c in raw_cookies
+                if c.get("name")
+            }
+            fresh_auth = calculate_sapisid_hash(cookie_dict)
+            if fresh_auth:
+                clean_headers["Authorization"] = fresh_auth
     return clean_headers
 
 
@@ -102,13 +100,8 @@ class XHRStreamTransport:
     ) -> tuple[int, bytes]:
         """Replay request via XHR inside the browser page context."""
         timeout_s = timeout_ms / 1000
-        clean_headers = {
-            k: v
-            for k, v in headers.items()
-            if k.lower() not in ("host", "content-length")
-        }
         clean_headers = await _ensure_authorization_header(
-            page, clean_headers, auth_user=auth_user
+            page, headers, auth_user=auth_user
         )
         args = build_hooked_request_args(
             url=url,
@@ -140,13 +133,8 @@ class XHRStreamTransport:
         Guarantees V8 window cleanup on termination/timeout and prevents silent truncation.
         """
         timeout_s = timeout_ms / 1000
-        clean_headers = {
-            k: v
-            for k, v in headers.items()
-            if k.lower() not in ("host", "content-length")
-        }
         clean_headers = await _ensure_authorization_header(
-            page, clean_headers, auth_user=auth_user
+            page, headers, auth_user=auth_user
         )
         rid = uuid.uuid4().hex[:8]
 

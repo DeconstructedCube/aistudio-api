@@ -141,8 +141,65 @@ def test_record_rotator_event():
             "acc_1", model="gemini-2.5-flash"
         )
 
+        record_rotator_event("auth_error", model="gemini-2.5-flash")
+        mock_rotator.record_auth_error.assert_called_with(
+            "acc_1", model="gemini-2.5-flash"
+        )
+
         record_rotator_event("error", model="gemini-2.5-flash")
         mock_rotator.record_error.assert_called_with("acc_1", model="gemini-2.5-flash")
     finally:
         runtime_state.rotator = orig_rotator
         runtime_state.account_service = orig_service
+
+
+@pytest.mark.asyncio
+async def test_try_switch_account_single_account_recovery():
+    """单账号发生 403 鉴权错误时，自动触发当前会话与 BotGuard 强制重建。"""
+    mock_rotator = MagicMock(spec=AccountRotator)
+    mock_service = MagicMock(spec=AccountService)
+    mock_client = MagicMock(spec=AIStudioClient)
+    mock_client._session = MagicMock()
+    mock_client.clear_snapshot_cache = MagicMock()
+
+    active_acc = AccountMeta(
+        id="acc_1",
+        name="Single Account",
+        email="single@gmail.com",
+        created_at="2026-01-01",
+    )
+    mock_service.get_active_account = MagicMock(return_value=active_acc)
+    mock_service.activate_account = MagicMock(return_value=active_acc)
+    # 模拟 rotator 只有唯一账号 acc_1
+    from unittest.mock import AsyncMock
+
+    mock_service.activate_account = AsyncMock(return_value=active_acc)
+    mock_rotator.get_next_account = AsyncMock(return_value=active_acc)
+
+    orig_rotator = runtime_state.rotator
+    orig_service = runtime_state.account_service
+    orig_client = runtime_state.client
+
+    try:
+        runtime_state.rotator = mock_rotator
+        runtime_state.account_service = mock_service
+        runtime_state.client = mock_client
+
+        recovered = await try_switch_account(
+            model="gemini-3.8-flash",
+            failed_account_id="acc_1",
+            is_auth_error=True,
+        )
+        assert recovered is True
+        mock_client.clear_snapshot_cache.assert_called_once()
+        mock_service.activate_account.assert_called_once_with(
+            "acc_1",
+            mock_client._session,
+            runtime_state.snapshot_cache,
+            None,
+            keep_snapshot_cache=False,
+        )
+    finally:
+        runtime_state.rotator = orig_rotator
+        runtime_state.account_service = orig_service
+        runtime_state.client = orig_client

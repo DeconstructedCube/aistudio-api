@@ -116,9 +116,9 @@ async def handle_attempt_exception(
 
     if isinstance(exc, SessionExpiredError):
         logger.warning("Gemini 账号 Session 已失效（重定向至登录页）: %s", exc)
-        record_rotator_event("error", model=target_model)
+        record_rotator_event("auth_error", model=target_model)
         if not has_yielded_data and await try_switch_account(
-            model=target_model, failed_account_id=failed_id
+            model=target_model, failed_account_id=failed_id, is_auth_error=True
         ):
             logger.info("已自动切换至健康账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
             return True
@@ -131,11 +131,13 @@ async def handle_attempt_exception(
         ) from exc
 
     if isinstance(exc, AuthError):
-        logger.warning("Gemini 鉴权/权限异常: %s", exc)
+        logger.warning(
+            "Gemini 鉴权/权限异常 (The caller does not have permission / 403): %s", exc
+        )
         client.clear_snapshot_cache()
-        record_rotator_event("error", model=target_model)
+        record_rotator_event("auth_error", model=target_model)
         if not has_yielded_data and await try_switch_account(
-            model=target_model, failed_account_id=failed_id
+            model=target_model, failed_account_id=failed_id, is_auth_error=True
         ):
             logger.info("已自动切换至可用账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
             return True
@@ -402,6 +404,7 @@ def _build_gemini_streaming_response(
                 normalized = normalize_gemini_request(req, model_path)
                 try:
                     async for event_type, text in client.stream_generate_content(
+                        model=normalized.model,
                         capture_prompt=normalized.capture_prompt,
                         capture_images=normalized.capture_images,
                         contents=normalized.contents,
