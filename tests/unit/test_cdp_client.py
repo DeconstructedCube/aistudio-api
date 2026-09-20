@@ -160,3 +160,18 @@ async def test_cdp_page_set_cookies_normalization():
     # Must NOT have domain attribute with leading dot, must have url
     assert "domain" not in host_cookie
     assert host_cookie["url"] == "https://accounts.google.com/"
+
+
+@pytest.mark.asyncio
+async def test_cdp_page_is_alive():
+    """Test CDPPage.is_alive fast liveness probe."""
+    conn = MagicMock(spec=CDPConnection)
+    conn._closed = False
+    conn.send = AsyncMock(return_value={"result": {"type": "number", "value": 1}})
+
+    page = CDPPage(conn, target_id="target-1")
+    assert await page.is_alive(timeout_s=0.5) is True
+
+    # When evaluate throws (CDP disconnected)
+    conn.send.side_effect = RuntimeError("CDP closed")
+    assert await page.is_alive(timeout_s=0.5) is False

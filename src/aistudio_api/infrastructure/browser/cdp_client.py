@@ -174,7 +174,12 @@ class CDPConnection:
             "method": method,
             "params": params or {},
         }
-        await self.ws.send(json.dumps(payload))
+        try:
+            await self.ws.send(json.dumps(payload))
+        except Exception as e:
+            self._closed = True
+            self._futures.pop(req_id, None)
+            raise RuntimeError(f"CDP connection closed: {e}") from e
 
         try:
             return await asyncio.wait_for(fut, timeout=timeout_s)
@@ -244,6 +249,20 @@ class CDPPage:
 
     def is_closed(self) -> bool:
         return self._is_closed or self.cdp._closed
+
+    async def is_alive(self, timeout_s: float = 1.0) -> bool:
+        """Fast non-blocking probe to verify if the page target and WebSocket are responsive."""
+        if self.is_closed():
+            return False
+        try:
+            res = await self.cdp.send(
+                "Runtime.evaluate",
+                {"expression": "1", "returnByValue": True},
+                timeout_s=timeout_s,
+            )
+            return bool(res and not res.get("exceptionDetails"))
+        except Exception:
+            return False
 
     async def init_domains(self, block_assets: bool = True) -> None:
         """Enable required CDP domains and install kernel-level asset filters."""
@@ -751,6 +770,15 @@ class CDPClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def is_endpoint_alive(self, timeout_s: float = 1.0) -> bool:
+        """Fast check to verify if Chromium's CDP HTTP port is responding."""
+        try:
+            async with httpx.AsyncClient(timeout=timeout_s) as client:
+                resp = await client.get(f"{self.base_url}/json/version")
+                return resp.status_code == 200
+        except Exception:
+            return False
+
     async def get_targets(self) -> list[dict[str, object]]:
         """Fetch list of active targets via /json/list."""
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -774,32 +802,42 @@ class CDPClient:
         )
 
     async def connect_page(self, block_assets: bool = True) -> CDPPage:
-        """Connect to an existing page target or create one."""
+        """Connect to an existing page target or create one with auto-retry on transient drops."""
         await self.wait_until_ready()
-        targets = await self.get_targets()
-        page_target = None
-        for t in targets:
-            if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
-                page_target = t
-                break
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            try:
+                targets = await self.get_targets()
+                page_target = None
+                for t in targets:
+                    if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
+                        page_target = t
+                        break
 
-        if not page_target:
-            # Create new page target via /json/new
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.put(f"{self.base_url}/json/new")
-                resp.raise_for_status()
-                page_target = resp.json()
+                if not page_target:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        resp = await client.put(f"{self.base_url}/json/new")
+                        resp.raise_for_status()
+                        page_target = resp.json()
 
-        ws_url = str(page_target.get("webSocketDebuggerUrl") or "")
-        target_id = str(page_target.get("id") or "")
+                ws_url = str(page_target.get("webSocketDebuggerUrl") or "")
+                target_id = str(page_target.get("id") or "")
 
-        conn = CDPConnection(ws_url)
-        await conn.connect()
+                conn = CDPConnection(ws_url)
+                await conn.connect()
 
-        page = CDPPage(conn, target_id)
-        await page.init_domains(block_assets=block_assets)
-        self.page = page
-        return page
+                page = CDPPage(conn, target_id)
+                await page.init_domains(block_assets=block_assets)
+                self.page = page
+                return page
+            except Exception as e:
+                last_exc = e
+                log.debug("connect_page attempt %d failed: %s", attempt + 1, e)
+                if attempt < 2:
+                    await asyncio.sleep(0.3)
+        raise RuntimeError(
+            f"Failed to connect page target after 3 attempts: {last_exc}"
+        ) from last_exc
 
     async def close(self) -> None:
         """Close active page and release resources."""

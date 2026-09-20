@@ -45,7 +45,7 @@ async def try_switch_account(
             stats = rotator._stats.get(current_id)
             if stats and stats.is_available(model):
                 logger.info(
-                    "检测到已有并发协程将账号切换至 %s 且对 model=%s 可用，直接复用",
+                    "已有并发请求完成切号，直接复用当前健康账号: %s (model=%s)",
                     current_id,
                     model,
                 )
@@ -72,7 +72,7 @@ async def try_switch_account(
         # 单账号模式或所有其他账号均不可用时，如果指定了 failed_account_id，强制刷新当前会话与 BotGuard
         if failed_account_id and failed_account_id == current_id:
             logger.info(
-                "单账号或无备用账号，立即执行会话与 BotGuard 上下文强制重建: %s",
+                "无其他可用备用账号，重新刷新当前账号会话与 BotGuard: %s",
                 current_id,
             )
             client.clear_snapshot_cache()

@@ -138,3 +138,26 @@ async def test_browser_session_send_streaming_request(mock_cdp_page):
     assert ("status", 200) in collected
     assert ("chunk", b"data: hello ") in collected
     assert ("chunk", b"world\n\n") in collected
+
+
+@pytest.mark.asyncio
+async def test_browser_session_liveness_and_auto_reconnect():
+    """Test BrowserSession detects dead page and auto-reconnects."""
+    session = BrowserSession(port=9222)
+    mock_dead_page = MagicMock(spec=CDPPage)
+    mock_dead_page.is_closed = MagicMock(return_value=False)
+    mock_dead_page.is_alive = AsyncMock(return_value=False)
+
+    mock_alive_page = MagicMock(spec=CDPPage)
+    mock_alive_page.is_closed = MagicMock(return_value=False)
+    mock_alive_page.is_alive = AsyncMock(return_value=True)
+
+    session._page = mock_dead_page
+    session._ensure_browser_cdp = AsyncMock(return_value=mock_alive_page)
+    session._close_internal = AsyncMock()
+
+    # ensure_context should detect dead page, close it, and reconnect to new page
+    page = await session.ensure_context()
+    assert page == mock_alive_page
+    session._close_internal.assert_called_once()
+    session._ensure_browser_cdp.assert_called_once()

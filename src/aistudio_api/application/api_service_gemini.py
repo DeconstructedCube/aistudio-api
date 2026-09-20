@@ -131,9 +131,7 @@ async def handle_attempt_exception(
         ) from exc
 
     if isinstance(exc, AuthError):
-        logger.warning(
-            "Gemini 鉴权/权限异常 (The caller does not have permission / 403): %s", exc
-        )
+        logger.warning("Gemini 403 权限拒绝: %s", exc)
         client.clear_snapshot_cache()
         record_rotator_event("auth_error", model=target_model)
         if not has_yielded_data and await try_switch_account(

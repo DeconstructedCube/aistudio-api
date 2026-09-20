@@ -289,9 +289,7 @@ class AccountRotator:
                     key=lambda x: (x[1].auth_errors, x[1].errors, x[1].last_used),
                 )
                 if current_account_id and account.id != current_account_id:
-                    logger.info(
-                        "故障转移调度切换账号: %s (model=%s)", account.name, model
-                    )
+                    logger.info("账号故障转移切换: %s (model=%s)", account.name, model)
                 return account
 
             # 如果没有其他可用账号（如单账号或全部其他账号均 429 耗尽）：
@@ -374,7 +372,7 @@ class AccountRotator:
             model, cooldown_seconds=cooldown_seconds
         )
         logger.warning(
-            "账号 %s 发生鉴权/权限异常 (The caller does not have permission / 403)，进入 %ds 快速隔离",
+            "账号 %s 遇到 403 权限拒绝，暂停使用 %ds 并切换备用账号",
             account_id,
             int(cooldown_seconds),
         )

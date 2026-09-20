@@ -108,11 +108,23 @@ class BrowserSession:
         finally:
             self._in_flight = max(0, self._in_flight - 1)
 
+    async def is_alive(self, timeout_s: float = 1.5) -> bool:
+        """Fast non-blocking probe to verify if the browser process and CDP page are responsive."""
+        if self._proc is not None and not self._proc.is_alive():
+            return False
+        if self._page is None or self._page.is_closed():
+            return False
+        return await self._page.is_alive(timeout_s=timeout_s)
+
     async def ensure_context(self) -> CDPPage:
-        """Ensure Chromium process is running and CDPPage is connected."""
+        """Ensure Chromium process is running and CDPPage is connected and responsive."""
         async with self._lock:
             if self._page is not None and not self._page.is_closed():
-                return self._page
+                if (
+                    self._proc is None or self._proc.is_alive()
+                ) and await self._page.is_alive(timeout_s=1.5):
+                    return self._page
+                log.warning("浏览器无响应或进程已退出，正在重新连接...")
 
             await self._close_internal()
             return await self._ensure_browser_cdp()

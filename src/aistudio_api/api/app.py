@@ -65,10 +65,15 @@ async def lifespan(app: FastAPI):
     warmup_task = None
 
     async def _warmup():
-        try:
-            await client.warmup()
-        except Exception as e:
-            logger.warning("浏览器预热失败: %s", e)
+        for attempt in range(3):
+            try:
+                await client.warmup()
+                return
+            except Exception as e:
+                if attempt < 2:
+                    await asyncio.sleep(1.0)
+                    continue
+                logger.warning("浏览器预热失败: %s", e)
 
     warmup_task = asyncio.create_task(_warmup())
 
