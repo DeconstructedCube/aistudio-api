@@ -366,7 +366,7 @@ class BrowserSession:
         clean_model = model.removeprefix("models/")
         async with self._template_lock:
             page = await self.ensure_botguard_service()
-            if clean_model == "gemini-3.7-flash" and self._bootstrap_template:
+            if self._bootstrap_template:
                 return dict(self._bootstrap_template)
 
             captured: dict[str, object] = {}

@@ -80,42 +80,22 @@ async def test_verify_account_identity_does_not_rmtree(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_session_template_capture_per_model():
-    """Verify template capture isolates templates per model."""
+async def test_session_template_capture_universal_bootstrap():
+    """Verify template capture universally uses bootstrap template to prevent DOM GC timeout."""
     session = BrowserSession(port=9222)
     session._bootstrap_template = {
         "url": "http://bootstrap.com",
         "headers": {},
         "body": '["models/gemini-3.7-flash"]',
     }
-    session.ensure_botguard_service = AsyncMock()  # type: ignore[method-assign]
-    session._click_run_button = AsyncMock(return_value=True)  # type: ignore[method-assign]
-    session._wait_until_idle = AsyncMock()  # type: ignore[method-assign]
+    
+    mock_page = MagicMock(spec=CDPPage)
+    session.ensure_botguard_service = AsyncMock(return_value=mock_page)  # type: ignore[method-assign]
 
-    # gemini-3.7-flash uses bootstrap
+    # 3.7-flash uses bootstrap
     tpl1 = await session.capture_template("gemini-3.7-flash")
     assert tpl1["url"] == "http://bootstrap.com"
 
-    mock_page = MagicMock(spec=CDPPage)
-    mock_page.evaluate = AsyncMock(return_value="")
-    mock_page.fill = AsyncMock()
-
-    def fake_on_request(cb):
-        cb(
-            {
-                "url": "http://pro.com/GenerateContent",
-                "headers": {"x-model": "pro"},
-                "post_data": '["models/gemini-3.1-pro-preview",' + "x" * 150 + "]",
-            }
-        )
-        return lambda: None
-
-    mock_page.on_request = MagicMock(side_effect=fake_on_request)
-    mock_page.on_response = MagicMock(return_value=lambda: None)
-    mock_page.wait_for_timeout = AsyncMock()
-    session.ensure_botguard_service = AsyncMock(return_value=mock_page)  # type: ignore[method-assign]
-
-    result_tpl = await session.capture_template("gemini-3.1-pro-preview")
-    assert result_tpl["url"] == "http://pro.com/GenerateContent"
-    hdrs = result_tpl.get("headers")
-    assert isinstance(hdrs, dict) and hdrs.get("x-model") == "pro"
+    # Other models ALSO use bootstrap now, saving 30 seconds
+    tpl2 = await session.capture_template("gemini-3.1-pro-preview")
+    assert tpl2["url"] == "http://bootstrap.com"
