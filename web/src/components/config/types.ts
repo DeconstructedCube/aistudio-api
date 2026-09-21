@@ -32,6 +32,7 @@ export interface ModelProfileItem {
   generation_config_defaults?: GenerationConfigDefaults
   clear_generation_config_indexes?: number[]
   disable_safety_settings?: boolean
+  drop_unsupported_params?: boolean
   safety_settings?: SafetySettingsMap
 }
 
@@ -40,10 +41,12 @@ export type ModelOverrideMap = Record<string, {
   generation_config_defaults?: GenerationConfigDefaults
   clear_generation_config_indexes?: number[]
   disable_safety_settings?: boolean
+  drop_unsupported_params?: boolean
   safety_settings?: SafetySettingsMap
 }>
 
 export interface ModelDefaultsConfig {
+  drop_unsupported_params?: boolean
   profiles?: ModelProfileItem[]
   models?: ModelOverrideMap
 }

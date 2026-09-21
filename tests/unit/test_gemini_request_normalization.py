@@ -326,3 +326,75 @@ def test_normalize_gemini_request_maps_official_text_model_fields():
         [None, None, 9, 3],
         [None, None, 10, 2],
     ]
+
+
+def test_normalize_gemini_request_drops_unknown_safety_category_when_enabled(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+model_defaults:
+  drop_unsupported_params: true
+  profiles:
+    - name: gemini_models
+      match:
+        prefixes: [gemini-]
+      drop_unsupported_params: true
+"""
+    )
+    monkeypatch.setenv("AISTUDIO_CONFIG_FILE", str(config_path))
+    from aistudio_api.infrastructure.gateway.model_defaults import invalidate_config_cache
+    invalidate_config_cache()
+
+    req = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+            "safetySettings": [
+                {
+                    "category": "HARM_CATEGORY_CIVIC_INTEGRITY",
+                    "threshold": "BLOCK_NONE",
+                },
+                {
+                    "category": "HARM_CATEGORY_HARASSMENT",
+                    "threshold": "BLOCK_NONE",
+                },
+            ],
+        }
+    )
+
+    normalized = normalize_gemini_request(req, "models/gemini-2.5-flash")
+    assert normalized["safety_settings"] == [[None, None, 7, 4]]
+    invalidate_config_cache()
+
+
+def test_normalize_gemini_request_rejects_unknown_safety_category_when_disabled(monkeypatch, tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+model_defaults:
+  drop_unsupported_params: false
+  profiles:
+    - name: gemini_models
+      match:
+        prefixes: [gemini-]
+      drop_unsupported_params: false
+"""
+    )
+    monkeypatch.setenv("AISTUDIO_CONFIG_FILE", str(config_path))
+    from aistudio_api.infrastructure.gateway.model_defaults import invalidate_config_cache
+    invalidate_config_cache()
+
+    req = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+            "safetySettings": [
+                {
+                    "category": "HARM_CATEGORY_CIVIC_INTEGRITY",
+                    "threshold": "BLOCK_NONE",
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(ValueError, match="Unsupported safety category"):
+        normalize_gemini_request(req, "models/gemini-2.5-flash")
+    invalidate_config_cache()

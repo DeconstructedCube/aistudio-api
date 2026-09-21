@@ -170,3 +170,28 @@ model_defaults:
 
     assert defaults.default_tools == ("code_execution",)
     assert defaults.disable_safety_settings is False
+
+
+def test_resolve_model_defaults_drop_unsupported_params_inheritance(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+model_defaults:
+  drop_unsupported_params: true
+  profiles:
+    - name: strict_profile
+      match:
+        prefixes: [strict-]
+      drop_unsupported_params: false
+    - name: loose_profile
+      match:
+        prefixes: [loose-]
+  models:
+    strict-override:
+      drop_unsupported_params: true
+"""
+    )
+
+    assert resolve_model_defaults("loose-model", config_path=config_path).drop_unsupported_params is True
+    assert resolve_model_defaults("strict-model", config_path=config_path).drop_unsupported_params is False
+    assert resolve_model_defaults("strict-override", config_path=config_path).drop_unsupported_params is True

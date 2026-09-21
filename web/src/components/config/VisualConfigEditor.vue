@@ -5,6 +5,8 @@ import type { ParsedConfigYaml, ModelProfileItem, ModelOverrideMap } from './typ
 import ProfileCard from './ProfileCard.vue'
 import ModelOverrideCard from './ModelOverrideCard.vue'
 import SchemaDictionaryModal from './SchemaDictionaryModal.vue'
+import ConfigSwitch from './ConfigSwitch.vue'
+import FieldHelpTip from './FieldHelpTip.vue'
 import Button from '@/components/ui/Button.vue'
 import { systemApi } from '@/api/system.ts'
 import { useToastStore } from '@/stores/toast.ts'
@@ -133,6 +135,7 @@ function handleAddProfile() {
       'Sexually Explicit': 5,
       'Dangerous Content': 5,
     },
+    drop_unsupported_params: true,
   }
   const nextModelDefaults = {
     ...(parsedConfig.value.model_defaults || {}),
@@ -174,6 +177,17 @@ function updateModelsOverride(models: ModelOverrideMap) {
   const nextModelDefaults = {
     ...(parsedConfig.value.model_defaults || {}),
     models,
+  }
+  parsedConfig.value = {
+    ...parsedConfig.value,
+    model_defaults: nextModelDefaults,
+  }
+}
+
+function updateGlobalDropUnsupported(val: boolean) {
+  const nextModelDefaults = {
+    ...(parsedConfig.value.model_defaults || {}),
+    drop_unsupported_params: val,
   }
   parsedConfig.value = {
     ...parsedConfig.value,
@@ -325,6 +339,27 @@ async function handleSave() {
       v-if="activeTab === 'visual'"
       class="space-y-6"
     >
+      <!-- Global Drop Unsupported Params Switch -->
+      <div class="p-4 bg-gray-50/80 border border-gray-200/80 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <div class="text-xs font-bold text-gray-900 flex items-center gap-1.5">
+            <span>全局丢弃不支持参数 (drop_unsupported_params)</span>
+            <span class="text-[10px] text-brand-700 bg-brand-50 px-1.5 py-0.5 rounded font-mono border border-brand-200/60 font-semibold">全局默认</span>
+            <FieldHelpTip schema-key="profile.drop_unsupported_params" />
+          </div>
+          <p class="text-[11px] text-gray-400 mt-0.5">
+            自动过滤下游客户端传入的未知安全类别（如 HARM_CATEGORY_CIVIC_INTEGRITY）或模型不支持的工具，避免 400 报错阻断
+          </p>
+        </div>
+        <div class="shrink-0">
+          <ConfigSwitch
+            :model-value="Boolean(parsedConfig.model_defaults?.drop_unsupported_params)"
+            label="启用全局自动丢弃"
+            @update:model-value="updateGlobalDropUnsupported($event)"
+          />
+        </div>
+      </div>
+
       <!-- Section 1: Model Profiles -->
       <div class="space-y-4">
         <div class="flex items-center justify-between border-b border-gray-100 pb-3">

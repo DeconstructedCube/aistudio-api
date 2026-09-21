@@ -187,6 +187,17 @@ export const CONFIG_SCHEMA: Record<string, FieldDefinition> = {
     recommendedValue: { Harassment: 5, Hate: 5, 'Sexually Explicit': 5, 'Dangerous Content': 5 },
     tags: ['安全策略', '防拦截'],
   },
+  'profile.drop_unsupported_params': {
+    key: 'profile.drop_unsupported_params',
+    title: '自动丢弃不支持参数 (drop_unsupported_params)',
+    category: 'safety',
+    type: 'boolean',
+    description: '是否自动丢弃下游客户端传入的未知安全类别（如 HARM_CATEGORY_CIVIC_INTEGRITY）或该模型不支持的内置工具与高级参数。',
+    explanation: '部分第三方 SDK 或客户端（如 Open-WebUI、Cherry Studio）默认携带官方完整安全类别或不兼容的工具，开启此项后系统会自动过滤多余/未知参数，防止 Google 上游返回 400 INVALID_ARGUMENT 阻断请求。',
+    defaultValue: false,
+    recommendedValue: true,
+    tags: ['兼容性', '容错', '防拦截'],
+  },
 }
 
 export const SCHEMA_CATEGORIES = [

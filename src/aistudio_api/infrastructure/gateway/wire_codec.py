@@ -71,6 +71,7 @@ def build_tools_from_names(
     *,
     model: str | None = None,
     is_image_model: bool = False,
+    drop_unsupported: bool = False,
 ) -> list[list]:
     allowed = _allowed_builtin_tools_for_model(model, is_image_model=is_image_model)
     if is_image_model:
@@ -81,6 +82,8 @@ def build_tools_from_names(
             if not name:
                 continue
             if name not in allowed:
+                if drop_unsupported:
+                    continue
                 raise ValueError(
                     f"Tool {raw_name!r} is not allowed for model {model or 'unknown'}"
                 )
@@ -103,10 +106,14 @@ def build_tools_from_names(
         if not name:
             continue
         if name not in allowed:
+            if drop_unsupported:
+                continue
             raise ValueError(
                 f"Tool {raw_name!r} is not allowed for model {model or 'unknown'}"
             )
         if name not in TOOLS_TEMPLATES:
+            if drop_unsupported:
+                continue
             raise ValueError(f"Unsupported tool name: {raw_name!r}")
         tools.append(TOOLS_TEMPLATES[name])
     return tools

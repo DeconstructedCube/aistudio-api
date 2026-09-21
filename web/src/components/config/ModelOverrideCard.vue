@@ -212,13 +212,22 @@ function updateModelGenConfig(modelKey: string, key: string, val: unknown) {
             @update:model-value="updateModelField(String(modelKey), 'default_tools', $event as string[])"
           />
 
-          <!-- Disable Safety Switch -->
-          <ConfigSwitch
-            :model-value="Boolean(override.disable_safety_settings)"
-            label="完全不下发安全规则 (disable_safety_settings)"
-            @update:model-value="updateModelField(String(modelKey), 'disable_safety_settings', $event)"
-          />
+          <!-- Switches Grid -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <ConfigSwitch
+              :model-value="Boolean(override.drop_unsupported_params)"
+              label="自动丢弃不支持参数 (drop_unsupported_params)"
+              description="自动过滤未知安全类别与不兼容工具"
+              @update:model-value="updateModelField(String(modelKey), 'drop_unsupported_params', $event)"
+            />
 
+            <ConfigSwitch
+              :model-value="Boolean(override.disable_safety_settings)"
+              label="完全不下发安全规则 (disable_safety_settings)"
+              description="生图模型通常开启此项以避免被安全机制误拦截"
+              @update:model-value="updateModelField(String(modelKey), 'disable_safety_settings', $event)"
+            />
+          </div>
           <!-- Safety Settings -->
           <div v-if="!override.disable_safety_settings">
             <ConfigSafetyGrid

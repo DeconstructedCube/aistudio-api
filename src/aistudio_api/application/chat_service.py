@@ -137,10 +137,14 @@ def encode_function_declaration_to_wire(declaration: dict[str, object]) -> list[
     return wire
 
 
-def _normalize_gemini_modalities(value: object) -> AistudioImageOutputMode | None:
+def _normalize_gemini_modalities(
+    value: object, *, drop_unsupported: bool = True
+) -> AistudioImageOutputMode | None:
     if value is None:
         return None
     if not isinstance(value, list):
+        if drop_unsupported:
+            return None
         raise ValueError("generationConfig.responseModalities must be a list")
 
     modalities = {str(item).strip().upper() for item in value if str(item).strip()}
@@ -148,9 +152,13 @@ def _normalize_gemini_modalities(value: object) -> AistudioImageOutputMode | Non
         return None
     unknown = modalities - {"TEXT", "IMAGE"}
     if unknown:
-        raise ValueError(
-            f"Unsupported response modalities: {', '.join(sorted(unknown))}"
-        )
+        if not drop_unsupported:
+            raise ValueError(
+                f"Unsupported response modalities: {', '.join(sorted(unknown))}"
+            )
+        modalities = modalities & {"TEXT", "IMAGE"}
+        if not modalities:
+            return None
     if "IMAGE" not in modalities:
         return None
     if "TEXT" in modalities:
@@ -179,10 +187,14 @@ def _normalize_gemini_thinking_config(
     return AistudioThinkingConfig(level=level, mode=int(raw_mode)).to_wire()
 
 
-def _normalize_gemini_image_config(value: object) -> dict[str, object]:
+def _normalize_gemini_image_config(
+    value: object, *, drop_unsupported: bool = True
+) -> dict[str, object]:
     if value is None:
         return {}
     if not isinstance(value, dict):
+        if drop_unsupported:
+            return {}
         raise ValueError("generationConfig.imageConfig must be an object")
 
     aspect_ratio = value.get("aspectRatio")
@@ -193,15 +205,15 @@ def _normalize_gemini_image_config(value: object) -> dict[str, object]:
         image_size = image_size.strip() or None
     person_generation = value.get("personGeneration")
     if person_generation not in (None, ""):
-        raise ValueError(
-            "generationConfig.imageConfig.personGeneration is not supported yet"
-        )
+        if not drop_unsupported:
+            raise ValueError(
+                "generationConfig.imageConfig.personGeneration is not supported yet"
+            )
 
     normalized: dict[str, object] = {}
     if aspect_ratio is not None or image_size is not None:
         normalized["output_resolution"] = [aspect_ratio, image_size]
     return normalized
-
 
 def _extract_google_search_tool_names(
     tool: GeminiTool, *, is_image_model: bool
@@ -280,28 +292,48 @@ _GEMINI_SAFETY_THRESHOLD_MAP = {
 }
 
 
-def _normalize_gemini_safety_settings(value: object) -> list[list[object]]:
+def _normalize_gemini_safety_settings(
+    value: object, *, drop_unsupported: bool = True
+) -> list[list[object]]:
     if value is None:
         return []
     if not isinstance(value, list):
+        if drop_unsupported:
+            return []
         raise ValueError("safetySettings must be a list")
 
     normalized: list[list[object]] = []
     for item in value:
-        if not hasattr(item, "category") or not hasattr(item, "threshold"):
+        raw_cat = (
+            getattr(item, "category", None)
+            if hasattr(item, "category")
+            else (item.get("category") if isinstance(item, dict) else None)
+        )
+        raw_thresh = (
+            getattr(item, "threshold", None)
+            if hasattr(item, "threshold")
+            else (item.get("threshold") if isinstance(item, dict) else None)
+        )
+
+        if raw_cat is None or raw_thresh is None:
+            if drop_unsupported:
+                continue
             raise ValueError(f"Unsupported safety setting entry: {item!r}")
 
-        category = _GEMINI_SAFETY_CATEGORY_MAP.get(str(item.category).strip().upper())
+        category = _GEMINI_SAFETY_CATEGORY_MAP.get(str(raw_cat).strip().upper())
         if category is None:
-            raise ValueError(f"Unsupported safety category: {item.category}")
+            if drop_unsupported:
+                continue
+            raise ValueError(f"Unsupported safety category: {raw_cat}")
         threshold = _GEMINI_SAFETY_THRESHOLD_MAP.get(
-            str(item.threshold).strip().upper()
+            str(raw_thresh).strip().upper()
         )
         if threshold is None:
-            raise ValueError(f"Unsupported safety threshold: {item.threshold}")
+            if drop_unsupported:
+                continue
+            raise ValueError(f"Unsupported safety threshold: {raw_thresh}")
         normalized.append([None, None, category, threshold])
     return normalized
-
 
 def normalize_gemini_request(
     req: GeminiGenerateContentRequest, requested_model: str, tmp_dir: str | None = None
@@ -433,6 +465,7 @@ def normalize_gemini_request(
                         builtin_tool_names,
                         model=model,
                         is_image_model=model_defaults.is_image_model,
+                        drop_unsupported=model_defaults.drop_unsupported_params,
                     )
                 )
                 seen_builtin.update(builtin_tool_names)
@@ -513,21 +546,27 @@ def normalize_gemini_request(
             )
         if generation_config.responseModalities is not None:
             image_output_mode = _normalize_gemini_modalities(
-                generation_config.responseModalities
+                generation_config.responseModalities,
+                drop_unsupported=model_defaults.drop_unsupported_params,
             )
             if image_output_mode is not None:
                 generation_config_overrides["image_output_mode"] = image_output_mode
         if generation_config.imageConfig is not None:
             generation_config_overrides.update(
-                _normalize_gemini_image_config(generation_config.imageConfig)
+                _normalize_gemini_image_config(
+                    generation_config.imageConfig,
+                    drop_unsupported=model_defaults.drop_unsupported_params,
+                )
             )
-
     return NormalizedGeminiRequest(
         model=model,
         contents=contents,
         system_instruction=system_instruction,
         tools=tools if tools is not None else None,
-        safety_settings=_normalize_gemini_safety_settings(req.safetySettings)
+        safety_settings=_normalize_gemini_safety_settings(
+            req.safetySettings,
+            drop_unsupported=model_defaults.drop_unsupported_params,
+        )
         if req.safetySettings is not None
         else None,
         capture_prompt=capture_prompt,

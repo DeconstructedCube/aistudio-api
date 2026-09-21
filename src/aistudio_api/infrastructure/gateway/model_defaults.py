@@ -35,6 +35,7 @@ class ModelDefaults:
     clear_generation_config_indexes: tuple[int, ...] = ()
     safety_settings: tuple[tuple[object, ...], ...] | None = None
     disable_safety_settings: bool = False
+    drop_unsupported_params: bool = False
     specified_fields: frozenset[str] = frozenset()
 
     def generation_config_overrides(self) -> dict[str, object]:
@@ -66,6 +67,11 @@ class ModelDefaults:
             else self.safety_settings,
             disable_safety_settings=self.disable_safety_settings
             or other.disable_safety_settings,
+            drop_unsupported_params=(
+                other.drop_unsupported_params
+                if "drop_unsupported_params" in other.specified_fields
+                else self.drop_unsupported_params
+            ),
             specified_fields=self.specified_fields | other.specified_fields,
         )
 
@@ -93,6 +99,11 @@ class ModelDefaults:
                 other.disable_safety_settings
                 if "disable_safety_settings" in other.specified_fields
                 else self.disable_safety_settings
+            ),
+            drop_unsupported_params=(
+                other.drop_unsupported_params
+                if "drop_unsupported_params" in other.specified_fields
+                else self.drop_unsupported_params
             ),
             specified_fields=self.specified_fields | other.specified_fields,
         )
@@ -233,6 +244,7 @@ def _defaults_from_mapping(raw: dict[str, object] | None) -> ModelDefaults:
         clear_generation_config_indexes=tuple(int(str(v)) for v in clear_indexes_list),
         safety_settings=_coerce_safety_settings(raw_dict.get("safety_settings")),
         disable_safety_settings=bool(raw_dict.get("disable_safety_settings", False)),
+        drop_unsupported_params=bool(raw_dict.get("drop_unsupported_params", False)),
         specified_fields=frozenset(raw_dict.keys()),
     )
 
@@ -258,6 +270,7 @@ def _profile_from_mapping(raw: dict[str, object]) -> ModelProfile:
 def _default_config() -> dict[str, object]:
     return {
         "model_defaults": {
+            "drop_unsupported_params": False,
             "profiles": [
                 {
                     "name": "image_models",
@@ -382,8 +395,16 @@ def resolve_model_defaults(
 ) -> ModelDefaults:
     normalized = _normalize_model_name(model)
     resolved_path = str(_resolve_config_path(config_path))
+    config = _load_yaml_config(Path(resolved_path))
+    raw_md = config.get("model_defaults")
+    global_drop = False
+    if isinstance(raw_md, dict) and "drop_unsupported_params" in raw_md:
+        global_drop = bool(raw_md["drop_unsupported_params"])
+    elif "drop_unsupported_params" in config:
+        global_drop = bool(config["drop_unsupported_params"])
+
     profiles = _compiled_profiles(resolved_path)
-    resolved = ModelDefaults()
+    resolved = ModelDefaults(drop_unsupported_params=global_drop)
     for profile in profiles:
         if profile.matches(normalized):
             resolved = resolved.merged(profile.defaults)

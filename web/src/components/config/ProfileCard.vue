@@ -270,13 +270,11 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-          <ConfigTagList
-            :model-value="profile.clear_generation_config_indexes || []"
-            label="清空 generation_config 特殊下标 (clear_indexes)"
-            description="针对特定模型发送前清除的 wire 数组索引 (如 7, 13, 17)"
-            :is-number="true"
-            placeholder="输入数字下标按回车"
-            @update:model-value="updateField('clear_generation_config_indexes', $event as number[])"
+          <ConfigSwitch
+            :model-value="Boolean(profile.drop_unsupported_params)"
+            label="自动丢弃不支持参数 (drop_unsupported_params)"
+            description="自动过滤未知安全类别（如 CIVIC_INTEGRITY）或不兼容工具，避免 400 报错"
+            @update:model-value="updateField('drop_unsupported_params', $event)"
           />
 
           <ConfigSwitch
@@ -284,6 +282,17 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
             label="完全不下发安全规则 (disable_safety_settings)"
             description="生图模型通常开启此项以避免被安全机制误拦截"
             @update:model-value="updateField('disable_safety_settings', $event)"
+          />
+        </div>
+
+        <div class="pt-1">
+          <ConfigTagList
+            :model-value="profile.clear_generation_config_indexes || []"
+            label="清空 generation_config 特殊下标 (clear_indexes)"
+            description="针对特定模型发送前清除的 wire 数组索引 (如 7, 13, 17)"
+            :is-number="true"
+            placeholder="输入数字下标按回车"
+            @update:model-value="updateField('clear_generation_config_indexes', $event as number[])"
           />
         </div>
       </div>
