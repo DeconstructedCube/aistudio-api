@@ -34,13 +34,18 @@ logger = logging.getLogger("aistudio.server")
 async def lifespan(app: FastAPI):
     from aistudio_api.application.account_rotator import init_rotator
     from aistudio_api.application.account_service import AccountService
+    from aistudio_api.config import settings
     from aistudio_api.infrastructure.account.account_store import AccountStore
+    from aistudio_api.infrastructure.browser.browser_engine import (
+        install_process_cleanup_handlers,
+    )
+
+    install_process_cleanup_handlers()
 
     client = AIStudioClient(
         port=runtime_state.browser_port,
     )
     runtime_state.client = client
-
     # 注入 snapshot 缓存引用，切号时需要清除
     from aistudio_api.infrastructure.gateway.client import _snapshot_cache
 
@@ -77,10 +82,28 @@ async def lifespan(app: FastAPI):
 
     warmup_task = asyncio.create_task(_warmup())
 
+    idle_task = None
+    if settings.browser_idle_timeout > 0:
+
+        async def _idle_monitor():
+            while True:
+                await asyncio.sleep(10.0)
+                try:
+                    if runtime_state.client and getattr(
+                        runtime_state.client, "_session", None
+                    ):
+                        await runtime_state.client._session.check_idle_timeout()
+                except Exception:
+                    pass
+
+        idle_task = asyncio.create_task(_idle_monitor())
+
     yield
     logger.info("Shutting down")
     if warmup_task and not warmup_task.done():
         warmup_task.cancel()
+    if idle_task and not idle_task.done():
+        idle_task.cancel()
     if client:
         try:
             await client.close()

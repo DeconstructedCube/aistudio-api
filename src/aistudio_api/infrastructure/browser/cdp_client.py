@@ -79,6 +79,19 @@ class CDPConnection:
         self._recv_task: asyncio.Task[None] | None = None
         self._background_tasks: set[asyncio.Task[object]] = set()
         self._closed = False
+        self._liveness_checker: Callable[[], bool] | None = None
+
+    def set_liveness_checker(self, checker: Callable[[], bool] | None) -> None:
+        """Register a callback that returns False if the underlying browser process is dead."""
+        self._liveness_checker = checker
+
+    def fail_pending_futures(self, exc: Exception) -> None:
+        """Immediately fail all pending command futures with the given exception."""
+        self._closed = True
+        for fut in list(self._futures.values()):
+            if not fut.done():
+                fut.set_exception(exc)
+        self._futures.clear()
 
     async def connect(self, timeout_s: float = 10.0) -> None:
         """Establish WebSocket connection and start receive loop."""
@@ -86,8 +99,8 @@ class CDPConnection:
             websockets.connect(
                 self.ws_url,
                 max_size=None,
-                ping_interval=20,
-                ping_timeout=20,
+                ping_interval=5,
+                ping_timeout=5,
             ),
             timeout=timeout_s,
         )
@@ -126,6 +139,21 @@ class CDPConnection:
                             fut.set_result(msg.get("result", {}))
 
                 method = msg.get("method")
+                if method in (
+                    "Inspector.targetCrashed",
+                    "Inspector.detached",
+                    "Target.targetCrashed",
+                ):
+                    log.warning(
+                        "CDP target crashed or detached: %s (params=%s)",
+                        method,
+                        msg.get("params"),
+                    )
+                    self.fail_pending_futures(
+                        RuntimeError(f"CDP target terminated: {method}")
+                    )
+                    return
+
                 if method and method in self._listeners:
                     params = msg.get("params", {})
                     for cb in list(self._listeners[method]):
@@ -142,16 +170,19 @@ class CDPConnection:
 
         except asyncio.CancelledError:
             pass
+        except websockets.ConnectionClosed as e:
+            if not self._closed:
+                log.debug("CDP WebSocket connection closed: %s", e)
         except Exception as e:
             if not self._closed:
-                log.debug("CDP recv loop closed: %s", e)
+                log.debug("CDP recv loop error: %s", e)
         finally:
-            # Reject pending futures
-            for fut in self._futures.values():
+            self._closed = True
+            # Reject pending futures immediately
+            for fut in list(self._futures.values()):
                 if not fut.done():
                     fut.set_exception(RuntimeError("CDP connection closed"))
             self._futures.clear()
-
     async def send(
         self,
         method: str,
@@ -161,6 +192,10 @@ class CDPConnection:
         """Send a JSON-RPC command over CDP and await result."""
         if not self.ws or self._closed:
             raise RuntimeError("CDP connection is not open")
+
+        if self._liveness_checker and not self._liveness_checker():
+            self.fail_pending_futures(RuntimeError("Browser process has died"))
+            raise RuntimeError("Browser process has died before CDP command dispatch")
 
         req_id = self._next_id
         self._next_id += 1
@@ -182,13 +217,33 @@ class CDPConnection:
             raise RuntimeError(f"CDP connection closed: {e}") from e
 
         try:
-            return await asyncio.wait_for(fut, timeout=timeout_s)
-        except TimeoutError:
-            self._futures.pop(req_id, None)
-            raise TimeoutError(
-                f"CDP command {method} timed out after {timeout_s}s"
-            ) from None
+            if self._liveness_checker is None:
+                return await asyncio.wait_for(fut, timeout=timeout_s)
 
+            deadline = loop.time() + timeout_s
+            while True:
+                if not self._liveness_checker():
+                    self.fail_pending_futures(RuntimeError("Browser process has died"))
+                    raise RuntimeError(
+                        f"Browser process died while awaiting CDP command {method}"
+                    )
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    self._futures.pop(req_id, None)
+                    raise TimeoutError(
+                        f"CDP command {method} timed out after {timeout_s}s"
+                    )
+                step_timeout = min(remaining, 0.2)
+                try:
+                    return await asyncio.wait_for(
+                        asyncio.shield(fut), timeout=step_timeout
+                    )
+                except TimeoutError:
+                    if fut.done():
+                        return fut.result()
+        except Exception:
+            self._futures.pop(req_id, None)
+            raise
     def on(
         self, event: str, callback: Callable[[dict[str, object]], object]
     ) -> Callable[[], None]:
@@ -263,6 +318,10 @@ class CDPPage:
             return bool(res and not res.get("exceptionDetails"))
         except Exception:
             return False
+    def set_liveness_checker(self, checker: Callable[[], bool] | None) -> None:
+        """Bind underlying browser process liveness checker to CDP connection."""
+        self.cdp.set_liveness_checker(checker)
+
 
     async def init_domains(self, block_assets: bool = True) -> None:
         """Enable required CDP domains and install kernel-level asset filters."""
@@ -280,8 +339,28 @@ class CDPPage:
             frame = raw_frame if isinstance(raw_frame, dict) else {}
             if not frame.get("parentId"):  # Main frame
                 self._last_url = str(frame.get("url") or "")
-
         self._track_listener(self.cdp.on("Page.frameNavigated", on_navigated))
+
+        # Listen for renderer crash and inspector detached events to fail fast
+        def on_crashed(params: dict[str, object]) -> None:
+            log.warning("CDPPage renderer crashed: %s", params)
+            self._is_closed = True
+            self.cdp.fail_pending_futures(
+                RuntimeError("Page target crashed (renderer terminated)")
+            )
+
+        def on_detached(params: dict[str, object]) -> None:
+            reason = str(params.get("reason") or "detached")
+            log.warning("CDPPage inspector detached: %s", reason)
+            self._is_closed = True
+            self.cdp.fail_pending_futures(
+                RuntimeError(f"Page inspector detached: {reason}")
+            )
+
+        self._track_listener(self.cdp.on("Inspector.targetCrashed", on_crashed))
+        self._track_listener(self.cdp.on("Target.targetCrashed", on_crashed))
+        self._track_listener(self.cdp.on("Inspector.detached", on_detached))
+
         if block_assets:
             await self.set_blocked_urls(BLOCKED_URL_PATTERNS)
 
@@ -808,12 +887,23 @@ class CDPClient:
         for attempt in range(3):
             try:
                 targets = await self.get_targets()
+                page_targets = [
+                    t
+                    for t in targets
+                    if t.get("type") == "page" and t.get("webSocketDebuggerUrl")
+                ]
                 page_target = None
-                for t in targets:
-                    if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
-                        page_target = t
-                        break
-
+                if page_targets:
+                    page_target = page_targets[0]
+                    # Prune any spare about:blank or crashed tabs to save ~50MB RAM each
+                    for spare in page_targets[1:]:
+                        spare_id = str(spare.get("id") or "")
+                        if spare_id:
+                            with contextlib.suppress(Exception):
+                                async with httpx.AsyncClient(timeout=2.0) as client:
+                                    await client.put(
+                                        f"{self.base_url}/json/close/{spare_id}"
+                                    )
                 if not page_target:
                     async with httpx.AsyncClient(timeout=5.0) as client:
                         resp = await client.put(f"{self.base_url}/json/new")

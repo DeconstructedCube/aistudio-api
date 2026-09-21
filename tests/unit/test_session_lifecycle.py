@@ -88,7 +88,7 @@ async def test_session_template_capture_universal_bootstrap():
         "headers": {},
         "body": '["models/gemini-3.7-flash"]',
     }
-    
+
     mock_page = MagicMock(spec=CDPPage)
     session.ensure_botguard_service = AsyncMock(return_value=mock_page)  # type: ignore[method-assign]
 
@@ -99,3 +99,41 @@ async def test_session_template_capture_universal_bootstrap():
     # Other models ALSO use bootstrap now, saving 30 seconds
     tpl2 = await session.capture_template("gemini-3.1-pro-preview")
     assert tpl2["url"] == "http://bootstrap.com"
+
+
+@pytest.mark.asyncio
+async def test_session_check_idle_timeout_releases_browser(monkeypatch):
+    """Verify check_idle_timeout releases browser process when idle beyond threshold."""
+    from aistudio_api.config import settings
+
+    monkeypatch.setattr(settings, "browser_idle_timeout", 5)
+
+    session = BrowserSession(port=9222)
+    session._proc = MagicMock()
+    session._in_flight = 0
+    session._last_activity_time = 0.0  # 很久以前
+    session._close_internal = AsyncMock()
+
+    released = await session.check_idle_timeout()
+    assert released is True
+    session._close_internal.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_session_capture_template_breaks_on_dead_proc():
+    """Verify capture_template_flow immediately raises on dead process without 30s delay."""
+    session = BrowserSession(port=9222)
+    mock_proc = MagicMock()
+    mock_proc.is_alive.return_value = False
+    session._proc = mock_proc
+
+    mock_page = MagicMock(spec=CDPPage)
+    mock_page.is_closed.return_value = False
+    mock_page.evaluate = AsyncMock(return_value="")
+    mock_page.fill = AsyncMock()
+    mock_page.wait_for_timeout = AsyncMock()
+    session.ensure_botguard_service = AsyncMock(return_value=mock_page)
+    session._click_run_button = AsyncMock(return_value=True)
+
+    with pytest.raises(RuntimeError, match="Browser process died during template capture"):
+        await session.capture_template_flow("models/gemini-custom-uncached")

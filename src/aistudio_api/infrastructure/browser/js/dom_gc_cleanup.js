@@ -4,9 +4,25 @@
     document.querySelectorAll('.cdk-overlay-backdrop, .cdk-overlay-container, mat-menu, ms-updates, ms-nav-popover').forEach(el => el.remove());
     document.querySelectorAll('canvas, video, audio').forEach(el => el.remove());
 
+    try {
+        document.querySelectorAll('img[src^="blob:"]').forEach(img => {
+            try { URL.revokeObjectURL(img.src); } catch (e) {}
+            img.src = '';
+            img.remove();
+        });
+        document.querySelectorAll('img').forEach(img => {
+            img.src = '';
+            img.remove();
+        });
+    } catch (e) {}
+
     const ta = document.querySelector('textarea');
     if (ta) { ta.value = ''; }
-
+    try {
+        if (typeof window.gc === 'function') {
+            window.gc();
+        }
+    } catch (e) {}
     if (!document.getElementById('__aistudio_perf_style__')) {
         try {
             const style = document.createElement('style');

@@ -78,7 +78,7 @@ class BrowserSession:
         self._switching: bool = False
         self._switch_event = asyncio.Event()
         self._switch_event.set()
-
+        self._last_activity_time: float = time.time()
     def get_current_auth_user(self) -> str:
         """获取当前活跃账号的 auth_user 编号（0, 1, 2...）。"""
         if self._auth_file:
@@ -100,14 +100,33 @@ class BrowserSession:
 
     @asynccontextmanager
     async def request_scope(self):
-        """追踪正在进行的请求，防止切号时进程被强杀造成断流。"""
+        """追踪正在进行的请求，防止切号时进程被强杀造成断流，并更新活跃时间戳。"""
         await self._switch_event.wait()
         self._in_flight += 1
+        self._last_activity_time = time.time()
         try:
             yield
         finally:
             self._in_flight = max(0, self._in_flight - 1)
+            self._last_activity_time = time.time()
 
+    async def check_idle_timeout(self) -> bool:
+        """检查浏览器是否空闲超时，超时则主动释放进程以回收 300-500MB 内存。"""
+        idle_timeout = getattr(settings, "browser_idle_timeout", 0)
+        if idle_timeout <= 0:
+            return False
+        async with self._lock:
+            if self._in_flight <= 0 and self._proc is not None:
+                idle_duration = time.time() - self._last_activity_time
+                if idle_duration >= idle_timeout:
+                    log.info(
+                        "浏览器已空闲 %.1f 秒 (阈值=%d 秒)，主动回收进程以释放内存",
+                        idle_duration,
+                        idle_timeout,
+                    )
+                    await self._close_internal()
+                    return True
+        return False
     async def is_alive(self, timeout_s: float = 1.5) -> bool:
         """Fast non-blocking probe to verify if the browser process and CDP page are responsive."""
         if self._proc is not None and not self._proc.is_alive():
@@ -286,6 +305,10 @@ class BrowserSession:
                     )
 
                 for i in range(45):
+                    if self._proc is not None and not self._proc.is_alive():
+                        raise RuntimeError("Browser process died during BotGuard capture")
+                    if page.is_closed():
+                        raise RuntimeError("Browser page closed during BotGuard capture")
                     await page.wait_for_timeout(1000)
                     if await page.evaluate("() => !!window.__bg_service"):
                         # 预热即刻截断：捕获到 BotGuardService 后立即停止生成，无需等待模型吐字
@@ -363,7 +386,6 @@ class BrowserSession:
 
     async def capture_template_flow(self, model: str) -> dict[str, object]:
         """Execute browser action flow to capture request template without caching in session."""
-        clean_model = model.removeprefix("models/")
         async with self._template_lock:
             page = await self.ensure_botguard_service()
             if self._bootstrap_template:
@@ -408,6 +430,10 @@ class BrowserSession:
                     raise RuntimeError("failed to trigger send during template capture")
 
                 for _ in range(30):
+                    if self._proc is not None and not self._proc.is_alive():
+                        raise RuntimeError("Browser process died during template capture")
+                    if page.is_closed():
+                        raise RuntimeError("Browser page closed during template capture")
                     await page.wait_for_timeout(1000)
                     if captured:
                         with suppress(Exception):
@@ -564,6 +590,9 @@ class BrowserSession:
                 await self._page.evaluate(DOM_GC_CLEANUP_JS)
             with suppress(Exception):
                 await self._page.collect_garbage()
+        import gc
+
+        gc.collect()
 
     async def close(self) -> None:
         """Close browser session and free resources."""
@@ -604,6 +633,9 @@ class BrowserSession:
 
         self._cdp_client = CDPClient(port=self.port)
         self._page = await self._cdp_client.connect_page(block_assets=True)
+        self._page.set_liveness_checker(
+            lambda: self._proc is None or self._proc.is_alive()
+        )
         with suppress(Exception):
             tz_id = os.getenv("AISTUDIO_TIMEZONE", "Asia/Tokyo")
             await self._page.cdp.send(
@@ -833,6 +865,10 @@ class BrowserSession:
 
     async def _wait_until_idle(self, page: CDPPage) -> None:
         for _ in range(25):
+            if self._proc is not None and not self._proc.is_alive():
+                raise RuntimeError("Browser process died while waiting for idle")
+            if page.is_closed():
+                raise RuntimeError("Page closed while waiting for idle")
             if await self._has_run_button(page):
                 return
             await page.wait_for_timeout(1000)

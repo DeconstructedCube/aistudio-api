@@ -110,7 +110,9 @@ class XHRStreamTransport:
             timeout_s=timeout_s,
         )
 
-        result = await page.evaluate(HOOKED_REQUEST_JS, args)
+        result = await page.evaluate(
+            HOOKED_REQUEST_JS, args, timeout_s=timeout_s + 5.0
+        )
         res_dict: dict[str, object] = result if isinstance(result, dict) else {}
         status = int(str(res_dict.get("status") or 0))
         raw_text = str(res_dict.get("body") or "")
@@ -167,16 +169,22 @@ class XHRStreamTransport:
 
         try:
             while not is_terminal:
+                if page.is_closed() is True:
+                    raise RuntimeError("Browser page closed during streaming")
                 now = asyncio.get_running_loop().time()
                 remaining = deadline - now
                 if remaining <= 0:
                     break
 
+                step_timeout = min(remaining, 1.0)
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=remaining)
+                    event = await asyncio.wait_for(queue.get(), timeout=step_timeout)
                 except TimeoutError:
-                    break
-
+                    if page.is_closed() is True:
+                        raise RuntimeError(
+                            "Browser page closed during streaming"
+                        ) from None
+                    continue
                 etype = str(event.get("type") or "")
                 if etype == "status":
                     status = int(str(event.get("status") or 0))
