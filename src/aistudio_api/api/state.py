@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
+
+from aistudio_api.config import resolve_stats_file, settings
+from aistudio_api.infrastructure.utils.common import atomic_write_json
 
 if TYPE_CHECKING:
     from aistudio_api.application.account_rotator import AccountRotator
@@ -13,7 +18,7 @@ if TYPE_CHECKING:
     from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
     from aistudio_api.infrastructure.gateway.client import AIStudioClient
 
-
+logger = logging.getLogger("aistudio.state")
 @dataclass
 class ModelStatsItem:
     requests: int = 0
@@ -37,6 +42,48 @@ class RuntimeState:
         default_factory=lambda: defaultdict(ModelStatsItem)
     )
 
+    def __post_init__(self) -> None:
+        self.load_stats()
+
+    def load_stats(self) -> None:
+        """从持久化文件加载历史调用统计。"""
+        if not settings.persist_stats:
+            return
+        stats_path = resolve_stats_file()
+        if not stats_path.is_file():
+            return
+        try:
+            raw = stats_path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                for model, item in data.items():
+                    if isinstance(item, dict):
+                        self.model_stats[model] = ModelStatsItem(
+                            requests=int(item.get("requests", 0)),
+                            success=int(item.get("success", 0)),
+                            rate_limited=int(item.get("rate_limited", 0)),
+                            errors=int(item.get("errors", 0)),
+                            prompt_tokens=int(item.get("prompt_tokens", 0)),
+                            completion_tokens=int(item.get("completion_tokens", 0)),
+                            total_tokens=int(item.get("total_tokens", 0)),
+                            last_used=str(item["last_used"]) if item.get("last_used") else None,
+                        )
+        except Exception as e:
+            logger.warning("从 %s 读取模型统计失败: %s", stats_path, e)
+
+    def save_stats(self) -> None:
+        """将模型调用与 Token 统计持久化到文件。"""
+        if not settings.persist_stats:
+            return
+        stats_path = resolve_stats_file()
+        try:
+            payload = {
+                model: asdict(item)
+                for model, item in self.model_stats.items()
+            }
+            atomic_write_json(stats_path, payload)
+        except Exception as e:
+            logger.warning("持久化模型统计到 %s 失败: %s", stats_path, e)
     def record(
         self,
         model: str,
@@ -62,6 +109,7 @@ class RuntimeState:
             stats.prompt_tokens += pt if isinstance(pt, int) else 0
             stats.completion_tokens += ct if isinstance(ct, int) else 0
             stats.total_tokens += tt if isinstance(tt, int) else 0
+        self.save_stats()
 
 
 runtime_state = RuntimeState()

@@ -9,6 +9,8 @@ from pathlib import Path
 
 import yaml
 
+from aistudio_api.config import resolve_config_file
+
 from .wire_types import (
     AistudioImageOutputMode,
     AistudioThinkingConfig,
@@ -19,6 +21,7 @@ from .wire_types import (
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[4]
 _DEFAULT_CONFIG_PATH = _PROJECT_ROOT / "config.yaml"
+_resolve_config_path = resolve_config_file
 _SAFETY_CATEGORY_ORDER = (
     ("harassment", 7),
     ("hate", 8),
@@ -311,13 +314,6 @@ def _default_config() -> dict[str, object]:
     }
 
 
-def _resolve_config_path(config_path: str | os.PathLike[str] | None) -> Path:
-    if config_path is not None:
-        return Path(config_path)
-    override = os.getenv("AISTUDIO_CONFIG_FILE")
-    if override:
-        return Path(override)
-    return _DEFAULT_CONFIG_PATH
 
 
 _CONFIG_CACHE: dict[str, tuple[float, dict[str, object]]] = {}

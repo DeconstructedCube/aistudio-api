@@ -7,13 +7,18 @@ services:
       - "8080:8080"    # API server
       # - "9222:9222"  # Optional: expose only when debugging browser
     volumes:
-      - ./data:/app/data           # Account data persistence
+      - ./data:/app/data           # Account data, stats.json and rotator_state.json persistence
+      - ./config.yaml:/app/config.yaml  # Model configuration file
       - ./.env:/app/.env:ro        # Environment config (read-only)
     environment:
       - AISTUDIO_PORT=8080
       - AISTUDIO_BROWSER_PORT=9222
       - AISTUDIO_BROWSER_HEADLESS=1
+      - AISTUDIO_DATA_DIR=/app/data
       - AISTUDIO_ACCOUNTS_DIR=/app/data/accounts
+      - AISTUDIO_STATS_FILE=/app/data/stats.json
+      - AISTUDIO_ROTATOR_STATE_FILE=/app/data/rotator_state.json
+      - AISTUDIO_CONFIG_FILE=/app/config.yaml
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/v1beta/models"]
       interval: 30s

@@ -57,10 +57,17 @@ model_defaults:
 
 @pytest.fixture(autouse=True)
 def isolate_test_config(monkeypatch, tmp_path):
-    """Isolate all test runs from repository-level config.yaml modifications."""
+    """Isolate all test runs from repository-level config.yaml modifications and runtime state files."""
     test_config_path = tmp_path / "test_isolated_config.yaml"
     test_config_path.write_text(_TEST_DEFAULT_CONFIG, encoding="utf-8")
+    test_data_dir = tmp_path / "data"
+    test_data_dir.mkdir(parents=True, exist_ok=True)
+
     monkeypatch.setenv("AISTUDIO_CONFIG_FILE", str(test_config_path))
+    monkeypatch.setenv("AISTUDIO_DATA_DIR", str(test_data_dir))
+    monkeypatch.setenv("AISTUDIO_ACCOUNTS_DIR", str(test_data_dir / "accounts"))
+    monkeypatch.setenv("AISTUDIO_STATS_FILE", str(test_data_dir / "stats.json"))
+    monkeypatch.setenv("AISTUDIO_ROTATOR_STATE_FILE", str(test_data_dir / "rotator_state.json"))
     invalidate_config_cache()
     yield
     invalidate_config_cache()

@@ -45,11 +45,12 @@
 | **Native Gemini API** | Full compatibility with the official `/v1beta/...` specification, supporting Thinking process, Multimodal inputs, Function Calling, and Image Generation |
 | **Dynamic Model Discovery** | Automatically synchronizes and discovers available models from upstream Google AI Studio |
 | **Sticky Account Dispatch** | Maintains account state per model, tracks 429 rate-limit quotas & 403 authorization isolation independently, and resets cooldowns at midnight Pacific Time |
+| **Full Runtime Persistence** | Model usage statistics (`stats.json`) and account 429 cooldown & quota status (`rotator_state.json`) are automatically persisted to disk across restarts |
+| **Downstream Parameter Fault Tolerance** | `drop_unsupported_params` automatically drops unsupported safety categories (e.g. `HARM_CATEGORY_CIVIC_INTEGRITY`) and tools to prevent 400 errors |
 | **Multi-Account Probing** | Extracts and verifies sub-accounts (`u/0`, `u/1`...) automatically when importing a multi-session Cookie |
 | **Built-in Tools** | Supports official tools such as Google Search, Google Maps, and Code Execution sandbox |
 | **Pure Python CDP** | Direct Chrome DevTools Protocol communication over asynchronous WebSockets without Node.js, Playwright, or Selenium |
 | **Web Management Console** | Built-in web dashboard for account management, live request metrics, and runtime `config.yaml` hot reloading |
-
 > [!NOTE]
 > **Memory Footprint**: The standalone Python backend consumes ~35 - 45 MB RAM. With a single controlled Chromium instance, total actual system memory (PSS) is ~350 - 450 MB on Termux proot (~250 - 350 MB on native Linux). On Android Termux, ≥ 1 GB free RAM is recommended.
 
@@ -155,18 +156,23 @@ docker compose up -d
 Open `http://localhost:8080` in your browser to access the Web Console.
 
 ### Environment Variables
-
 | Variable | Type | Default | Description |
 |---|---|---|---|
 | `AISTUDIO_PORT` | int | `8080` | HTTP service listening port |
 | `AISTUDIO_WEB_PASSWORD` | string | `""` | Web Console access password (also checks `AISTUDIO_ADMIN_PASSWORD`) |
 | `AISTUDIO_PROXY` | string | `""` | Outbound proxy URL (`http://`, `https://`, or `socks5://`) |
+| `AISTUDIO_DATA_DIR` | string | `data/` | Main data directory for persistent files (`/app/data` in Docker) |
+| `AISTUDIO_ACCOUNTS_DIR` | string | `data/accounts` | Directory for storing account credentials |
+| `AISTUDIO_STATS_FILE` | string | `data/stats.json` | Persistent storage file for model usage metrics |
+| `AISTUDIO_ROTATOR_STATE_FILE` | string | `data/rotator_state.json` | Persistent storage file for account 429 cooldowns and dispatch states |
+| `AISTUDIO_CONFIG_FILE` | string | `config.yaml` | Path to model rules and default tools configuration YAML |
+| `AISTUDIO_PERSIST_STATS` | bool | `true` | Persist request and token usage metrics across service restarts |
+| `AISTUDIO_PERSIST_ROTATOR` | bool | `true` | Persist account 429 rate limit dates & cooldowns across restarts |
 | `AISTUDIO_BROWSER_EXECUTABLE` | string | Auto | Path to Chromium executable |
 | `AISTUDIO_BROWSER_PORT` | int | `9222` | Chromium remote debugging port (CDP) |
 | `AISTUDIO_BROWSER_HEADLESS` | bool | `true` | Run Chromium in headless mode |
 | `AISTUDIO_SNAPSHOT_CACHE_TTL` | int | `3600` | BotGuard snapshot cache TTL in seconds |
 | `AISTUDIO_PROOT_NAME` | string | `aistudio-api` | Dedicated proot-distro container name for Termux |
-| `AISTUDIO_ACCOUNTS_DIR` | string | `data/accounts` | Directory for storing account credentials |
 | `AISTUDIO_DEFAULT_TEXT_MODEL` | string | `gemini-3.7-flash` | Default text model |
 | `AISTUDIO_DEFAULT_IMAGE_MODEL` | string | `gemini-3.1-flash-image-preview` | Default image generation model |
 

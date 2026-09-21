@@ -179,11 +179,9 @@ class ConfigYamlUpdateRequest(BaseModel):
 @protected_router.get("/config")
 async def get_system_config() -> dict[str, object]:
     """获取系统运行配置与 config.yaml 内容。"""
-    from pathlib import Path
-
     from aistudio_api.config import settings
 
-    config_yaml_path = Path(__file__).resolve().parents[3] / "config.yaml"
+    config_yaml_path = _resolve_config_path(None)
     yaml_content = ""
     if config_yaml_path.exists():
         with contextlib.suppress(Exception):
@@ -202,7 +200,6 @@ async def get_system_config() -> dict[str, object]:
 @protected_router.put("/config/yaml")
 async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
     """更新 config.yaml 文件内容并热重载默认配置。"""
-    from pathlib import Path
 
     try:
         parsed = yaml.safe_load(req.yaml_content)
@@ -210,7 +207,7 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
             raise HTTPException(400, detail="YAML 顶层必须为字典结构")
     except yaml.YAMLError as e:
         raise HTTPException(400, detail=f"YAML 语法格式错误: {e}") from e
-    config_yaml_path = Path(__file__).resolve().parents[3] / "config.yaml"
+    config_yaml_path = _resolve_config_path(None)
     try:
         config_yaml_path.write_text(req.yaml_content, encoding="utf-8")
         invalidate_config_cache()

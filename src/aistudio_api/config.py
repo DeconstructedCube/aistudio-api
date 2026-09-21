@@ -60,10 +60,56 @@ def _load_web_password() -> str | None:
     return os.getenv("AISTUDIO_WEB_PASSWORD") or os.getenv("AISTUDIO_ADMIN_PASSWORD")
 
 
-_AUTH_SEARCH_ROOTS = [
-    Path(__file__).resolve().parents[2] / "data",  # 项目内 data/ 目录
-]
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_DEFAULT_DATA_DIR = _PROJECT_ROOT / "data"
+_DEFAULT_CONFIG_PATH = _PROJECT_ROOT / "config.yaml"
 
+
+def resolve_config_file(config_path: str | os.PathLike[str] | None = None) -> Path:
+    """解析配置文件路径（优先使用 AISTUDIO_CONFIG_FILE 环境变量）。"""
+    if config_path is not None:
+        return Path(config_path)
+    override = os.getenv("AISTUDIO_CONFIG_FILE")
+    if override:
+        return Path(override)
+    return _DEFAULT_CONFIG_PATH
+
+
+
+def resolve_data_dir() -> Path:
+    """解析数据存储根目录（优先使用 AISTUDIO_DATA_DIR 环境变量）。"""
+    override = os.getenv("AISTUDIO_DATA_DIR")
+    if override:
+        path = Path(override).resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+    _DEFAULT_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    return _DEFAULT_DATA_DIR.resolve()
+
+
+def resolve_stats_file() -> Path:
+    """解析调用量与 Token 统计持久化文件路径（优先使用 AISTUDIO_STATS_FILE）。"""
+    override = os.getenv("AISTUDIO_STATS_FILE")
+    if override:
+        path = Path(override).resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+    return resolve_data_dir() / "stats.json"
+
+
+def resolve_rotator_state_file() -> Path:
+    """解析账号调度与 429 冷却状态持久化文件路径（优先使用 AISTUDIO_ROTATOR_STATE_FILE）。"""
+    override = os.getenv("AISTUDIO_ROTATOR_STATE_FILE")
+    if override:
+        path = Path(override).resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+    return resolve_data_dir() / "rotator_state.json"
+
+
+_AUTH_SEARCH_ROOTS = [
+    _DEFAULT_DATA_DIR,  # 项目内 data/ 目录
+]
 
 def discover_auth_file() -> str | None:
     override = os.getenv("AISTUDIO_AUTH_FILE")
@@ -163,9 +209,14 @@ class Settings:
     dump_raw_response_dir: str = os.getenv(
         "AISTUDIO_DUMP_RAW_RESPONSE_DIR", tempfile.gettempdir()
     )
+    data_dir: str = str(resolve_data_dir())
     accounts_dir: str = os.getenv("AISTUDIO_ACCOUNTS_DIR", "")
+    stats_file: str = str(resolve_stats_file())
+    rotator_state_file: str = str(resolve_rotator_state_file())
+    config_file: str = str(resolve_config_file())
+    persist_stats: bool = _load_bool_env("AISTUDIO_PERSIST_STATS", default=True)
+    persist_rotator: bool = _load_bool_env("AISTUDIO_PERSIST_ROTATOR", default=True)
     account_max_retries: int = int(os.getenv("AISTUDIO_ACCOUNT_MAX_RETRIES", "3"))
-
     @property
     def auth_enabled(self) -> bool:
         """网页管理端鉴权是否开启。"""

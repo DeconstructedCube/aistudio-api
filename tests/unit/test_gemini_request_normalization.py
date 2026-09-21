@@ -342,7 +342,9 @@ model_defaults:
 """
     )
     monkeypatch.setenv("AISTUDIO_CONFIG_FILE", str(config_path))
-    from aistudio_api.infrastructure.gateway.model_defaults import invalidate_config_cache
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        invalidate_config_cache,
+    )
     invalidate_config_cache()
 
     req = GeminiGenerateContentRequest.model_validate(
@@ -380,7 +382,9 @@ model_defaults:
 """
     )
     monkeypatch.setenv("AISTUDIO_CONFIG_FILE", str(config_path))
-    from aistudio_api.infrastructure.gateway.model_defaults import invalidate_config_cache
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        invalidate_config_cache,
+    )
     invalidate_config_cache()
 
     req = GeminiGenerateContentRequest.model_validate(

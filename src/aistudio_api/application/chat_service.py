@@ -204,11 +204,10 @@ def _normalize_gemini_image_config(
     if isinstance(image_size, str):
         image_size = image_size.strip() or None
     person_generation = value.get("personGeneration")
-    if person_generation not in (None, ""):
-        if not drop_unsupported:
-            raise ValueError(
-                "generationConfig.imageConfig.personGeneration is not supported yet"
-            )
+    if person_generation not in (None, "") and not drop_unsupported:
+        raise ValueError(
+            "generationConfig.imageConfig.personGeneration is not supported yet"
+        )
 
     normalized: dict[str, object] = {}
     if aspect_ratio is not None or image_size is not None:

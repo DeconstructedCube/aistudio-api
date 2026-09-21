@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
+
+from aistudio_api.config import resolve_rotator_state_file, settings
+from aistudio_api.infrastructure.utils.common import atomic_write_json
 
 if TYPE_CHECKING:
     from aistudio_api.infrastructure.account.account_store import (
@@ -68,6 +73,84 @@ class AccountStats:
     model_requests: dict[str, int] = field(default_factory=dict)
     model_rate_limited: dict[str, int] = field(default_factory=dict)
 
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "account_id": self.account_id,
+            "requests": self.requests,
+            "success": self.success,
+            "rate_limited": self.rate_limited,
+            "errors": self.errors,
+            "auth_errors": self.auth_errors,
+            "last_used": self.last_used,
+            "last_rate_limited": self.last_rate_limited,
+            "last_auth_error": self.last_auth_error,
+            "auth_cooldown": self.auth_cooldown,
+            "rate_limited_date_la": self.rate_limited_date_la,
+            "model_cooldowns": dict(self.model_cooldowns),
+            "model_rate_limited_dates": dict(self.model_rate_limited_dates),
+            "model_requests": dict(self.model_requests),
+            "model_rate_limited": dict(self.model_rate_limited),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> AccountStats:
+        raw_cd = data.get("model_cooldowns")
+        model_cooldowns: dict[str, float] = {}
+        if isinstance(raw_cd, dict):
+            for k, v in raw_cd.items():
+                with contextlib.suppress(ValueError, TypeError):
+                    model_cooldowns[str(k)] = float(str(v))
+
+        raw_dates = data.get("model_rate_limited_dates")
+        model_rate_limited_dates: dict[str, str] = {}
+        if isinstance(raw_dates, dict):
+            for k, v in raw_dates.items():
+                model_rate_limited_dates[str(k)] = str(v)
+
+        raw_reqs = data.get("model_requests")
+        model_requests: dict[str, int] = {}
+        if isinstance(raw_reqs, dict):
+            for k, v in raw_reqs.items():
+                with contextlib.suppress(ValueError, TypeError):
+                    model_requests[str(k)] = int(str(v))
+
+        raw_limits = data.get("model_rate_limited")
+        model_rate_limited: dict[str, int] = {}
+        if isinstance(raw_limits, dict):
+            for k, v in raw_limits.items():
+                with contextlib.suppress(ValueError, TypeError):
+                    model_rate_limited[str(k)] = int(str(v))
+
+        def _as_int(v: object) -> int:
+            try:
+                return int(str(v)) if v is not None else 0
+            except (ValueError, TypeError):
+                return 0
+
+        def _as_float(v: object) -> float:
+            try:
+                return float(str(v)) if v is not None else 0.0
+            except (ValueError, TypeError):
+                return 0.0
+
+        return cls(
+            account_id=str(data.get("account_id") or ""),
+            requests=_as_int(data.get("requests")),
+            success=_as_int(data.get("success")),
+            rate_limited=_as_int(data.get("rate_limited")),
+            errors=_as_int(data.get("errors")),
+            auth_errors=_as_int(data.get("auth_errors")),
+            last_used=_as_float(data.get("last_used")),
+            last_rate_limited=_as_float(data.get("last_rate_limited")),
+            last_auth_error=_as_float(data.get("last_auth_error")),
+            auth_cooldown=_as_float(data.get("auth_cooldown")),
+            rate_limited_date_la=str(data["rate_limited_date_la"]) if data.get("rate_limited_date_la") else None,
+            model_cooldowns=model_cooldowns,
+            model_rate_limited_dates=model_rate_limited_dates,
+            model_requests=model_requests,
+            model_rate_limited=model_rate_limited,
+        )
     def is_available(
         self, model: str | None = None, *, ignore_auth_cooldown: bool = False
     ) -> bool:
@@ -192,10 +275,42 @@ class AccountRotator:
         self._stats: dict[str, AccountStats] = {}
         self._lock = asyncio.Lock()
 
+        self.load_state()
         for account in self._store.list_accounts():
             if account.id not in self._stats:
                 self._stats[account.id] = AccountStats(account_id=account.id)
 
+    def load_state(self) -> None:
+        """从持久化文件恢复账号统计与 429 锁定状态。"""
+        if not settings.persist_rotator:
+            return
+        state_file = resolve_rotator_state_file()
+        if not state_file.is_file():
+            return
+        try:
+            raw = state_file.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                for acc_id, item in data.items():
+                    if isinstance(item, dict):
+                        self._stats[str(acc_id)] = AccountStats.from_dict(item)
+                logger.info("已从 %s 恢复 %d 个账号的运行与限额状态", state_file, len(self._stats))
+        except Exception as e:
+            logger.warning("从 %s 读取账号调度状态失败: %s", state_file, e)
+
+    def save_state(self) -> None:
+        """将账号调度统计与 429 冷却状态持久化到文件。"""
+        if not settings.persist_rotator:
+            return
+        state_file = resolve_rotator_state_file()
+        try:
+            payload = {
+                acc_id: stats.to_dict()
+                for acc_id, stats in self._stats.items()
+            }
+            atomic_write_json(state_file, payload)
+        except Exception as e:
+            logger.warning("持久化账号调度状态到 %s 失败: %s", state_file, e)
     def get_all_stats(self) -> dict[str, dict[str, object]]:
         """获取所有账号的运行与配额状态。"""
         result: dict[str, dict[str, object]] = {}
@@ -345,6 +460,7 @@ class AccountRotator:
             self._stats[account_id] = AccountStats(account_id=account_id)
         self._stats[account_id].record_success(model)
 
+        self.save_state()
     def record_rate_limited(
         self,
         account_id: str,
@@ -355,10 +471,12 @@ class AccountRotator:
         self._stats[account_id].record_rate_limited(model)
         logger.warning("账号 %s 在模型 %s 触发当日限额", account_id, model or "all")
 
+        self.save_state()
     def record_error(self, account_id: str, model: str | None = None) -> None:
         if account_id not in self._stats:
             self._stats[account_id] = AccountStats(account_id=account_id)
         self._stats[account_id].record_error(model)
+        self.save_state()
 
     def record_auth_error(
         self,
@@ -376,26 +494,30 @@ class AccountRotator:
             account_id,
             int(cooldown_seconds),
         )
-
+        self.save_state()
     def clear_cooldown(self, account_id: str, model: str | None = None) -> None:
         """清除指定账号的 429 锁定。"""
         if account_id in self._stats:
             self._stats[account_id].clear_cooldown(model)
             logger.info("已手动清除账号 %s 锁定 (model=%s)", account_id, model)
 
+        self.save_state()
     def clear_all_cooldowns(self) -> None:
         """清除全部账号的所有模型 429 锁定。"""
         for stats in self._stats.values():
             stats.clear_cooldown()
         logger.info("已手动清除全部账号的 429 锁定状态")
 
+        self.save_state()
     def add_account(self, account_id: str) -> None:
         if account_id not in self._stats:
             self._stats[account_id] = AccountStats(account_id=account_id)
 
+        self.save_state()
     def remove_account(self, account_id: str) -> None:
         self._stats.pop(account_id, None)
 
+        self.save_state()
 
 _rotator: AccountRotator | None = None
 

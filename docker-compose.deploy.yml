@@ -7,6 +7,12 @@ services:
       - "8080:8080"
     volumes:
       - aistudio-api-data:/app/data
+    environment:
+      - AISTUDIO_DATA_DIR=/app/data
+      - AISTUDIO_ACCOUNTS_DIR=/app/data/accounts
+      - AISTUDIO_STATS_FILE=/app/data/stats.json
+      - AISTUDIO_ROTATOR_STATE_FILE=/app/data/rotator_state.json
+      - AISTUDIO_CONFIG_FILE=/app/data/config.yaml
 
 volumes:
   aistudio-api-data:
