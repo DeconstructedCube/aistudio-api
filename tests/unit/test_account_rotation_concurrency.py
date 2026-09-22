@@ -98,6 +98,28 @@ async def test_account_stats_pacific_midnight_reset():
     assert "gemini-2.5-pro" not in stats.model_rate_limited_dates
 
 
+
+@pytest.mark.asyncio
+async def test_account_stats_clear_cooldown_resets_counter():
+    """测试手动清除冷却会重置 429 次数计数器，不会在下一次 429 时直接秒锁至午夜。"""
+    stats = AccountStats(account_id="acc_1")
+    # 连续 3 次 429 触发当日锁定
+    stats.record_rate_limited(model="gemini-2.5-pro")
+    stats.record_rate_limited(model="gemini-2.5-pro")
+    stats.record_rate_limited(model="gemini-2.5-pro")
+    assert not stats.is_available("gemini-2.5-pro")
+    assert stats.get_cooldown_remaining("gemini-2.5-pro") > 60.0
+
+    # 手动清除冷却
+    stats.clear_cooldown(model="gemini-2.5-pro")
+    assert stats.is_available("gemini-2.5-pro")
+    assert "gemini-2.5-pro" not in stats.model_rate_limited
+
+    # 下一次遇到 429 应重新享有 60s 临时冷却，而不是直接锁到午夜
+    stats.record_rate_limited(model="gemini-2.5-pro")
+    rem = stats.get_cooldown_remaining("gemini-2.5-pro")
+    assert 0 < rem <= 60.0
+
 @pytest.mark.asyncio
 async def test_rotator_sticky_mode():
     """测试 Sticky 模式：默认保持当前号，直到限流才切换。"""

@@ -45,6 +45,17 @@ GOOGLE_LOGIN_BOOTSTRAP_URL = (
 BOTGUARD_BOOTSTRAP_PROMPT = "say '1'"
 TEMPLATE_CAPTURE_PROMPT = "say 't'"
 
+
+def _is_login_page_url(url: str | None) -> bool:
+    if not url:
+        return False
+    u = url.lower()
+    return (
+        "accounts.google.com" in u
+        or "signin" in u
+        or "servicelogin" in u
+        or "accountchooser" in u
+    )
 DEFAULT_BOOTSTRAP_TEMPLATE = {
     "url": "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent",
     "headers": {
@@ -127,6 +138,31 @@ class BrowserSession:
                     await self._close_internal()
                     return True
         return False
+    async def reload_current_account_cookies(self, page: CDPPage | None = None) -> bool:
+        """重新清理并注入当前活跃账号的原始 auth.json Cookie。"""
+        if not self._auth_file or not Path(self._auth_file).is_file():
+            return False
+        target_page = page or self._page
+        if target_page is None or target_page.is_closed():
+            return False
+        try:
+            log.info("检测到登录页重定向，正在重新载入 Cookie: %s", self._auth_file)
+            with suppress(Exception):
+                await target_page.cdp.send("Network.clearBrowserCookies")
+                await target_page.cdp.send("Network.clearBrowserCache")
+            data = json.loads(Path(self._auth_file).read_text(encoding="utf-8"))
+            cookies = data.get("cookies") or []
+            if cookies:
+                await target_page.set_cookies(cookies)
+            await self._goto_aistudio(target_page)
+            await self._install_hooks(target_page)
+            if not _is_login_page_url(target_page.url):
+                log.info("Cookie 重新载入成功，会话已恢复: %s", self._auth_file)
+                return True
+        except Exception as e:
+            log.warning("重新载入 Cookie 失败: %s", e)
+        return False
+
     async def is_alive(self, timeout_s: float = 1.5) -> bool:
         """Fast non-blocking probe to verify if the browser process and CDP page are responsive."""
         if self._proc is not None and not self._proc.is_alive():
@@ -134,7 +170,6 @@ class BrowserSession:
         if self._page is None or self._page.is_closed():
             return False
         return await self._page.is_alive(timeout_s=timeout_s)
-
     async def ensure_context(self) -> CDPPage:
         """Ensure Chromium process is running and CDPPage is connected and responsive."""
         async with self._lock:
@@ -272,9 +307,17 @@ class BrowserSession:
             try:
                 original_text = ""
                 try:
-                    await page.wait_for_selector("textarea", timeout_s=20.0)
+                    await page.wait_for_selector("textarea", timeout_s=15.0)
                 except Exception as err:
-                    dbg_url = page.url
+                    dbg_url = page.url or ""
+                    if _is_login_page_url(dbg_url):
+                        log.warning("等待输入框期间检测到登录页重定向: %s，尝试重新注入 Cookie...", dbg_url)
+                        if await self.reload_current_account_cookies(page):
+                            await page.wait_for_selector("textarea", timeout_s=15.0)
+                        else:
+                            raise SessionExpiredError(
+                                f"Cookie 认证失效，已被重定向到 Google 登录页: {dbg_url}"
+                            ) from err
                     if "available-regions" in (dbg_url or ""):
                         raise RuntimeError(
                             "Google AI Studio 地区限制: 访问被重定向至 available-regions"
@@ -309,6 +352,12 @@ class BrowserSession:
                         raise RuntimeError("Browser process died during BotGuard capture")
                     if page.is_closed():
                         raise RuntimeError("Browser page closed during BotGuard capture")
+                    curr_url = page.url or ""
+                    if _is_login_page_url(curr_url):
+                        log.warning("BotGuard 捕获期间检测到登录页重定向: %s，尝试重新注入 Cookie...", curr_url)
+                        if await self.reload_current_account_cookies(page):
+                            break
+                        raise SessionExpiredError(f"Cookie 认证失效，已跳转至登录页: {curr_url}")
                     await page.wait_for_timeout(1000)
                     if await page.evaluate("() => !!window.__bg_service"):
                         # 预热即刻截断：捕获到 BotGuardService 后立即停止生成，无需等待模型吐字
@@ -434,6 +483,15 @@ class BrowserSession:
                         raise RuntimeError("Browser process died during template capture")
                     if page.is_closed():
                         raise RuntimeError("Browser page closed during template capture")
+                    curr_url = page.url or ""
+                    if _is_login_page_url(curr_url):
+                        log.warning("模板捕获期间检测到登录页重定向: %s，尝试重新注入 Cookie...", curr_url)
+                        if await self.reload_current_account_cookies(page):
+                            await page.fill("textarea", TEMPLATE_CAPTURE_PROMPT)
+                            await page.wait_for_timeout(500)
+                            await self._click_run_button(page)
+                            continue
+                        raise SessionExpiredError(f"Cookie 认证失效，已跳转至登录页: {curr_url}")
                     await page.wait_for_timeout(1000)
                     if captured:
                         with suppress(Exception):
@@ -617,12 +675,8 @@ class BrowserSession:
     async def _ensure_browser_cdp(self) -> CDPPage:
         """Launch Chromium subprocess and connect async CDP client."""
         profile_dir = self._profile_dir
-        should_seed_from_auth = True
         if profile_dir:
             profile_path = Path(profile_dir)
-            should_seed_from_auth = not (
-                profile_path.exists() and any(profile_path.iterdir())
-            )
             profile_path.mkdir(parents=True, exist_ok=True)
 
         self._proc = launch_chromium_process(
@@ -644,25 +698,18 @@ class BrowserSession:
             await self._page.cdp.send(
                 "Emulation.setLocaleOverride", {"locale": "en-US"}
             )
-        if should_seed_from_auth and self._auth_file and Path(self._auth_file).exists():
+        if self._auth_file and Path(self._auth_file).exists():
             try:
                 data = json.loads(Path(self._auth_file).read_text(encoding="utf-8"))
                 cached = data.get("cookies") or []
                 if cached:
+                    with suppress(Exception):
+                        await self._page.cdp.send("Network.clearBrowserCookies")
+                        await self._page.cdp.send("Network.clearBrowserCache")
                     await self._page.set_cookies(cached)
-                    await self._bootstrap_google_session(self._page)
-                    if "accounts.google.com" not in (self._page.url or ""):
-                        log.info(
-                            "[chromium-auth] auth.json seeded context (%d cookies)",
-                            len(cached),
-                        )
-                        await self._save_cookies()
-                        await self._goto_aistudio(self._page)
-                        await self._install_hooks(self._page)
-                        return self._page
+                    log.info("已从 %s 载入 %d 个 Cookie", self._auth_file, len(cached))
             except Exception as e:
-                log.debug("[chromium-auth] auth.json load failed: %s", e)
-
+                log.debug("从 %s 载入 Cookie 失败: %s", self._auth_file, e)
         await self._goto_aistudio(self._page)
         await self._install_hooks(self._page)
         return self._page
@@ -758,9 +805,10 @@ class BrowserSession:
                     raise RuntimeError(
                         f"Google AI Studio 地区限制 (IP 漏了/不支持): {current_url}"
                     )
-                if "accounts.google.com" in current_url and (
-                    "signin" in current_url or "ServiceLogin" in current_url
-                ):
+                if _is_login_page_url(current_url):
+                    log.warning("访问 AI Studio 后检测到重定向至登录页: %s，尝试重新注入 Cookie...", current_url)
+                    if await self.reload_current_account_cookies(page):
+                        return
                     raise SessionExpiredError(
                         f"Cookie 认证失败，已被重定向到 Google 登录页。 (url={current_url})"
                     )

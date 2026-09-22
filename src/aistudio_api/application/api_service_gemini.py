@@ -115,29 +115,29 @@ async def handle_attempt_exception(
         ) from exc
 
     if isinstance(exc, SessionExpiredError):
-        logger.warning("Gemini 账号 Session 已失效（重定向至登录页）: %s", exc)
-        record_rotator_event("auth_error", model=target_model)
+        logger.warning("账号会话重定向至登录页: %s", exc)
+        client.clear_snapshot_cache()
         if not has_yielded_data and await try_switch_account(
-            model=target_model, failed_account_id=failed_id, is_auth_error=True
+            model=target_model, failed_account_id=failed_id, is_auth_error=False
         ):
-            logger.info("已自动切换至健康账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
+            logger.info("切换至可用账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
             return True
         raise HTTPException(
             401,
             detail={
-                "message": "All accounts have expired sessions. Please import fresh cookies.",
+                "message": "All accounts encountered login redirect or expired sessions. Please import fresh cookies.",
                 "type": "auth_error",
             },
         ) from exc
 
     if isinstance(exc, AuthError):
-        logger.warning("Gemini 403 权限拒绝: %s", exc)
+        logger.warning("账号 403 权限拒绝: %s", exc)
         client.clear_snapshot_cache()
         record_rotator_event("auth_error", model=target_model)
         if not has_yielded_data and await try_switch_account(
             model=target_model, failed_account_id=failed_id, is_auth_error=True
         ):
-            logger.info("已自动切换至可用账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
+            logger.info("切换至可用账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
             return True
         raise HTTPException(
             403, detail={"message": str(exc), "type": "auth_error"}
@@ -150,14 +150,14 @@ async def handle_attempt_exception(
             model=target_model, failed_account_id=failed_id
         ):
             logger.info(
-                "Gemini 429 配额耗尽: model=%s，已切换至可用账号重试 (%d/%d)",
-                target_model,
+                "429 触发限额，切换账号 (%d/%d): model=%s",
                 attempt + 1,
                 MAX_RETRIES,
+                target_model,
             )
             return True
         logger.warning(
-            "Gemini 429 限额: model=%s，全部账号今日配额均已耗尽", target_model
+            "全部账号在模型 %s 上均处于冷却状态", target_model
         )
         raise HTTPException(
             429,
@@ -177,27 +177,32 @@ async def handle_attempt_exception(
         client.clear_snapshot_cache()
         return True
 
-    if isinstance(exc, RuntimeError):
+    if isinstance(exc, (RuntimeError, TimeoutError)):
         err_msg = str(exc).lower()
         if (
-            (
-                "cdp" in err_msg
-                or "closed" in err_msg
-                or "aborted" in err_msg
-                or "timeout" in err_msg
-            )
-            and attempt < 2
-            and not has_yielded_data
+            "template capture" in err_msg
+            or "botguard" in err_msg
+            or "timeout" in err_msg
+            or "cdp" in err_msg
+            or "closed" in err_msg
+            or "aborted" in err_msg
         ):
             logger.warning(
-                "Gemini 浏览器进程断开或超时，自动重启并重试 (%d/%d): %s",
+                "模板或 BotGuard 捕获超时 (%d/%d): %s，切换账号重试",
                 attempt + 1,
                 MAX_RETRIES,
                 exc,
             )
-            if client._session is not None:
-                await client._session._close_internal()
-            return True
+            client.clear_snapshot_cache()
+            if not has_yielded_data and await try_switch_account(
+                model=target_model, failed_account_id=failed_id, is_auth_error=False
+            ):
+                logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
+                return True
+            if attempt < 2 and not has_yielded_data:
+                if client._session is not None:
+                    await client._session._close_internal()
+                return True
 
     if isinstance(exc, AistudioError):
         runtime_state.record(target_model, "errors")
