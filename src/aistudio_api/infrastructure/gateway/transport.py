@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import suppress
@@ -22,7 +21,9 @@ from aistudio_api.infrastructure.browser.scripts import (
 if TYPE_CHECKING:
     from aistudio_api.infrastructure.browser.cdp_client import CDPPage
 
-logger = logging.getLogger("aistudio.transport")
+from aistudio_api.infrastructure.utils.logger import get_logger
+
+logger = get_logger("transport")
 
 
 async def _ensure_authorization_header(
@@ -72,11 +73,11 @@ class XHRStreamTransport:
                             q.put_nowait(data)
                         except asyncio.QueueFull:
                             logger.warning(
-                                "Stream queue full for rid=%s, applying backpressure",
+                                "流式反压: 队列已满 (rid=%s)",
                                 rid,
                             )
             except Exception as e:
-                logger.debug("Failed to dispatch stream push payload: %s", e)
+                logger.debug("分发流式推送数据失败: %s", e)
 
         if hasattr(page, "on_binding"):
             page.on_binding("__aistudio_stream_push__", on_stream_push)
@@ -110,9 +111,7 @@ class XHRStreamTransport:
             timeout_s=timeout_s,
         )
 
-        result = await page.evaluate(
-            HOOKED_REQUEST_JS, args, timeout_s=timeout_s + 5.0
-        )
+        result = await page.evaluate(HOOKED_REQUEST_JS, args, timeout_s=timeout_s + 5.0)
         res_dict: dict[str, object] = result if isinstance(result, dict) else {}
         status = int(str(res_dict.get("status") or 0))
         raw_text = str(res_dict.get("body") or "")

@@ -2,6 +2,13 @@ from aistudio_api.api.responses import (
     to_gemini_parts,
     to_gemini_usage_metadata,
 )
+from aistudio_api.application.api_service_gemini import classify_gemini_error_payload
+from aistudio_api.domain.errors import (
+    AuthError,
+    RequestError,
+    SessionExpiredError,
+    UsageLimitExceeded,
+)
 
 
 def test_to_gemini_usage_metadata_uses_visible_and_reasoning_tokens():
@@ -63,3 +70,32 @@ def test_to_gemini_parts_can_emit_inline_image_data():
         {"text": "说明"},
         {"inlineData": {"mimeType": "image/png", "data": "cG5nLWJ5dGVz"}},
     ]
+
+
+def test_classify_gemini_error_payload():
+    """Verify exception mapping to Gemini HTTP status and reason code."""
+    assert classify_gemini_error_payload(SessionExpiredError("expired")) == (
+        401,
+        "All accounts have expired sessions. Please import fresh cookies.",
+        "UNAUTHENTICATED",
+    )
+    assert classify_gemini_error_payload(AuthError("auth forbidden")) == (
+        403,
+        "auth forbidden",
+        "PERMISSION_DENIED",
+    )
+    assert classify_gemini_error_payload(UsageLimitExceeded("quota exceeded")) == (
+        429,
+        "quota exceeded",
+        "RESOURCE_EXHAUSTED",
+    )
+    assert classify_gemini_error_payload(ValueError("invalid input")) == (
+        400,
+        "invalid input",
+        "INVALID_ARGUMENT",
+    )
+    assert classify_gemini_error_payload(RequestError(429, "rate limit")) == (
+        429,
+        "HTTP 429: rate limit",
+        "RESOURCE_EXHAUSTED",
+    )

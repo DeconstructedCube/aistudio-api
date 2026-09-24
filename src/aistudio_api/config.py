@@ -60,6 +60,21 @@ def _load_web_password() -> str | None:
     return os.getenv("AISTUDIO_WEB_PASSWORD") or os.getenv("AISTUDIO_ADMIN_PASSWORD")
 
 
+def _load_dump_requests_env() -> bool:
+    """检查 DEBUG / AISTUDIO_DEBUG 环境变量是否启用请求转储。
+
+    注意：此环境变量专用于触发请求详细信息转储 (Dump)，不影响日志输出级别。
+    """
+    val = _load_env("DEBUG", "AISTUDIO_DEBUG", "AISTUDIO_DUMP_REQUESTS")
+    if val is None:
+        return False
+    return val.strip().lower() in ("1", "true", "yes", "on", "dump", "y", "t")
+
+
+def _is_debug_env_set() -> bool:
+    return _load_env("DEBUG", "AISTUDIO_DEBUG", "AISTUDIO_DUMP_REQUESTS") is not None
+
+
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_DATA_DIR = _PROJECT_ROOT / "data"
 _DEFAULT_CONFIG_PATH = _PROJECT_ROOT / "config.yaml"
@@ -73,7 +88,6 @@ def resolve_config_file(config_path: str | os.PathLike[str] | None = None) -> Pa
     if override:
         return Path(override)
     return _DEFAULT_CONFIG_PATH
-
 
 
 def resolve_data_dir() -> Path:
@@ -110,6 +124,7 @@ def resolve_rotator_state_file() -> Path:
 _AUTH_SEARCH_ROOTS = [
     _DEFAULT_DATA_DIR,  # 项目内 data/ 目录
 ]
+
 
 def discover_auth_file() -> str | None:
     override = os.getenv("AISTUDIO_AUTH_FILE")
@@ -182,6 +197,32 @@ def build_browser_proxy(proxy_url: str | None) -> dict[str, str] | None:
     return proxy
 
 
+def resolve_timezone() -> str:
+    """解析系统或配置时区（优先使用 AISTUDIO_TIMEZONE 环境变量）。"""
+    override = os.getenv("AISTUDIO_TIMEZONE")
+    if override and override.strip():
+        return override.strip()
+    try:
+        from datetime import datetime
+
+        tz = datetime.now().astimezone().tzinfo
+        if tz:
+            tz_str = str(tz)
+            if "/" in tz_str:
+                return tz_str
+    except Exception:
+        pass
+    return "America/Los_Angeles"
+
+
+def resolve_locale() -> str:
+    """解析系统或配置语言环境（优先使用 AISTUDIO_LOCALE 环境变量）。"""
+    override = os.getenv("AISTUDIO_LOCALE")
+    if override and override.strip():
+        return override.strip()
+    return "en-US"
+
+
 @dataclass(slots=True)
 class Settings:
     port: int = int(os.getenv("AISTUDIO_PORT", "8080"))
@@ -199,7 +240,9 @@ class Settings:
     timeout_replay: int = int(os.getenv("AISTUDIO_TIMEOUT_REPLAY", "120"))
     timeout_stream: int = int(os.getenv("AISTUDIO_TIMEOUT_STREAM", "120"))
     timeout_capture: int = int(os.getenv("AISTUDIO_TIMEOUT_CAPTURE", "30"))
-    snapshot_cache_ttl: int = int(os.getenv("AISTUDIO_SNAPSHOT_CACHE_TTL", "3600"))
+    snapshot_cache_ttl: int = int(os.getenv("AISTUDIO_SNAPSHOT_CACHE_TTL", "900"))
+    timezone: str = resolve_timezone()
+    locale: str = resolve_locale()
     snapshot_cache_max: int = int(os.getenv("AISTUDIO_SNAPSHOT_CACHE_MAX", "100"))
     dump_raw_response: bool = os.getenv("AISTUDIO_DUMP_RAW_RESPONSE", "0") in (
         "1",
@@ -217,6 +260,9 @@ class Settings:
     persist_stats: bool = _load_bool_env("AISTUDIO_PERSIST_STATS", default=True)
     persist_rotator: bool = _load_bool_env("AISTUDIO_PERSIST_ROTATOR", default=True)
     account_max_retries: int = int(os.getenv("AISTUDIO_ACCOUNT_MAX_RETRIES", "3"))
+    dump_requests: bool = _load_dump_requests_env()
+    log_level: str = "INFO"
+
     @property
     def auth_enabled(self) -> bool:
         """网页管理端鉴权是否开启。"""

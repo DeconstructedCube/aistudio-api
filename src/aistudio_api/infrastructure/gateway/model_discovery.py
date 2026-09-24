@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 import uuid
 from typing import TYPE_CHECKING
@@ -19,8 +18,9 @@ from aistudio_api.infrastructure.account.cookie_parser import (
     DEFAULT_USER_AGENT,
     calculate_sapisid_hash,
 )
+from aistudio_api.infrastructure.utils.logger import get_logger
 
-logger = logging.getLogger("aistudio.model_discovery")
+logger = get_logger("model_discovery")
 
 # 本地保底默认模型列表（当网络未就绪或未配置账号时使用）
 _FALLBACK_MODELS = [
@@ -146,7 +146,7 @@ class ModelDiscoveryService:
                             )
                             return models
                 except Exception as e:
-                    logger.debug("Fetch models via page failed: %s", e)
+                    logger.debug("通过页面 XHR 拉取模型列表失败: %s", e)
 
             # 2. 次选通过直接 HTTP 协议拉取
             if cookies:
@@ -158,7 +158,7 @@ class ModelDiscoveryService:
                         logger.info("通过 HTTP RPC 动态更新了 %d 个模型", len(models))
                         return models
                 except Exception as e:
-                    logger.debug("Fetch models via HTTP failed: %s", e)
+                    logger.debug("通过 HTTP 协议拉取模型列表失败: %s", e)
 
             # 3. 保底返回本地默认模型列表
             if not self._cached_models:

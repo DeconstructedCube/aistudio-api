@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
-import os
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
@@ -34,8 +32,9 @@ from aistudio_api.infrastructure.browser.scripts import (
 )
 from aistudio_api.infrastructure.gateway.transport import XHRStreamTransport
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
+from aistudio_api.infrastructure.utils.logger import get_logger
 
-log = logging.getLogger("aistudio.session")
+log = get_logger("session")
 
 AI_STUDIO_URL = "https://aistudio.google.com/prompts/new_chat?model=gemini-3.7-flash"
 AI_STUDIO_URL_FALLBACK = "https://aistudio.google.com/app/prompts/new_chat"
@@ -56,6 +55,8 @@ def _is_login_page_url(url: str | None) -> bool:
         or "servicelogin" in u
         or "accountchooser" in u
     )
+
+
 DEFAULT_BOOTSTRAP_TEMPLATE = {
     "url": "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent",
     "headers": {
@@ -90,6 +91,7 @@ class BrowserSession:
         self._switch_event = asyncio.Event()
         self._switch_event.set()
         self._last_activity_time: float = time.time()
+
     def get_current_auth_user(self) -> str:
         """获取当前活跃账号的 auth_user 编号（0, 1, 2...）。"""
         if self._auth_file:
@@ -138,6 +140,7 @@ class BrowserSession:
                     await self._close_internal()
                     return True
         return False
+
     async def reload_current_account_cookies(self, page: CDPPage | None = None) -> bool:
         """重新清理并注入当前活跃账号的原始 auth.json Cookie。"""
         if not self._auth_file or not Path(self._auth_file).is_file():
@@ -153,8 +156,20 @@ class BrowserSession:
             data = json.loads(Path(self._auth_file).read_text(encoding="utf-8"))
             cookies = data.get("cookies") or []
             if cookies:
-                await target_page.set_cookies(cookies)
-            await self._goto_aistudio(target_page)
+                # 恢复登录重定向时剔除易冲突的旧 OSID / SIDCC，由 Google SSO 自然重新协商签发
+                cleaned_cookies = [
+                    c
+                    for c in cookies
+                    if str(c.get("name") or "")
+                    not in {
+                        "OSID",
+                        "__Secure-OSID",
+                        "SIDCC",
+                        "__Secure-1PSIDCC",
+                        "__Secure-3PSIDCC",
+                    }
+                ]
+                await target_page.set_cookies(cleaned_cookies or cookies)
             await self._install_hooks(target_page)
             if not _is_login_page_url(target_page.url):
                 log.info("Cookie 重新载入成功，会话已恢复: %s", self._auth_file)
@@ -170,6 +185,7 @@ class BrowserSession:
         if self._page is None or self._page.is_closed():
             return False
         return await self._page.is_alive(timeout_s=timeout_s)
+
     async def ensure_context(self) -> CDPPage:
         """Ensure Chromium process is running and CDPPage is connected and responsive."""
         async with self._lock:
@@ -228,11 +244,11 @@ class BrowserSession:
                             await self._page.evaluate(DOM_GC_CLEANUP_JS)
                         hot_switched = True
                         log.info(
-                            "[switch_auth] 账号热切成功，复用单进程 (auth_file=%s)",
+                            "账号热切成功，复用单进程 (auth_file=%s)",
                             auth_file,
                         )
                     except Exception as e:
-                        log.warning("[switch_auth] 账号热切失败，降级重启浏览器: %s", e)
+                        log.warning("账号热切失败，降级重启浏览器: %s", e)
 
                 if not hot_switched:
                     await self._close_internal()
@@ -311,7 +327,10 @@ class BrowserSession:
                 except Exception as err:
                     dbg_url = page.url or ""
                     if _is_login_page_url(dbg_url):
-                        log.warning("等待输入框期间检测到登录页重定向: %s，尝试重新注入 Cookie...", dbg_url)
+                        log.warning(
+                            "等待输入框期间检测到登录页重定向: %s，尝试重新注入 Cookie...",
+                            dbg_url,
+                        )
                         if await self.reload_current_account_cookies(page):
                             await page.wait_for_selector("textarea", timeout_s=15.0)
                         else:
@@ -349,15 +368,24 @@ class BrowserSession:
 
                 for i in range(45):
                     if self._proc is not None and not self._proc.is_alive():
-                        raise RuntimeError("Browser process died during BotGuard capture")
+                        raise RuntimeError(
+                            "Browser process died during BotGuard capture"
+                        )
                     if page.is_closed():
-                        raise RuntimeError("Browser page closed during BotGuard capture")
+                        raise RuntimeError(
+                            "Browser page closed during BotGuard capture"
+                        )
                     curr_url = page.url or ""
                     if _is_login_page_url(curr_url):
-                        log.warning("BotGuard 捕获期间检测到登录页重定向: %s，尝试重新注入 Cookie...", curr_url)
+                        log.warning(
+                            "BotGuard 捕获期间检测到登录页重定向: %s，尝试重新注入 Cookie...",
+                            curr_url,
+                        )
                         if await self.reload_current_account_cookies(page):
                             break
-                        raise SessionExpiredError(f"Cookie 认证失效，已跳转至登录页: {curr_url}")
+                        raise SessionExpiredError(
+                            f"Cookie 认证失效，已跳转至登录页: {curr_url}"
+                        )
                     await page.wait_for_timeout(1000)
                     if await page.evaluate("() => !!window.__bg_service"):
                         # 预热即刻截断：捕获到 BotGuardService 后立即停止生成，无需等待模型吐字
@@ -370,7 +398,9 @@ class BrowserSession:
                         with suppress(Exception):
                             await page.evaluate(DOM_GC_CLEANUP_JS)
                         log.debug(
-                            f"[timing] botguard captured after {i + 1}s, total {time.time() - t0:.1f}s"
+                            "BotGuard 捕获成功，耗时 %d 秒 (累计 %.1f 秒)",
+                            i + 1,
+                            time.time() - t0,
                         )
                         return page
                 raise RuntimeError("BotGuardService capture timeout")
@@ -413,7 +443,7 @@ class BrowserSession:
         try:
             await self._bootstrap_google_session(page)
         except Exception as e:
-            log.warning("[import_cookies] browser visit failed: %s", e)
+            log.warning("导入 Cookie 时访问页面失败: %s", e)
 
         try:
             browser_cookies = await page.get_cookies()
@@ -422,7 +452,7 @@ class BrowserSession:
                     auth_file=target_auth_file, cookies=browser_cookies
                 )
                 log.info(
-                    "[import_cookies] exported %d cookies from browser",
+                    "已从浏览器导出 %d 个 Cookie",
                     len(browser_cookies),
                 )
             else:
@@ -480,18 +510,27 @@ class BrowserSession:
 
                 for _ in range(30):
                     if self._proc is not None and not self._proc.is_alive():
-                        raise RuntimeError("Browser process died during template capture")
+                        raise RuntimeError(
+                            "Browser process died during template capture"
+                        )
                     if page.is_closed():
-                        raise RuntimeError("Browser page closed during template capture")
+                        raise RuntimeError(
+                            "Browser page closed during template capture"
+                        )
                     curr_url = page.url or ""
                     if _is_login_page_url(curr_url):
-                        log.warning("模板捕获期间检测到登录页重定向: %s，尝试重新注入 Cookie...", curr_url)
+                        log.warning(
+                            "模板捕获期间检测到登录页重定向: %s，尝试重新注入 Cookie...",
+                            curr_url,
+                        )
                         if await self.reload_current_account_cookies(page):
                             await page.fill("textarea", TEMPLATE_CAPTURE_PROMPT)
                             await page.wait_for_timeout(500)
                             await self._click_run_button(page)
                             continue
-                        raise SessionExpiredError(f"Cookie 认证失效，已跳转至登录页: {curr_url}")
+                        raise SessionExpiredError(
+                            f"Cookie 认证失效，已跳转至登录页: {curr_url}"
+                        )
                     await page.wait_for_timeout(1000)
                     if captured:
                         with suppress(Exception):
@@ -500,7 +539,7 @@ class BrowserSession:
                 if not captured:
                     if self._bootstrap_template:
                         log.warning(
-                            "Dynamic template capture for model=%s timed out; falling back to bootstrap template",
+                            "模型 %s 动态模板捕获超时，回退至引导模板",
                             model,
                         )
                         return dict(self._bootstrap_template)
@@ -561,9 +600,7 @@ class BrowserSession:
                 if snapshot and isinstance(snapshot, str) and len(snapshot) > 0:
                     return snapshot
             except Exception as e:
-                log.debug(
-                    "Async evaluate snapshot attempt %d failed: %s", attempt + 1, e
-                )
+                log.debug("异步计算快照第 %d 次尝试失败: %s", attempt + 1, e)
                 if attempt < 2:
                     await page.wait_for_timeout(300)
                     with suppress(Exception):
@@ -691,12 +728,12 @@ class BrowserSession:
             lambda: self._proc is None or self._proc.is_alive()
         )
         with suppress(Exception):
-            tz_id = os.getenv("AISTUDIO_TIMEZONE", "Asia/Tokyo")
+            tz_id = settings.timezone
             await self._page.cdp.send(
                 "Emulation.setTimezoneOverride", {"timezoneId": tz_id}
             )
             await self._page.cdp.send(
-                "Emulation.setLocaleOverride", {"locale": "en-US"}
+                "Emulation.setLocaleOverride", {"locale": settings.locale}
             )
         if self._auth_file and Path(self._auth_file).exists():
             try:
@@ -783,7 +820,7 @@ class BrowserSession:
                             or expected_match == "aistudio.google.com"
                         ):
                             log.debug(
-                                "page.goto encountered net::ERR_ABORTED but already on aistudio: %s",
+                                "页面导航被终止但已处于 AI Studio 域: %s",
                                 curr,
                             )
                         else:
@@ -806,7 +843,10 @@ class BrowserSession:
                         f"Google AI Studio 地区限制 (IP 漏了/不支持): {current_url}"
                     )
                 if _is_login_page_url(current_url):
-                    log.warning("访问 AI Studio 后检测到重定向至登录页: %s，尝试重新注入 Cookie...", current_url)
+                    log.warning(
+                        "访问 AI Studio 后检测到重定向至登录页: %s，尝试重新注入 Cookie...",
+                        current_url,
+                    )
                     if await self.reload_current_account_cookies(page):
                         return
                     raise SessionExpiredError(
@@ -827,7 +867,7 @@ class BrowserSession:
             except Exception as exc:
                 if "地区限制" in str(exc) or "Cookie 认证失败" in str(exc):
                     raise exc
-                log.debug("goto %s failed: %s", url, exc)
+                log.debug("访问 %s 失败: %s", url, exc)
                 last_exc = exc
         if last_exc is not None:
             raise last_exc

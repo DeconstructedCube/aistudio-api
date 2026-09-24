@@ -135,5 +135,7 @@ async def test_session_capture_template_breaks_on_dead_proc():
     session.ensure_botguard_service = AsyncMock(return_value=mock_page)
     session._click_run_button = AsyncMock(return_value=True)
 
-    with pytest.raises(RuntimeError, match="Browser process died during template capture"):
+    with pytest.raises(
+        RuntimeError, match="Browser process died during template capture"
+    ):
         await session.capture_template_flow("models/gemini-custom-uncached")

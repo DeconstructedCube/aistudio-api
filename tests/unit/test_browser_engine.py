@@ -41,6 +41,12 @@ def test_build_chromium_args_contains_stealth_and_mobile_optimizations():
     assert "--js-flags=--max-old-space-size=128" in args_str
     assert "--force-webrtc-ip-handling-policy=disable_non_proxied_udp" in args_str
     assert "--headless=new" in args_str
+    assert "--use-angle=swiftshader" in args_str
+    assert "--disable-software-rasterizer" not in args_str
+    assert "--disable-audio" not in args_str
+    assert "--mute-audio" in args_str
+    assert "--fingerprint-timezone=" in args_str
+    assert "--fingerprint-locale=" in args_str
 
 
 def test_find_chromium_executable_locates_binary():
@@ -63,11 +69,16 @@ def test_build_chromium_args_low_memory_optimizations():
 
 def test_cleanup_stale_chromium_skips_active_api_server():
     """Verify cleanup_stale_chromium strictly protects browsers owned by running API instances."""
-    with patch(
-        "aistudio_api.infrastructure.browser.browser_engine._is_active_api_server",
-        return_value=True,
+    with (
+        patch(
+            "aistudio_api.infrastructure.browser.browser_engine._is_active_api_server",
+            return_value=True,
+        ),
+        patch(
+            "aistudio_api.infrastructure.browser.browser_engine._is_port_in_use",
+            return_value=False,
+        ),
     ):
-        # Even if port is requested, active API server's children must not be killed
         killed = cleanup_stale_chromium(port=9222)
         assert isinstance(killed, list)
 
@@ -85,3 +96,22 @@ def test_spawn_process_watchdog_creates_pipe_and_reaps():
         os.close(pipe_w)
         watcher.wait(timeout=2.0)
         assert watcher.poll() is not None
+
+
+def test_build_chromium_args_platform_and_timezone():
+    """Verify stealth platform spoofing and timezone override flags."""
+    args = build_chromium_args(
+        port=9222,
+        timezone="America/New_York",
+        locale="en-US",
+    )
+    args_str = " ".join(args)
+    assert "--fingerprint-timezone=America/New_York" in args_str
+    assert "--fingerprint-locale=en-US" in args_str
+    # On non-Darwin hosts, platform defaults to windows
+    import platform
+
+    if platform.system() != "Darwin":
+        assert "--fingerprint-platform=windows" in args_str
+    else:
+        assert "--fingerprint-platform=macos" in args_str

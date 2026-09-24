@@ -88,7 +88,8 @@ setup_termux() {
             libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 \
             libxfixes3 libxext6 libxrender1 libx11-6 libxcb1 \
             libatk-bridge2.0-0 libatk1.0-0 libatspi2.0-0 \
-            libgtk-3-0 libnotify4 fonts-liberation libpangocairo-1.0-0
+            libgtk-3-0 libnotify4 fonts-liberation libpangocairo-1.0-0 \
+            fonts-noto-color-emoji fonts-freefont-ttf fonts-unifont fonts-wqy-zenhei
         apt-get clean
         rm -rf /var/lib/apt/lists/*
     '

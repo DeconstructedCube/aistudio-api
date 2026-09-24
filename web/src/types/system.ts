@@ -6,6 +6,21 @@ export interface SystemConfig {
   auth_enabled: boolean
   snapshot_cache_ttl: number
   yaml_content: string
+  log_level?: string
+  dump_requests?: boolean
+  debug_env_active?: boolean
+}
+
+export interface UpdateLoggingConfigRequest {
+  level?: string
+  dump_requests?: boolean
+}
+
+export interface UpdateLoggingConfigResponse {
+  ok: boolean
+  log_level: string
+  dump_requests: boolean
+  debug_env_active: boolean
 }
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,7 +12,9 @@ if TYPE_CHECKING:
     )
     from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
     from aistudio_api.infrastructure.gateway.session import BrowserSession
-logger = logging.getLogger("aistudio.account")
+from aistudio_api.infrastructure.utils.logger import get_logger
+
+logger = get_logger("account")
 
 
 class AccountService:

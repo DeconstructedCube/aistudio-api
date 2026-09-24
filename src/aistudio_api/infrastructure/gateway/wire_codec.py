@@ -5,10 +5,9 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
-import os
 from pathlib import Path
 
-from aistudio_api.config import DEFAULT_TEXT_MODEL
+from aistudio_api.config import DEFAULT_TEXT_MODEL, settings
 
 from .model_defaults import resolve_model_defaults
 from .wire_types import (
@@ -207,7 +206,7 @@ class AistudioWireCodec:
         else:
             if request.tools or request.location is not None:
                 self._ensure_len(body, self.TIMEZONE_INDEX + 1)
-                tz_str = os.getenv("AISTUDIO_TIMEZONE", "Asia/Tokyo")
+                tz_str = settings.timezone
                 body[self.TIMEZONE_INDEX] = request.location or [
                     [None, None, tz_str],
                     None,

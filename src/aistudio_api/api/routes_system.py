@@ -20,6 +20,9 @@ from aistudio_api.infrastructure.gateway.model_defaults import (
     _resolve_config_path,
     invalidate_config_cache,
 )
+from aistudio_api.infrastructure.utils.logger import get_logger
+
+logger = get_logger("routes.system")
 
 if TYPE_CHECKING:
     from aistudio_api.api.state import RuntimeState
@@ -114,6 +117,7 @@ async def clear_cooldown(
         rotator.clear_cooldown(req.account_id, model=req.model)
     else:
         rotator.clear_all_cooldowns()
+    logger.info("已清除冷却锁定: 账号=%s, 模型=%s", req.account_id, req.model)
 
     return {"ok": True, "accounts": rotator.get_all_stats()}
 
@@ -159,6 +163,7 @@ async def force_next_account(
     if result is None:
         raise HTTPException(500, detail="切换失败")
 
+    logger.info("已强制切换至下一可用账号: %s (%s)", result.id, result.name)
     return {
         "ok": True,
         "account": {
@@ -180,6 +185,11 @@ class ConfigYamlUpdateRequest(BaseModel):
 async def get_system_config() -> dict[str, object]:
     """获取系统运行配置与 config.yaml 内容。"""
     from aistudio_api.config import settings
+    from aistudio_api.infrastructure.utils.logger import (
+        get_log_level,
+        is_debug_env_active,
+        is_dump_requests_enabled,
+    )
 
     config_yaml_path = _resolve_config_path(None)
     yaml_content = ""
@@ -194,6 +204,9 @@ async def get_system_config() -> dict[str, object]:
         "auth_enabled": settings.auth_enabled,
         "snapshot_cache_ttl": settings.snapshot_cache_ttl,
         "yaml_content": yaml_content,
+        "log_level": get_log_level(),
+        "dump_requests": is_dump_requests_enabled(),
+        "debug_env_active": is_debug_env_active(),
     }
 
 
@@ -211,9 +224,63 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
     try:
         config_yaml_path.write_text(req.yaml_content, encoding="utf-8")
         invalidate_config_cache()
+
+        if isinstance(parsed, dict) and "logging" in parsed:
+            raw_logging = parsed["logging"]
+            if isinstance(raw_logging, dict):
+                from aistudio_api.infrastructure.utils.logger import (
+                    set_dump_requests,
+                    set_log_level,
+                )
+
+                if "level" in raw_logging:
+                    set_log_level(str(raw_logging["level"]))
+                if "dump_requests" in raw_logging:
+                    set_dump_requests(bool(raw_logging["dump_requests"]))
+
+        logger.info("配置文件 config.yaml 已更新并重新加载")
         return {"ok": True, "message": "配置已保存并重载"}
     except Exception as e:
         raise HTTPException(500, detail=f"写入配置文件失败: {e}") from e
+
+
+class LoggingConfigRequest(BaseModel):
+    level: str | None = None
+    dump_requests: bool | None = None
+
+
+@protected_router.put("/config/logging")
+async def update_logging_config(req: LoggingConfigRequest) -> dict[str, object]:
+    """更新系统日志级别与请求转储配置，并持久化到 config.yaml。"""
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        update_configured_logging_settings,
+    )
+    from aistudio_api.infrastructure.utils.logger import (
+        get_log_level,
+        is_debug_env_active,
+        is_dump_requests_enabled,
+        set_dump_requests,
+        set_log_level,
+    )
+
+    if req.level is not None:
+        set_log_level(req.level)
+    if req.dump_requests is not None:
+        set_dump_requests(req.dump_requests)
+
+    update_configured_logging_settings(level=req.level, dump_requests=req.dump_requests)
+    logger.info(
+        "日志配置已更新: 级别=%s, 请求转储=%s",
+        req.level,
+        req.dump_requests,
+    )
+
+    return {
+        "ok": True,
+        "log_level": get_log_level(),
+        "dump_requests": is_dump_requests_enabled(),
+        "debug_env_active": is_debug_env_active(),
+    }
 
 
 # ========== API Key 备注与密钥管理 ==========
@@ -297,6 +364,7 @@ async def create_api_key(req: CreateApiKeyRequest) -> ApiKeyItemModel:
     )
     invalidate_config_cache()
 
+    logger.info("已创建新 API Key: 备注=%s, 密钥=%s", name, new_key[:8] + "...")
     return ApiKeyItemModel(name=name, key=new_key, created_at=created_at)
 
 
@@ -339,6 +407,7 @@ async def delete_api_key(key_value: str) -> dict[str, bool]:
     )
     invalidate_config_cache()
 
+    logger.info("已删除 API Key: %s", key_value[:8] + "...")
     return {"ok": True}
 
 
@@ -386,5 +455,6 @@ async def update_api_key_name(
         yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
     invalidate_config_cache()
+    logger.info("API Key 备注名已更新: %s -> %s", key_value[:8] + "...", new_name)
 
     return updated_item

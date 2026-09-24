@@ -147,3 +147,25 @@ def test_parse_text_output_handles_double_wrapped_chunk_bundle():
     assert isinstance(details, dict)
     assert details.get("reasoning_tokens") == 5
     assert output.response_id == "resp_test"
+
+
+def test_stream_parser_extracts_chunk_from_fragmented_input():
+    parser = IncrementalJSONStreamParser()
+    pieces = ['[[[null,"he', 'llo"]]]']
+
+    chunks = []
+    for piece in pieces:
+        chunks.extend(list(parser.feed(piece)))
+
+    assert chunks == [[None, "hello"]]
+
+
+def test_stream_parser_handles_fragmented_xssi_preamble():
+    parser = IncrementalJSONStreamParser()
+    pieces = [")]", "}'\n", '[[[null,"hello"]]]']
+
+    chunks = []
+    for piece in pieces:
+        chunks.extend(list(parser.feed(piece)))
+
+    assert chunks == [[None, "hello"]]

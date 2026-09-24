@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from dataclasses import dataclass
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL
@@ -12,8 +11,9 @@ from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
 from aistudio_api.infrastructure.gateway.session import BrowserSession
 from aistudio_api.infrastructure.gateway.wire_codec import modify_body
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
+from aistudio_api.infrastructure.utils.logger import get_logger
 
-logger = logging.getLogger("aistudio")
+logger = get_logger("capture")
 
 
 @dataclass

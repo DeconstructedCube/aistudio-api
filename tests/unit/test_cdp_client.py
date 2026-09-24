@@ -177,6 +177,7 @@ async def test_cdp_page_is_alive():
     conn.send.side_effect = RuntimeError("CDP closed")
     assert await page.is_alive(timeout_s=0.5) is False
 
+
 @pytest.mark.asyncio
 async def test_cdp_connection_fast_fail_on_target_crashed():
     """Verify Target.targetCrashed immediately rejects pending futures without 30s delay."""
@@ -192,6 +193,7 @@ async def test_cdp_connection_fast_fail_on_target_crashed():
 
     with pytest.raises(RuntimeError, match=r"Target\.targetCrashed"):
         await conn.send("Runtime.evaluate", {"expression": "test"}, timeout_s=30.0)
+
 
 @pytest.mark.asyncio
 async def test_cdp_connection_liveness_checker_fail_fast():
@@ -225,11 +227,16 @@ async def test_cdp_client_connect_page_success_and_prune():
     ]
     client.get_targets = AsyncMock(return_value=fake_targets)
 
-    with patch("aistudio_api.infrastructure.browser.cdp_client.CDPConnection") as mock_conn_cls:
+    with patch(
+        "aistudio_api.infrastructure.browser.cdp_client.CDPConnection"
+    ) as mock_conn_cls:
         mock_conn = MagicMock()
         mock_conn.connect = AsyncMock()
         mock_conn_cls.return_value = mock_conn
 
-        with patch("aistudio_api.infrastructure.browser.cdp_client.CDPPage.init_domains", new_callable=AsyncMock):
+        with patch(
+            "aistudio_api.infrastructure.browser.cdp_client.CDPPage.init_domains",
+            new_callable=AsyncMock,
+        ):
             page = await client.connect_page(block_assets=True)
             assert page.target_id == "t1"

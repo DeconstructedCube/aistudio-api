@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -18,7 +17,11 @@ if TYPE_CHECKING:
     from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
     from aistudio_api.infrastructure.gateway.client import AIStudioClient
 
-logger = logging.getLogger("aistudio.state")
+from aistudio_api.infrastructure.utils.logger import get_logger
+
+logger = get_logger("state")
+
+
 @dataclass
 class ModelStatsItem:
     requests: int = 0
@@ -66,7 +69,9 @@ class RuntimeState:
                             prompt_tokens=int(item.get("prompt_tokens", 0)),
                             completion_tokens=int(item.get("completion_tokens", 0)),
                             total_tokens=int(item.get("total_tokens", 0)),
-                            last_used=str(item["last_used"]) if item.get("last_used") else None,
+                            last_used=str(item["last_used"])
+                            if item.get("last_used")
+                            else None,
                         )
         except Exception as e:
             logger.warning("从 %s 读取模型统计失败: %s", stats_path, e)
@@ -77,13 +82,11 @@ class RuntimeState:
             return
         stats_path = resolve_stats_file()
         try:
-            payload = {
-                model: asdict(item)
-                for model, item in self.model_stats.items()
-            }
+            payload = {model: asdict(item) for model, item in self.model_stats.items()}
             atomic_write_json(stats_path, payload)
         except Exception as e:
             logger.warning("持久化模型统计到 %s 失败: %s", stats_path, e)
+
     def record(
         self,
         model: str,

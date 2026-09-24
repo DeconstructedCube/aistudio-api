@@ -192,6 +192,21 @@ model_defaults:
 """
     )
 
-    assert resolve_model_defaults("loose-model", config_path=config_path).drop_unsupported_params is True
-    assert resolve_model_defaults("strict-model", config_path=config_path).drop_unsupported_params is False
-    assert resolve_model_defaults("strict-override", config_path=config_path).drop_unsupported_params is True
+    assert (
+        resolve_model_defaults(
+            "loose-model", config_path=config_path
+        ).drop_unsupported_params
+        is True
+    )
+    assert (
+        resolve_model_defaults(
+            "strict-model", config_path=config_path
+        ).drop_unsupported_params
+        is False
+    )
+    assert (
+        resolve_model_defaults(
+            "strict-override", config_path=config_path
+        ).drop_unsupported_params
+        is True
+    )

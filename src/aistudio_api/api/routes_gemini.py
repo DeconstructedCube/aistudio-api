@@ -7,10 +7,12 @@ from fastapi import APIRouter, Depends
 from aistudio_api.api.response_models import GeminiGenerateContentResponse
 from aistudio_api.application.api_service import handle_gemini_generate_content
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
+from aistudio_api.infrastructure.utils.logger import get_logger
 
 from .dependencies import get_client
 from .schemas import GeminiGenerateContentRequest
 
+logger = get_logger("routes.gemini")
 router = APIRouter()
 
 
@@ -23,6 +25,7 @@ async def generate_content(
     req: GeminiGenerateContentRequest,
     client: AIStudioClient = Depends(get_client),
 ):
+    logger.info("Incoming Gemini generateContent request: model=%s", model_path)
     return await handle_gemini_generate_content(model_path, req, client, stream=False)
 
 
@@ -32,4 +35,5 @@ async def stream_generate_content(
     req: GeminiGenerateContentRequest,
     client: AIStudioClient = Depends(get_client),
 ):
+    logger.info("Incoming Gemini streamGenerateContent request: model=%s", model_path)
     return await handle_gemini_generate_content(model_path, req, client, stream=True)

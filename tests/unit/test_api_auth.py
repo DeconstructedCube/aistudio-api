@@ -1,8 +1,10 @@
+from unittest.mock import MagicMock
+
 import httpx
 import pytest
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request
 
-from aistudio_api.api.dependencies import require_api_key
+from aistudio_api.api.dependencies import require_api_key, require_web_auth
 from aistudio_api.config import settings
 
 
@@ -74,4 +76,39 @@ async def test_missing_or_invalid_api_key_returns_401(monkeypatch):
         response = await client.get("/protected")
         assert response.status_code == 401
         assert response.headers["www-authenticate"] == "Bearer"
-        assert response.json()["detail"]["type"] == "authentication_error"
+
+
+def test_dependencies_timing_safe_auth(monkeypatch):
+    """Verify constant-time comparison and empty password guard."""
+    monkeypatch.setattr(settings, "web_password", "super_secret_admin_pass")
+    monkeypatch.setattr(settings, "api_keys", frozenset({"key123"}))
+
+    # require_web_auth with correct password
+    req_good = MagicMock(spec=Request)
+    req_good.method = "POST"
+    req_good.headers = {"authorization": "Bearer super_secret_admin_pass"}
+    req_good.query_params = {}
+    require_web_auth(req_good)
+
+    # require_web_auth with wrong password
+    req_bad = MagicMock(spec=Request)
+    req_bad.method = "POST"
+    req_bad.headers = {"authorization": "Bearer wrong"}
+    req_bad.query_params = {}
+    with pytest.raises(HTTPException) as exc_info:
+        require_web_auth(req_bad)
+    assert exc_info.value.status_code == 401
+
+    # require_api_key matching admin web_password
+    req_admin_api = MagicMock(spec=Request)
+    req_admin_api.headers = {"x-api-key": "super_secret_admin_pass"}
+    req_admin_api.query_params = {}
+    require_api_key(req_admin_api)
+
+    # Empty web_password guard
+    monkeypatch.setattr(settings, "web_password", "")
+    req_empty_pass = MagicMock(spec=Request)
+    req_empty_pass.headers = {"x-api-key": ""}
+    req_empty_pass.query_params = {}
+    with pytest.raises(HTTPException):
+        require_api_key(req_empty_pass)

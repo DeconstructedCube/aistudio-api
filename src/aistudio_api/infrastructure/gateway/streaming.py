@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from collections.abc import AsyncGenerator
 from contextlib import suppress
 from pathlib import Path
@@ -20,8 +19,9 @@ from aistudio_api.infrastructure.gateway.wire_parser import (
     parse_response_chunk,
 )
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
+from aistudio_api.infrastructure.utils.logger import get_logger
 
-logger = logging.getLogger("aistudio")
+logger = get_logger("streaming")
 
 
 def _dump_stream_exchange(

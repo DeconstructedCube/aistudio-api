@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 from typing import ClassVar
 
@@ -34,8 +33,9 @@ from aistudio_api.infrastructure.gateway.wire_parser import (
     parse_text_output,
 )
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
+from aistudio_api.infrastructure.utils.logger import get_logger
 
-logger = logging.getLogger("aistudio")
+logger = get_logger("client")
 
 _snapshot_cache = SnapshotCache()
 

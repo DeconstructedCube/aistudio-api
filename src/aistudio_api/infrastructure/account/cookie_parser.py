@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import re
 import time
 import uuid
 from collections.abc import Iterable
 
-logger = logging.getLogger("aistudio.cookie_parser")
+from aistudio_api.infrastructure.utils.logger import get_logger
+
+logger = get_logger("cookie_parser")
 
 DEFAULT_API_KEY = "AIzaSyDdP816MREB3SkjZO04QXbjsigfcI0GWOs"
 DEFAULT_EXT_BIN = "CAESAUwwATgEQABQBGICSlBwAHgBkAEAmAEB"
@@ -27,9 +28,9 @@ _AUTH_COOKIE_NAMES = {
 }
 
 _DOMAIN_OVERRIDES: dict[str, list[str]] = {
-    "OSID": ["aistudio.google.com", ".google.com"],
-    "__Secure-OSID": ["aistudio.google.com", ".google.com"],
-    "__Secure-BUCKET": ["aistudio.google.com", ".google.com"],
+    "OSID": ["aistudio.google.com"],
+    "__Secure-OSID": ["aistudio.google.com"],
+    "__Secure-BUCKET": ["aistudio.google.com"],
     "OTZ": ["accounts.google.com"],
     "__Host-GAPS": ["accounts.google.com"],
     "__Host-1PLSID": ["accounts.google.com"],
@@ -41,6 +42,27 @@ _DOMAIN_OVERRIDES: dict[str, list[str]] = {
     "__Secure-1PSIDTS": [".google.com", "aistudio.google.com", "accounts.google.com"],
     "__Secure-3PSIDTS": [".google.com", "aistudio.google.com", "accounts.google.com"],
 }
+
+# 外部导入时可安全丢弃的遥测、易失效挑战及旧环境绑定的临时 Cookie。
+# 过滤这些 Cookie 既能让网页在当前 IP/环境重新自然协商下发全新凭据，
+# 又能精简内存与 Cookie 存储体积（尤其对 Android 低内存环境极为友好）：
+DISCARDABLE_IMPORT_COOKIE_NAMES: frozenset[str] = frozenset(
+    {
+        "_ga",
+        "_gid",
+        "_gat",
+        "_gcl_au",
+        "1P_JAR",
+        "DV",
+        "AEC",
+        "NID",
+        "SIDCC",
+        "__Secure-1PSIDCC",
+        "__Secure-3PSIDCC",
+        "OSID",
+        "__Secure-OSID",
+    }
+)
 
 
 def parse_raw_cookies(raw: object) -> dict[str, str]:
@@ -171,6 +193,7 @@ def build_google_cookie_list(
     pairs: Iterable[tuple[str, str]] | dict[str, str],
     *,
     allow_url_targets: bool = False,
+    discard_transient: bool = False,
 ) -> list[dict[str, object]]:
     """Build Playwright/CDP compatible cookies from name/value pairs."""
     now = int(time.time())
@@ -213,6 +236,11 @@ def build_google_cookie_list(
         else [(str(k), str(v)) for k, v in pairs]
     )
     for name, value in item_list:
+        if discard_transient and (
+            name in DISCARDABLE_IMPORT_COOKIE_NAMES
+            or name.startswith(("_ga_", "_gcl_"))
+        ):
+            continue
         targets = _DOMAIN_OVERRIDES.get(name)
         if not targets:
             targets = [".google.com"]
@@ -222,11 +250,15 @@ def build_google_cookie_list(
     return cookies
 
 
-def parse_cookie_string(raw: object) -> dict[str, object]:
+def parse_cookie_string(
+    raw: object, *, discard_transient: bool = True
+) -> dict[str, object]:
     """将任意格式 cookie 解析为 storage state dict，包含 cookies 和 origins 字段。"""
     cookie_dict = parse_raw_cookies(raw)
     return {
-        "cookies": build_google_cookie_list(cookie_dict, allow_url_targets=False),
+        "cookies": build_google_cookie_list(
+            cookie_dict, allow_url_targets=False, discard_transient=discard_transient
+        ),
         "origins": [],
     }
 
@@ -295,19 +327,19 @@ async def probe_google_accounts_infinite(
                         }
                     )
                     logger.info(
-                        "Probe u/%s succeeded (HTTP %d)", u_index, resp.status_code
+                        "子账号 u/%s 探活成功 (HTTP %d)", u_index, resp.status_code
                     )
                 elif resp.status_code == 401:
                     consecutive_failures += 1
-                    logger.debug("Probe u/%s returned 401 (unauthorized)", u_index)
+                    logger.debug("子账号 u/%s 探活返回 401 (未授权)", u_index)
                 else:
                     consecutive_failures += 1
                     logger.debug(
-                        "Probe u/%s returned HTTP %d", u_index, resp.status_code
+                        "子账号 u/%s 探活返回 HTTP %d", u_index, resp.status_code
                     )
             except Exception as e:
                 consecutive_failures += 1
-                logger.debug("Probe u/%s failed with error: %s", u_index, e)
+                logger.debug("子账号 u/%s 探活异常: %s", u_index, e)
 
             if consecutive_failures >= max_fails_in_a_row:
                 break

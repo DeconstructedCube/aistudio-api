@@ -16,7 +16,11 @@ def test_model_stats_persistence(tmp_path, monkeypatch):
     monkeypatch.setenv("AISTUDIO_PERSIST_STATS", "1")
 
     state1 = RuntimeState()
-    state1.record("gemini-3.7-flash", "success", {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30})
+    state1.record(
+        "gemini-3.7-flash",
+        "success",
+        {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+    )
     state1.record("gemini-3.7-flash", "rate_limited")
     state1.record("gemini-3.1-flash-image-preview", "errors")
 
@@ -45,15 +49,27 @@ def test_account_rotator_state_persistence(tmp_path, monkeypatch):
 
     mock_store = MagicMock(spec=AccountStore)
     mock_store.list_accounts.return_value = [
-        AccountMeta(id="acc_test1", name="Account 1", email="acc1@gmail.com", created_at="2026-09-21 00:00:00"),
-        AccountMeta(id="acc_test2", name="Account 2", email="acc2@gmail.com", created_at="2026-09-21 00:00:00"),
+        AccountMeta(
+            id="acc_test1",
+            name="Account 1",
+            email="acc1@gmail.com",
+            created_at="2026-09-21 00:00:00",
+        ),
+        AccountMeta(
+            id="acc_test2",
+            name="Account 2",
+            email="acc2@gmail.com",
+            created_at="2026-09-21 00:00:00",
+        ),
     ]
 
     rotator1 = AccountRotator(mock_store)
     rotator1.record_success("acc_test1", "gemini-3.7-flash")
     rotator1.record_rate_limited("acc_test1", "gemini-3.7-flash")
     rotator1.record_rate_limited("acc_test1", "gemini-3.7-flash")
-    rotator1.record_rate_limited("acc_test1", "gemini-3.7-flash")  # triggers 3rd 429 -> locks to midnight
+    rotator1.record_rate_limited(
+        "acc_test1", "gemini-3.7-flash"
+    )  # triggers 3rd 429 -> locks to midnight
     rotator1.record_auth_error("acc_test2", "gemini-3.7-flash", cooldown_seconds=600.0)
 
     assert rotator_file.is_file()

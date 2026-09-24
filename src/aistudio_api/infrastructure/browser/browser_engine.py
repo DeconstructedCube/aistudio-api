@@ -8,7 +8,6 @@ from __future__ import annotations
 import atexit
 import contextlib
 import hashlib
-import logging
 import os
 import platform
 import shutil
@@ -20,8 +19,9 @@ import time
 from pathlib import Path
 
 from aistudio_api.config import settings
+from aistudio_api.infrastructure.utils.logger import get_logger
 
-log = logging.getLogger("aistudio.browser")
+log = get_logger("browser")
 
 
 def _derive_stable_fingerprint_seed(key: str) -> int:
@@ -54,7 +54,7 @@ def _resolve_local_chrome(match: str) -> str:
     if _is_termux():
         wrapper = _find_wrapper_path()
         if wrapper:
-            log.debug("Termux host: routing %s through wrapper %s", match, wrapper)
+            log.debug("Termux 宿主: 路由 %s 至启动脚本 %s", match, wrapper)
             return wrapper
     return match
 
@@ -185,6 +185,8 @@ def build_chromium_args(
     headless: bool | None = None,
     stable_fingerprint_key: str | None = None,
     proxy_url: str | None = None,
+    timezone: str | None = None,
+    locale: str | None = None,
     extra_args: list[str] | None = None,
 ) -> list[str]:
     """Build optimized mobile/stealth CLI arguments for direct Chromium launch."""
@@ -200,12 +202,12 @@ def build_chromium_args(
         "--disable-gpu",
         "--disable-gpu-compositing",
         "--in-process-gpu",
-        "--disable-software-rasterizer",
+        "--use-gl=angle",
+        "--use-angle=swiftshader",
         "--renderer-process-limit=1",
         "--no-zygote",
         "--disable-breakpad",
         "--mute-audio",
-        "--disable-audio",
         "--disable-site-isolation-trials",
         "--js-flags=--max-old-space-size=128 --expose-gc --optimize-for-size",
         "--disk-cache-size=16777216",
@@ -260,10 +262,15 @@ def build_chromium_args(
         args.append(f"--fingerprint={fingerprint_seed}")
     if platform.system() == "Darwin":
         args.append("--fingerprint-platform=macos")
-    elif _is_termux() or platform.system() == "Linux":
-        args.append("--fingerprint-platform=linux")
     else:
+        # 遵循 CloakBrowser 官方反爬指纹规范：在 Linux / Termux / Docker 宿主上
+        # 统一伪装为受众最广、风控阈值最友好的 Windows 桌面指纹池
         args.append("--fingerprint-platform=windows")
+
+    effective_tz = timezone or settings.timezone
+    effective_locale = locale or settings.locale
+    args.append(f"--fingerprint-timezone={effective_tz}")
+    args.append(f"--fingerprint-locale={effective_locale}")
 
     if extra_args:
         args.extend(extra_args)
@@ -298,8 +305,7 @@ def _is_active_api_server(pid: int) -> bool:
                 .replace("\x00", " ")
             )
             if any(
-                k in cmd
-                for k in ("main.py server", "aistudio-api-server", "uvicorn")
+                k in cmd for k in ("main.py server", "aistudio-api-server", "uvicorn")
             ):
                 return True
     except Exception:
@@ -363,9 +369,7 @@ def cleanup_stale_chromium(
             try:
                 with Path(f"/proc/{pid}/cmdline").open("rb") as cf:
                     cmd = (
-                        cf.read()
-                        .decode("utf-8", errors="ignore")
-                        .replace("\x00", " ")
+                        cf.read().decode("utf-8", errors="ignore").replace("\x00", " ")
                     )
                 match_port = f"--remote-debugging-port={port}" in cmd
                 match_udd = bool(
@@ -413,12 +417,12 @@ def cleanup_stale_chromium(
                     ):
                         candidate_pids.add(pid)
             except Exception as e:
-                log.debug("Fallback process scan failed: %s", e)
+                log.debug("备用进程扫描失败: %s", e)
 
     killed_pids: list[int] = []
     if candidate_pids:
         log.info(
-            "Found %d stale/orphan browser process(es) to clean up: %s",
+            "发现 %d 个遗留或孤儿浏览器进程待清理: %s",
             len(candidate_pids),
             sorted(candidate_pids),
         )
@@ -433,7 +437,7 @@ def cleanup_stale_chromium(
             except (ProcessLookupError, PermissionError):
                 pass
             except Exception as e:
-                log.debug("SIGTERM failed for PID %d: %s", pid, e)
+                log.debug("向 PID %d 发送 SIGTERM 失败: %s", pid, e)
 
         # 2. Wait up to 1.0s for graceful shutdown
         deadline = time.time() + 1.0
@@ -458,7 +462,7 @@ def cleanup_stale_chromium(
             except (ProcessLookupError, PermissionError):
                 pass
             except Exception as e:
-                log.debug("SIGKILL failed for PID %d: %s", pid, e)
+                log.debug("向 PID %d 发送 SIGKILL 失败: %s", pid, e)
 
     # 4. Clean up stale Chromium lock files in user_data_dir
     if user_data_dir:
@@ -474,9 +478,9 @@ def cleanup_stale_chromium(
                 if lock_file.is_symlink() or lock_file.exists():
                     try:
                         lock_file.unlink()
-                        log.debug("Removed stale lock file: %s", lock_file)
+                        log.debug("已移除遗留锁文件: %s", lock_file)
                     except Exception as e:
-                        log.debug("Could not remove lock %s: %s", lock_file, e)
+                        log.debug("移除锁文件 %s 失败: %s", lock_file, e)
 
     # 5. Wait until port is verified free
     if _is_port_in_use(port):
@@ -541,7 +545,7 @@ def _spawn_process_watchdog(
         os.close(pipe_r)
         return watcher, pipe_w
     except Exception as e:
-        log.debug("Could not spawn watchdog companion: %s", e)
+        log.debug("创建浏览器守护进程失败: %s", e)
         return None, None
 
 
@@ -656,7 +660,7 @@ class ChromiumProcess:
                 except Exception:
                     self.process.kill()
             except Exception as e:
-                log.debug("Error terminating Chromium process on Windows: %s", e)
+                log.debug("Windows 下关闭 Chromium 异常: %s", e)
             return
 
         # POSIX (Linux, macOS, Termux, Docker)
@@ -685,7 +689,7 @@ class ChromiumProcess:
             with contextlib.suppress(Exception):
                 self.process.wait(timeout=1.0)
         except Exception as e:
-            log.debug("Error terminating Chromium process: %s", e)
+            log.debug("关闭 Chromium 异常: %s", e)
 
 
 def launch_chromium_process(
@@ -710,10 +714,12 @@ def launch_chromium_process(
         user_data_dir=user_data_dir,
         headless=headless,
         stable_fingerprint_key=user_data_dir,
+        timezone=settings.timezone,
+        locale=settings.locale,
         extra_args=extra_args,
     )
     cmd = [executable, *args]
-    log.info("Launching Chromium binary %s on port %d", executable, port)
+    log.info("正在启动 Chromium 浏览器进程: %s (调试端口 %d)", executable, port)
 
     preexec = _setup_child_pdeathsig if platform.system() != "Windows" else None
     proc = subprocess.Popen(

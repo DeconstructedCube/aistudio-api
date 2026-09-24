@@ -98,7 +98,6 @@ async def test_account_stats_pacific_midnight_reset():
     assert "gemini-2.5-pro" not in stats.model_rate_limited_dates
 
 
-
 @pytest.mark.asyncio
 async def test_account_stats_clear_cooldown_resets_counter():
     """测试手动清除冷却会重置 429 次数计数器，不会在下一次 429 时直接秒锁至午夜。"""
@@ -119,6 +118,7 @@ async def test_account_stats_clear_cooldown_resets_counter():
     stats.record_rate_limited(model="gemini-2.5-pro")
     rem = stats.get_cooldown_remaining("gemini-2.5-pro")
     assert 0 < rem <= 60.0
+
 
 @pytest.mark.asyncio
 async def test_rotator_sticky_mode():

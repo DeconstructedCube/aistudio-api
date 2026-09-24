@@ -272,6 +272,10 @@ def _profile_from_mapping(raw: dict[str, object]) -> ModelProfile:
 
 def _default_config() -> dict[str, object]:
     return {
+        "logging": {
+            "level": "INFO",
+            "dump_requests": False,
+        },
         "model_defaults": {
             "drop_unsupported_params": False,
             "profiles": [
@@ -310,10 +314,8 @@ def _default_config() -> dict[str, object]:
                 },
             ],
             "models": {},
-        }
+        },
     }
-
-
 
 
 _CONFIG_CACHE: dict[str, tuple[float, dict[str, object]]] = {}
@@ -478,3 +480,51 @@ def get_configured_api_keys(
 
     items = get_configured_api_key_items(config_path)
     return frozenset(item["key"] for item in items if item.get("key"))
+
+
+def get_configured_logging_settings(
+    config_path: str | os.PathLike[str] | None = None,
+) -> dict[str, object]:
+    """获取 config.yaml 中配置的 logging 设置。"""
+    resolved_path = _resolve_config_path(config_path)
+    config = _load_yaml_config(resolved_path)
+    raw_logging = config.get("logging")
+    if isinstance(raw_logging, dict):
+        return {
+            "level": str(raw_logging.get("level") or "INFO").strip().upper(),
+            "dump_requests": bool(raw_logging.get("dump_requests", False)),
+        }
+    return {
+        "level": "INFO",
+        "dump_requests": False,
+    }
+
+
+def update_configured_logging_settings(
+    level: str | None = None,
+    dump_requests: bool | None = None,
+    config_path: str | os.PathLike[str] | None = None,
+) -> dict[str, object]:
+    """更新 config.yaml 中的 logging 设置并刷新缓存。"""
+    resolved_path = _resolve_config_path(config_path)
+    content = (
+        resolved_path.read_text(encoding="utf-8") if resolved_path.exists() else ""
+    )
+    parsed = yaml.safe_load(content) or {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+
+    raw_logging = parsed.get("logging")
+    logging_dict = dict(raw_logging) if isinstance(raw_logging, dict) else {}
+    if level is not None:
+        logging_dict["level"] = level.strip().upper()
+    if dump_requests is not None:
+        logging_dict["dump_requests"] = dump_requests
+
+    parsed["logging"] = logging_dict
+    resolved_path.write_text(
+        yaml.dump(parsed, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    invalidate_config_cache()
+    return logging_dict

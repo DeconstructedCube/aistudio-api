@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import logging
-
 from aistudio_api.config import settings
 from aistudio_api.infrastructure.gateway.capture import CapturedRequest
 from aistudio_api.infrastructure.gateway.session import BrowserSession
+from aistudio_api.infrastructure.utils.logger import get_logger
 
-logger = logging.getLogger("aistudio")
+logger = get_logger("replay")
 
 
 class RequestReplayService:
@@ -49,5 +48,5 @@ class RequestReplayService:
                 )
                 return resp.status_code, resp.content
         except Exception as exc:
-            logger.error("Replay error: %s", exc)
+            logger.error("请求重放异常: %s", exc)
             return 0, str(exc).encode()

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 import time
 
-log = logging.getLogger("aistudio.cookie_refresher")
+from aistudio_api.infrastructure.account.cookie_parser import (
+    DISCARDABLE_IMPORT_COOKIE_NAMES,
+)
+from aistudio_api.infrastructure.utils.logger import get_logger
+
+log = get_logger("cookie_refresher")
 
 # Keep browser injection behavior close to the original implementation that was
 # known to produce a working login session after the browser visited Google.
@@ -23,14 +27,15 @@ AUTH_COOKIE_NAMES = {
 
 
 def _should_skip_browser_injection(name: str) -> bool:
-    """Skip cookies that CDP rejects when we force a Domain attribute.
+    """Skip cookies that CDP rejects or that pollute fresh session negotiation.
 
-    We intentionally keep the broad ``.google.com`` injection strategy because it
-    was the last known-good login path. The only cookies we must exclude are
-    ``__Host-*`` cookies, which are required to be host-only and therefore cause
-    ``Storage.setCookies: Invalid cookie fields`` if we attach ``domain``.
+    1. __Host-* cookies must be excluded because attaching domain causes CDP rejection.
+    2. Transient/telemetry/stale challenge cookies are skipped so the browser can negotiate
+       fresh origin-bound tokens under the current network and TLS fingerprint.
     """
-    return name.startswith("__Host-")
+    if name.startswith("__Host-"):
+        return True
+    return name in DISCARDABLE_IMPORT_COOKIE_NAMES or name.startswith(("_ga_", "_gcl_"))
 
 
 def _parse_cookie_string(raw: str) -> dict[str, str]:
@@ -49,7 +54,7 @@ def _refresh_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
     try:
         from curl_cffi import requests
     except ImportError:
-        log.warning("curl_cffi not installed, returning cookies as-is")
+        log.warning("未安装 curl_cffi，保持原始 Cookie 返回")
         return dict(cookies)
 
     session = requests.Session()
@@ -63,13 +68,13 @@ def _refresh_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
             timeout=15,
             allow_redirects=True,
         )
-        log.debug("GET ServiceLogin: %d", resp.status_code)
+        log.debug("Google ServiceLogin 探活响应: HTTP %d", resp.status_code)
     except Exception as e:
-        log.warning("Failed to refresh session cookies: %s", e)
+        log.warning("刷新会话 Cookie 失败: %s", e)
         return dict(cookies)
 
     all_cookies = dict(session.cookies)
-    log.info("Refreshed cookies: %d total", len(all_cookies))
+    log.info("会话 Cookie 刷新完成: 共 %d 个", len(all_cookies))
     return all_cookies
 
 
@@ -105,15 +110,15 @@ def load_cookies_from_string(cookie_string: str) -> list[dict[str, object]]:
             }
         )
     log.info(
-        "[cookie_string] raw=%d refreshed=%d merged=%d",
+        "Cookie 合并完成: 原始=%d, 刷新=%d, 合并后=%d",
         len(parsed),
         len(refreshed),
         len(merged),
     )
     if skipped_names:
         log.info(
-            "[cookie_string] skipped host-only cookies for browser injection: %s",
+            "跳过 Host-only Cookie 注入: %s",
             sorted(skipped_names),
         )
-    log.info("[cookie_string] parsed %d cookies", len(cookies))
+    log.info("Cookie 解析完成，共 %d 个有效凭据", len(cookies))
     return cookies

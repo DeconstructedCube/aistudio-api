@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -20,7 +19,9 @@ from aistudio_api.infrastructure.account.cookie_parser import parse_cookie_strin
 if TYPE_CHECKING:
     from aistudio_api.api.state import RuntimeState
     from aistudio_api.application.account_service import AccountService
-log = logging.getLogger("aistudio.routes_accounts")
+from aistudio_api.infrastructure.utils.logger import get_logger
+
+log = get_logger("accounts")
 
 router = APIRouter(prefix="/accounts")
 
@@ -139,6 +140,7 @@ async def activate_account(
     )
     if account is None:
         raise HTTPException(status_code=404, detail="账号不存在或切换失败")
+    log.info("Account activated manually: %s (%s)", account.id, account.name)
     return AccountResponse(
         id=account.id,
         name=account.name,
@@ -160,6 +162,7 @@ async def delete_account(
     success = account_service.delete_account(account_id)
     if not success:
         raise HTTPException(status_code=404, detail="账号不存在")
+    log.info("Account deleted: %s", account_id)
     return {"ok": True}
 
 
@@ -175,6 +178,7 @@ async def delete_cookie_group(
         acc_cid = getattr(a, "cookie_id", None) or f"cookie_{a.created_at[:16]}"
         if acc_cid == cookie_id and account_service.delete_account(a.id):
             deleted_count += 1
+            log.info("Deleted sub-account %s in group %s", a.id, cookie_id)
     return {"deleted": deleted_count}
 
 
@@ -188,6 +192,7 @@ async def update_account(
     account = account_service.update_account(account_id, req.name)
     if account is None:
         raise HTTPException(status_code=404, detail="账号不存在")
+    log.info("Account updated: %s -> %s", account.id, req.name)
     return AccountResponse(
         id=account.id,
         name=account.name,
@@ -244,9 +249,9 @@ async def import_cookies(
                 req.cookies,
                 auth_file=str(auth_path) if auth_path else None,
             )
-            log.info("[import-cookies] injected %d cookies, saved auth.json", count)
+            log.info("Injected %d cookies, saved auth.json for %s", count, account.name)
     except Exception as e:
-        log.warning("[import-cookies] browser injection failed: %s", e)
+        log.warning("Browser cookie injection failed for %s: %s", account.name, e)
 
     return ImportCookiesResponse(
         account_id=account.id,
@@ -297,6 +302,7 @@ async def probe_and_import(
         for account in metas
     ]
 
+    log.info("Probe and import completed: imported %d accounts", len(imported_accounts))
     return ProbeAndImportResponse(
         imported_count=len(imported_accounts),
         accounts=imported_accounts,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
@@ -34,8 +33,9 @@ from aistudio_api.domain.errors import (
     UsageLimitExceeded,
 )
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
+from aistudio_api.infrastructure.utils.logger import get_logger
 
-logger = logging.getLogger("aistudio.server")
+logger = get_logger("api.gemini")
 
 
 def classify_gemini_error_payload(exc: Exception) -> tuple[int, str, str]:
@@ -156,9 +156,7 @@ async def handle_attempt_exception(
                 target_model,
             )
             return True
-        logger.warning(
-            "全部账号在模型 %s 上均处于冷却状态", target_model
-        )
+        logger.warning("全部账号在模型 %s 上均处于冷却状态", target_model)
         raise HTTPException(
             429,
             detail={
@@ -207,15 +205,15 @@ async def handle_attempt_exception(
     if isinstance(exc, AistudioError):
         runtime_state.record(target_model, "errors")
         record_rotator_event("error", model=target_model)
-        logger.warning("Gemini error: %s", exc)
+        logger.warning("Gemini 服务端异常: %s", exc)
         raise HTTPException(
             500, detail={"message": str(exc), "type": "server_error"}
         ) from exc
 
     runtime_state.record(target_model, "errors")
     record_rotator_event("error", model=target_model)
-    logger.error("Gemini unexpected error: %s", exc)
-    logger.debug("Gemini error details:", exc_info=True)
+    logger.error("Gemini 未知严重异常: %s", exc)
+    logger.debug("Gemini 异常堆栈详情:", exc_info=True)
     raise HTTPException(
         500, detail={"message": str(exc), "type": "server_error"}
     ) from exc
@@ -240,7 +238,7 @@ async def handle_gemini_generate_content(
         try:
             normalized = normalize_gemini_request(req, model_path)
             logger.info(
-                "Gemini: model=%s, contents=%s, stream=False, attempt=%d",
+                "Gemini 生成请求: model=%s, 对话轮数=%s, 流式=否, 尝试第 %d 次",
                 normalized.model,
                 len(req.contents),
                 attempt + 1,
@@ -263,6 +261,12 @@ async def handle_gemini_generate_content(
 
             record_rotator_event("success", model=normalized.model)
             runtime_state.record(normalized.model, "success", output.usage)
+            logger.info(
+                "Gemini 生成完成: model=%s, 输入Tokens=%s, 输出Tokens=%s",
+                normalized.model,
+                output.usage.get("prompt_tokens") if output.usage else 0,
+                output.usage.get("completion_tokens") if output.usage else 0,
+            )
             return GeminiGenerateContentResponse(
                 candidates=[
                     GeminiCandidateResponse(
@@ -396,7 +400,7 @@ def _build_gemini_streaming_response(
             await ensure_active_account(0, model=model_path)
             normalized = normalize_gemini_request(req, model_path)
             logger.info(
-                "Gemini stream: model=%s, contents=%s",
+                "Gemini 流式请求: model=%s, 对话轮数=%s",
                 normalized.model,
                 len(req.contents),
             )
@@ -446,6 +450,12 @@ def _build_gemini_streaming_response(
             record_rotator_event("success", model=target_model)
             if normalized is not None:
                 runtime_state.record(normalized.model, "success", final_usage)
+            logger.info(
+                "Gemini 流式完成: model=%s, 输入Tokens=%s, 输出Tokens=%s",
+                target_model,
+                final_usage.get("prompt_tokens") if final_usage else 0,
+                final_usage.get("completion_tokens") if final_usage else 0,
+            )
             yield format_sse_usage(final_usage)
         except Exception as exc:
             yield format_sse_error(exc)

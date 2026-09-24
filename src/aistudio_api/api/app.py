@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,6 +12,15 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
+from aistudio_api.infrastructure.gateway.model_defaults import (
+    get_configured_logging_settings,
+)
+from aistudio_api.infrastructure.utils.logger import (
+    dump_request_exchange,
+    get_logger,
+    is_dump_requests_enabled,
+    setup_logging,
+)
 
 from .dependencies import require_api_key, require_web_auth
 from .routes_accounts import router as accounts_router
@@ -24,10 +32,9 @@ from .routes_system import (
 )
 from .state import runtime_state
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s", datefmt="%H:%M:%S"
-)
-logger = logging.getLogger("aistudio.server")
+_log_cfg = get_configured_logging_settings()
+setup_logging(str(_log_cfg.get("level", "INFO")))
+logger = get_logger("server")
 
 
 @asynccontextmanager
@@ -120,6 +127,110 @@ app.include_router(system_protected_router, dependencies=[Depends(require_web_au
 app.include_router(accounts_router, dependencies=[Depends(require_web_auth)])
 app.include_router(gemini_router, dependencies=[Depends(require_api_key)])
 app.include_router(models_router, dependencies=[Depends(require_api_key)])
+
+
+@app.middleware("http")
+async def logging_and_dump_middleware(request, call_next):
+    """统一请求生命周期日志与请求转储 (DEBUG) 中间件。"""
+    import secrets
+    import time
+
+    start_time = time.perf_counter()
+    req_id = f"req_{secrets.token_hex(4)}"
+    path = request.url.path
+
+    is_static = path.startswith(("/static", "/assets")) or path in ("/favicon.ico",)
+    dump_enabled = is_dump_requests_enabled() and not is_static
+
+    body_text = None
+    if dump_enabled:
+        try:
+            body_bytes = await request.body()
+            body_text = body_bytes.decode("utf-8", errors="replace")
+        except Exception:
+            body_text = "(failed to read request body)"
+
+    client_str = (
+        f"{request.client.host}:{request.client.port}" if request.client else "unknown"
+    )
+    headers_dict = dict(request.headers)
+    query_dict = dict(request.query_params)
+
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        if dump_enabled:
+            dump_request_exchange(
+                req_id=req_id,
+                method=request.method,
+                url=str(request.url),
+                client=client_str,
+                headers=headers_dict,
+                query_params=query_dict,
+                body_text=body_text,
+                status_code=500,
+                elapsed_ms=elapsed_ms,
+                response_text=f"Internal Server Error (Exception: {exc})",
+            )
+        else:
+            logger.error(
+                "HTTP %s %s -> 500 (%.1fms, %s)",
+                request.method,
+                path,
+                elapsed_ms,
+                exc,
+            )
+        raise exc
+
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    content_type = response.headers.get("content-type", "")
+    is_event_stream = "text/event-stream" in content_type
+
+    if dump_enabled:
+        resp_text = None
+        if is_event_stream:
+            resp_text = "(streaming response in progress)"
+        else:
+            try:
+                # 读取非流式响应体并重构 iterator 以便正常返回给客户端
+                chunks = [chunk async for chunk in response.body_iterator]
+                resp_bytes = b"".join(chunks)
+                resp_text = resp_bytes.decode("utf-8", errors="replace")
+
+                async def _replay_iterator():
+                    for c in chunks:
+                        yield c
+
+                response.body_iterator = _replay_iterator()
+            except Exception:
+                resp_text = "(failed to read response body)"
+
+        dump_request_exchange(
+            req_id=req_id,
+            method=request.method,
+            url=str(request.url),
+            client=client_str,
+            headers=headers_dict,
+            query_params=query_dict,
+            body_text=body_text,
+            status_code=response.status_code,
+            elapsed_ms=elapsed_ms,
+            response_headers=dict(response.headers),
+            response_text=resp_text,
+            is_stream=is_event_stream,
+        )
+    elif not is_static:
+        logger.info(
+            "HTTP %s %s -> %d (%.1fms)",
+            request.method,
+            path,
+            response.status_code,
+            elapsed_ms,
+        )
+
+    return response
+
 
 # 挂载前端静态资源与 SPA 路由支持
 static_dir = Path(__file__).resolve().parents[1] / "static"

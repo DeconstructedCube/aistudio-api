@@ -125,3 +125,35 @@ async def test_model_discovery_parse():
     assert parsed[0]["category"] == "flash"
     assert parsed[1]["id"] == "gemini-3.1-flash-image"
     assert parsed[1]["category"] == "image"
+
+
+def test_parse_cookie_string_discards_transient_and_telemetry_cookies():
+    raw = (
+        "SID=sid_val; SAPISID=sapisid_val; __Secure-1PSID=psid_val; "
+        "_ga=GA1.2.123; NID=511=nid_val; SIDCC=sidcc_val; "
+        "OSID=stale_osid; __Secure-OSID=stale_sec_osid"
+    )
+    state = parse_cookie_string(raw, discard_transient=True)
+    raw_cookies = state.get("cookies")
+    assert isinstance(raw_cookies, list)
+    names = {c["name"] for c in raw_cookies if isinstance(c, dict)}
+    # Core credentials must be kept
+    assert "SID" in names
+    assert "SAPISID" in names
+    assert "__Secure-1PSID" in names
+
+    # Stale/transient/tracking cookies must be discarded
+    assert "_ga" not in names
+    assert "NID" not in names
+    assert "SIDCC" not in names
+    assert "OSID" not in names
+    assert "__Secure-OSID" not in names
+
+
+def test_domain_overrides_scopes_osid_strictly_to_aistudio():
+    from aistudio_api.infrastructure.account.cookie_parser import _DOMAIN_OVERRIDES
+
+    assert _DOMAIN_OVERRIDES["OSID"] == ["aistudio.google.com"]
+    assert _DOMAIN_OVERRIDES["__Secure-OSID"] == ["aistudio.google.com"]
+    assert ".google.com" not in _DOMAIN_OVERRIDES["OSID"]
+    assert ".google.com" not in _DOMAIN_OVERRIDES["__Secure-OSID"]

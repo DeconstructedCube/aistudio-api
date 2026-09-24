@@ -2,6 +2,13 @@
 # 留空 [] 表示对外 API 免 Key 开放调用；配置密钥后客户端必须携带对应 Key 访问。
 api_keys: []
 
+# 服务端日志与请求转储调试配置
+logging:
+  # 日志输出级别: DEBUG / INFO / WARNING / ERROR
+  level: INFO
+  # 是否转储每次 API 请求与响应的完整报文详情 (支持通过环境变量 DEBUG=true 触发)
+  dump_requests: false
+
 model_defaults:
   # 是否自动丢弃下游客户端传入的未知/不支持参数（如 HARM_CATEGORY_CIVIC_INTEGRITY、不兼容的内置工具等）
   # 设置为 true 时自动过滤异常参数，避免 Google 上游返回 400 INVALID_ARGUMENT 报错

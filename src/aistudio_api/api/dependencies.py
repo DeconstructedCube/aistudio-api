@@ -8,8 +8,11 @@ from fastapi import HTTPException, Request
 
 from aistudio_api.config import settings
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
+from aistudio_api.infrastructure.utils.logger import get_logger
 
 from .state import runtime_state
+
+logger = get_logger("auth")
 
 
 def _extract_request_token(request: Request) -> str | None:
@@ -58,6 +61,8 @@ def require_web_auth(request: Request) -> None:
         and secrets.compare_digest(token, settings.web_password)
     ):
         return
+    client_ip = request.client.host if request.client else "unknown"
+    logger.warning("Web console auth failed: invalid password from %s", client_ip)
     raise HTTPException(
         status_code=401,
         detail="管理控制台鉴权失败，请输入正确的管理密码",
@@ -80,6 +85,8 @@ def require_api_key(request: Request) -> None:
 
     token = _extract_request_token(request)
     if not token:
+        client_ip = request.client.host if request.client else "unknown"
+        logger.warning("API auth failed: missing API key from %s", client_ip)
         raise HTTPException(
             status_code=401,
             detail={
@@ -100,6 +107,8 @@ def require_api_key(request: Request) -> None:
         and secrets.compare_digest(token, settings.web_password)
     ):
         return
+    client_ip = request.client.host if request.client else "unknown"
+    logger.warning("API auth failed: invalid API key from %s", client_ip)
     raise HTTPException(
         status_code=401,
         detail={

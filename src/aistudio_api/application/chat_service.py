@@ -214,6 +214,7 @@ def _normalize_gemini_image_config(
         normalized["output_resolution"] = [aspect_ratio, image_size]
     return normalized
 
+
 def _extract_google_search_tool_names(
     tool: GeminiTool, *, is_image_model: bool
 ) -> list[str]:
@@ -324,15 +325,14 @@ def _normalize_gemini_safety_settings(
             if drop_unsupported:
                 continue
             raise ValueError(f"Unsupported safety category: {raw_cat}")
-        threshold = _GEMINI_SAFETY_THRESHOLD_MAP.get(
-            str(raw_thresh).strip().upper()
-        )
+        threshold = _GEMINI_SAFETY_THRESHOLD_MAP.get(str(raw_thresh).strip().upper())
         if threshold is None:
             if drop_unsupported:
                 continue
             raise ValueError(f"Unsupported safety threshold: {raw_thresh}")
         normalized.append([None, None, category, threshold])
     return normalized
+
 
 def normalize_gemini_request(
     req: GeminiGenerateContentRequest, requested_model: str, tmp_dir: str | None = None

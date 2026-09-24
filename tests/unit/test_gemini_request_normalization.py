@@ -328,7 +328,9 @@ def test_normalize_gemini_request_maps_official_text_model_fields():
     ]
 
 
-def test_normalize_gemini_request_drops_unknown_safety_category_when_enabled(monkeypatch, tmp_path):
+def test_normalize_gemini_request_drops_unknown_safety_category_when_enabled(
+    monkeypatch, tmp_path
+):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         """
@@ -345,6 +347,7 @@ model_defaults:
     from aistudio_api.infrastructure.gateway.model_defaults import (
         invalidate_config_cache,
     )
+
     invalidate_config_cache()
 
     req = GeminiGenerateContentRequest.model_validate(
@@ -368,7 +371,9 @@ model_defaults:
     invalidate_config_cache()
 
 
-def test_normalize_gemini_request_rejects_unknown_safety_category_when_disabled(monkeypatch, tmp_path):
+def test_normalize_gemini_request_rejects_unknown_safety_category_when_disabled(
+    monkeypatch, tmp_path
+):
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         """
@@ -385,6 +390,7 @@ model_defaults:
     from aistudio_api.infrastructure.gateway.model_defaults import (
         invalidate_config_cache,
     )
+
     invalidate_config_cache()
 
     req = GeminiGenerateContentRequest.model_validate(

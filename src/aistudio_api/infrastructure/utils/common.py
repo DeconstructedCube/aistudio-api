@@ -27,6 +27,7 @@ def atomic_write_json(path: Path | str, data: object) -> None:
                 tmp_path.unlink()
         raise
 
+
 def extract_outer_json(raw: str) -> list[object]:
     stripped = raw.strip()
     if not stripped:

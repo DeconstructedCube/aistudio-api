@@ -67,7 +67,9 @@ def isolate_test_config(monkeypatch, tmp_path):
     monkeypatch.setenv("AISTUDIO_DATA_DIR", str(test_data_dir))
     monkeypatch.setenv("AISTUDIO_ACCOUNTS_DIR", str(test_data_dir / "accounts"))
     monkeypatch.setenv("AISTUDIO_STATS_FILE", str(test_data_dir / "stats.json"))
-    monkeypatch.setenv("AISTUDIO_ROTATOR_STATE_FILE", str(test_data_dir / "rotator_state.json"))
+    monkeypatch.setenv(
+        "AISTUDIO_ROTATOR_STATE_FILE", str(test_data_dir / "rotator_state.json")
+    )
     invalidate_config_cache()
     yield
     invalidate_config_cache()

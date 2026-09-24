@@ -127,12 +127,11 @@ uv run python3 main.py server --port 8080
 | **Python 代码风格与 Lint** | `uv run ruff check .` | 0 errors |
 | **Python 代码格式化** | `uv run ruff format --check .` | 71 files already formatted |
 | **Python 类型检查** | `bun x pyright src tests` | 0 errors |
-| **Python 单元测试** | `uv run pytest` | 全部通过 (136+ passed) |
-| **浏览器 JS 语法校验** | `bun build src/aistudio_api/infrastructure/browser/js/*.js --no-bundle` | 0 errors |
+| **Python 单元测试** | `uv run pytest` | 全部通过 (161 passed) |
+| **浏览器 JS 语法校验** | `for f in src/aistudio_api/infrastructure/browser/js/*.js; do bun build "$f" --no-bundle >/dev/null; done` | 0 errors |
 | **前端代码规范** | `cd web && bun run lint` | 0 errors, 0 warnings |
 | **前端类型检查** | `cd web && bun run type-check` | 0 errors |
 | **前端生产构建** | `cd web && bun run build` | 构建成功并更新 static 产物 |
-
 > [!NOTE]
 > **跨平台原生二进制依赖与开发工具**：
 > - `pydantic-core` 等生产核心依赖通过 `uv.lock` 显式注入 TUR 的 prebuilt Android wheel，配合 `setup-env.sh` 生成的项目级本地 `uv.toml`，实现全平台统一通过 `uv sync` 秒级安装且不触发源码构建。
@@ -149,6 +148,8 @@ uv run python3 main.py server --port 8080
 > 3. **缓存与模板隔离**：账号切换、429 限流或 403 鉴权重试时，调用 `clear_snapshot_cache()` 与 `capture_service.clear_templates()`，避免跨账号复用 BotGuard 快照或请求模板。
 > 4. **鉴权故障快速隔离与自愈**：当遇到 `The caller does not have permission` (403) 时，立即将当前账号置入 `auth_cooldown` 并快速故障转移至健康账号；单账号或备用号耗尽时自动触发在位强制刷新与 BotGuard 重握手自愈。
 > 5. **无全局 DOM 污染**：页面内 JavaScript 交互使用局部闭包 `Promise` 返回数据，不在 `window` 对象上遗留全局共享状态。
+> 6. **Cookie 智能精简与天然协商**：外部导入 Cookie 时自动过滤旧设备或跨 IP 绑定的易腐败凭据（`OSID`、`__Secure-OSID`、`SIDCC` 及 `_ga` 等追踪标记），保留核心认证项（`SID`、`SAPISID`、`1PSIDTS`）。浏览器访问 AI Studio 时自动协商出绑定当前网络/TLS 的全新有效 `OSID`，杜绝 403 权限拒绝。
+> 7. **真实环境伪装与低内存协同**：保留 `--renderer-process-limit=1`、`--in-process-gpu` 与 128MB V8 内存限制以保障 Android 低 RAM 运行；移除 `--disable-software-rasterizer` 并启用 `--use-gl=angle --use-angle=swiftshader` 恢复软件 WebGL 上下文，保留 `--mute-audio` 并移除 `--disable-audio` 保护 AudioContext；统一注入 `--fingerprint-platform=windows` 伪装至最稳固的 Windows 桌面指纹池，并通过原生 `--fingerprint-timezone` 与 Wire 协议层保持时区/位置严格一致。
 ---
 
 ## 5. 代码结构索引
@@ -189,5 +190,13 @@ aistudio-api/
 │   │   ├── cache/                 # 内存快照与元数据缓存
 │   │   └── gateway/               # Wire Codec/Parser、传输层 (transport) 与流式网关
 ├── config.yaml                    # 模型规则与工具默认行为配置 (支持在线热重载)
-└── main.py                        # 本地统一启动入口
+├── main.py                        # 本地统一启动入口
+└── tests/                        # 单元测试套件 (模块化轻量架构，全量通过 <5s)
+│   ├── conftest.py               # 气密性隔离配置 (monkeypatch AISTUDIO_* 数据目录)
+│   ├── fixtures/                 # 真实 Protobuf JSON 请求与响应报文
+│   └── unit/                     # 21 个按职责严格划分的单元测试模块
+│       ├── test_account_*        # 账号调度、并发轮换防雪崩与凭据导入
+│       ├── test_api_*            # API 鉴权、响应序列化与模型/系统路由
+│       ├── test_browser_*        # Chromium 进程看门狗、CDP 会话与页面生命周期
+│       └── test_wire_*           # Protobuf-over-JSON 编解码、流式解析与模型规则
 ```

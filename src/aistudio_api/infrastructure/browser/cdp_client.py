@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import logging
 import re
 from collections.abc import Callable
 
@@ -17,7 +16,9 @@ import httpx
 import websockets
 from websockets.asyncio.client import ClientConnection
 
-log = logging.getLogger("aistudio.cdp")
+from aistudio_api.infrastructure.utils.logger import get_logger
+
+log = get_logger("cdp")
 
 BLOCKED_URL_PATTERNS: list[str] = [
     "*.png",
@@ -145,7 +146,7 @@ class CDPConnection:
                     "Target.targetCrashed",
                 ):
                     log.warning(
-                        "CDP target crashed or detached: %s (params=%s)",
+                        "CDP 目标崩溃或断开: %s (参数=%s)",
                         method,
                         msg.get("params"),
                     )
@@ -164,18 +165,16 @@ class CDPConnection:
                                 self._background_tasks.add(task)
                                 task.add_done_callback(self._background_tasks.discard)
                         except Exception as e:
-                            log.debug(
-                                "Error in CDP event listener for %s: %s", method, e
-                            )
+                            log.debug("CDP 事件监听器处理 %s 异常: %s", method, e)
 
         except asyncio.CancelledError:
             pass
         except websockets.ConnectionClosed as e:
             if not self._closed:
-                log.debug("CDP WebSocket connection closed: %s", e)
+                log.debug("CDP WebSocket 连接已关闭: %s", e)
         except Exception as e:
             if not self._closed:
-                log.debug("CDP recv loop error: %s", e)
+                log.debug("CDP 接收循环异常: %s", e)
         finally:
             self._closed = True
             # Reject pending futures immediately
@@ -183,6 +182,7 @@ class CDPConnection:
                 if not fut.done():
                     fut.set_exception(RuntimeError("CDP connection closed"))
             self._futures.clear()
+
     async def send(
         self,
         method: str,
@@ -244,6 +244,7 @@ class CDPConnection:
         except Exception:
             self._futures.pop(req_id, None)
             raise
+
     def on(
         self, event: str, callback: Callable[[dict[str, object]], object]
     ) -> Callable[[], None]:
@@ -318,10 +319,10 @@ class CDPPage:
             return bool(res and not res.get("exceptionDetails"))
         except Exception:
             return False
+
     def set_liveness_checker(self, checker: Callable[[], bool] | None) -> None:
         """Bind underlying browser process liveness checker to CDP connection."""
         self.cdp.set_liveness_checker(checker)
-
 
     async def init_domains(self, block_assets: bool = True) -> None:
         """Enable required CDP domains and install kernel-level asset filters."""
@@ -339,11 +340,12 @@ class CDPPage:
             frame = raw_frame if isinstance(raw_frame, dict) else {}
             if not frame.get("parentId"):  # Main frame
                 self._last_url = str(frame.get("url") or "")
+
         self._track_listener(self.cdp.on("Page.frameNavigated", on_navigated))
 
         # Listen for renderer crash and inspector detached events to fail fast
         def on_crashed(params: dict[str, object]) -> None:
-            log.warning("CDPPage renderer crashed: %s", params)
+            log.warning("CDP 页面渲染器崩溃: %s", params)
             self._is_closed = True
             self.cdp.fail_pending_futures(
                 RuntimeError("Page target crashed (renderer terminated)")
@@ -351,7 +353,7 @@ class CDPPage:
 
         def on_detached(params: dict[str, object]) -> None:
             reason = str(params.get("reason") or "detached")
-            log.warning("CDPPage inspector detached: %s", reason)
+            log.warning("CDP 页面检查器已分离: %s", reason)
             self._is_closed = True
             self.cdp.fail_pending_futures(
                 RuntimeError(f"Page inspector detached: {reason}")
@@ -368,9 +370,9 @@ class CDPPage:
         """Block matching resource URLs inside Chromium's C++ network service."""
         try:
             await self.cdp.send("Network.setBlockedURLs", {"urls": patterns})
-            log.debug("Configured Network.setBlockedURLs (%d patterns)", len(patterns))
+            log.debug("已配置网络资源黑名单拦截 (%d 条规则)", len(patterns))
         except Exception as e:
-            log.warning("Failed to configure Network.setBlockedURLs: %s", e)
+            log.warning("配置网络资源黑名单拦截失败: %s", e)
 
     async def add_binding(self, name: str) -> None:
         """Expose a global function in page JS that dispatches Runtime.bindingCalled events."""
@@ -738,23 +740,21 @@ class CDPPage:
 
         try:
             await self.cdp.send("Network.setCookies", {"cookies": formatted})
-            log.debug("Injected %d cookies via CDP", len(formatted))
+            log.debug("已通过 CDP 成功注入 %d 个 Cookie", len(formatted))
         except Exception as e:
-            log.warning(
-                "Batch Network.setCookies failed (%s), retrying individually", e
-            )
+            log.warning("批量通过 CDP 注入 Cookie 失败 (%s)，正在尝试逐条重试", e)
             for item in formatted:
                 try:
                     await self.cdp.send("Network.setCookies", {"cookies": [item]})
                 except Exception as ind_e:
-                    log.debug("Failed to set cookie %s: %s", item.get("name"), ind_e)
+                    log.debug("设置 Cookie %s 失败: %s", item.get("name"), ind_e)
 
     async def clear_cookies(self) -> None:
         """Clear all browser cookies."""
         try:
             await self.cdp.send("Network.clearBrowserCookies")
         except Exception as e:
-            log.debug("Network.clearBrowserCookies failed: %s", e)
+            log.debug("清除浏览器 Cookie 失败: %s", e)
 
     def on_request(
         self, callback: Callable[[dict[str, object]], object]

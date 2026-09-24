@@ -12,6 +12,9 @@ from aistudio_api.api.response_models import (
     GeminiModelListResponse,
     GeminiModelResponse,
 )
+from aistudio_api.infrastructure.utils.logger import get_logger
+
+logger = get_logger("routes.models")
 
 if TYPE_CHECKING:
     from aistudio_api.api.state import RuntimeState
@@ -59,6 +62,7 @@ async def list_models(
 
     discovered = await model_discovery.get_models(session=session)
     models = [_to_gemini_model(item) for item in discovered]
+    logger.info("List models completed (discovered=%d)", len(models))
     return GeminiModelListResponse(models=models)
 
 
@@ -79,10 +83,12 @@ async def get_model(
         model_raw_id = str(model_info.get("id") or model_info.get("name") or "")
         model_clean_id = model_raw_id.removeprefix("models/")
         if model_clean_id == clean_target:
+            logger.info("Model retrieved: %s", clean_target)
             return _to_gemini_model(model_info)
     for model_info in _FALLBACK_MODELS:
         model_raw_id = str(model_info.get("id") or model_info.get("name") or "")
         model_clean_id = model_raw_id.removeprefix("models/")
         if model_clean_id == clean_target:
+            logger.info("Model retrieved from fallback: %s", clean_target)
             return _to_gemini_model(model_info)
     raise HTTPException(status_code=404, detail="Model not found")

@@ -48,6 +48,18 @@ export const systemApi = {
     })
   },
 
+  updateLoggingConfig(req: { level?: string; dump_requests?: boolean }): Promise<{
+    ok: boolean
+    log_level: string
+    dump_requests: boolean
+    debug_env_active: boolean
+  }> {
+    return request('/config/logging', {
+      method: 'PUT',
+      body: JSON.stringify(req),
+    })
+  },
+
   listApiKeys(): Promise<ApiKeyItem[]> {
     return request<ApiKeyItem[]>('/api-keys')
   },

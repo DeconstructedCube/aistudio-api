@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 
 from aistudio_api.api.state import runtime_state
+from aistudio_api.infrastructure.utils.logger import get_logger
 
-logger = logging.getLogger("aistudio.server")
+logger = get_logger("orchestrator")
 MAX_RETRIES = 5
 
 _switch_lock = asyncio.Lock()

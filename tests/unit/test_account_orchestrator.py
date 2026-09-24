@@ -12,7 +12,7 @@ from aistudio_api.application.account_orchestrator import (
     record_rotator_event,
     try_switch_account,
 )
-from aistudio_api.application.account_rotator import AccountRotator
+from aistudio_api.application.account_rotator import AccountRotator, AccountStats
 from aistudio_api.application.account_service import AccountService
 from aistudio_api.infrastructure.account.account_store import AccountMeta
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
@@ -203,3 +203,23 @@ async def test_try_switch_account_single_account_recovery():
         runtime_state.rotator = orig_rotator
         runtime_state.account_service = orig_service
         runtime_state.client = orig_client
+
+
+def test_account_stats_short_cooldown_sync():
+    """Verify short 60s cooldown is tracked accurately for monitoring."""
+    stats = AccountStats(account_id="acc_test")
+    stats.record_rate_limited(model="gemini-2.5-flash")
+
+    assert not stats.is_available("gemini-2.5-flash")
+    rem = stats.get_cooldown_remaining("gemini-2.5-flash")
+    assert 0 < rem <= 60.0
+
+    stats.record_rate_limited(model="gemini-2.5-flash")
+    assert not stats.is_available("gemini-2.5-flash")
+    rem2 = stats.get_cooldown_remaining("gemini-2.5-flash")
+    assert 0 < rem2 <= 60.0
+
+    stats.record_rate_limited(model="gemini-2.5-flash")
+    assert not stats.is_available("gemini-2.5-flash")
+    rem3 = stats.get_cooldown_remaining("gemini-2.5-flash")
+    assert rem3 > 60.0
