@@ -7,10 +7,12 @@ import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from aistudio_api.application.api_service_gemini import classify_gemini_error_payload
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 from aistudio_api.infrastructure.gateway.model_defaults import (
     get_configured_logging_settings,
@@ -106,7 +108,7 @@ async def lifespan(app: FastAPI):
         idle_task = asyncio.create_task(_idle_monitor())
 
     yield
-    logger.info("Shutting down")
+    logger.info("服务正在关闭")
     if warmup_task and not warmup_task.done():
         warmup_task.cancel()
     if idle_task and not idle_task.done():
@@ -115,7 +117,7 @@ async def lifespan(app: FastAPI):
         try:
             await client.close()
         except Exception as e:
-            logger.debug("Error closing client: %s", e)
+            logger.debug("关闭客户端失败: %s", e)
     runtime_state.client = None
     runtime_state.account_service = None
     runtime_state.rotator = None
@@ -127,6 +129,39 @@ app.include_router(system_protected_router, dependencies=[Depends(require_web_au
 app.include_router(accounts_router, dependencies=[Depends(require_web_auth)])
 app.include_router(gemini_router, dependencies=[Depends(require_api_key)])
 app.include_router(models_router, dependencies=[Depends(require_api_key)])
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    code, msg, status_str = classify_gemini_error_payload(exc)
+    return JSONResponse(
+        status_code=code,
+        content={
+            "error": {
+                "code": code,
+                "message": msg,
+                "status": status_str,
+            }
+        },
+        headers=getattr(exc, "headers", None),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    code, msg, status_str = 400, str(exc), "INVALID_ARGUMENT"
+    return JSONResponse(
+        status_code=code,
+        content={
+            "error": {
+                "code": code,
+                "message": msg,
+                "status": status_str,
+            }
+        },
+    )
 
 
 @app.middleware("http")
@@ -274,5 +309,5 @@ def main():
 
     import uvicorn
 
-    logger.info("Starting server on port %s", args.port)
+    logger.info("正在启动服务，监听端口 %s", args.port)
     uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info")

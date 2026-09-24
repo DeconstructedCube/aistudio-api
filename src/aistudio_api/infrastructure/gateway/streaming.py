@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator
-from contextlib import suppress
 from pathlib import Path
 
 from aistudio_api.config import settings
@@ -98,45 +97,51 @@ class StreamingGateway:
 
         parser = IncrementalJSONStreamParser()
         latest_usage: dict[str, object] | None = None
+        latest_finish_reason: int | None = None
+        latest_response_id: str | None = None
         raw_parts: list[str] = []
         status_code = 0
-
-        try:
-            async for event_type, payload in self._session.send_streaming_request(
-                body=modified_body,
-                timeout_ms=settings.timeout_stream * 1000,
-                url=captured.url if captured else None,
-                headers=captured.headers if captured else None,
-            ):
-                if event_type == "status" and payload and not status_code:
-                    status_code = int(str(payload))
-                elif event_type == "chunk" and payload:
-                    if isinstance(payload, bytes):
-                        text_payload = payload.decode("utf-8", errors="replace")
-                    else:
-                        text_payload = str(payload)
-                    raw_parts.append(text_payload)
-                    for parsed_chunk in parser.feed(text_payload):
-                        usage = parse_chunk_usage(parsed_chunk)
-                        if usage:
-                            latest_usage = usage
-                        candidate = parse_response_chunk(parsed_chunk)
-                        if candidate.thinking:
-                            yield ("thinking", candidate.thinking)
-                        if candidate.reasoning_images:
-                            yield ("reasoning_images", candidate.reasoning_images)
-                        if candidate.function_calls:
-                            yield ("tool_calls", candidate.function_calls)
-                        if candidate.images:
-                            yield ("images", candidate.images)
-                        if candidate.text:
-                            yield ("body", candidate.text)
-                        if candidate.thought_signature and not candidate.function_calls:
-                            yield ("thought_signature", candidate.thought_signature)
-        finally:
-            if hasattr(self._session, "cleanup_stream_page"):
-                with suppress(Exception):
-                    await self._session.cleanup_stream_page()
+        async for event_type, payload in self._session.send_streaming_request(
+            body=modified_body,
+            timeout_ms=settings.timeout_stream * 1000,
+            url=captured.url if captured else None,
+            headers=captured.headers if captured else None,
+        ):
+            if event_type == "status" and payload and not status_code:
+                status_code = int(str(payload))
+            elif event_type == "chunk" and payload:
+                if isinstance(payload, bytes):
+                    text_payload = payload.decode("utf-8", errors="replace")
+                else:
+                    text_payload = str(payload)
+                raw_parts.append(text_payload)
+                for parsed_chunk in parser.feed(text_payload):
+                    usage = parse_chunk_usage(parsed_chunk)
+                    if usage:
+                        latest_usage = usage
+                    if (
+                        isinstance(parsed_chunk, list)
+                        and len(parsed_chunk) > 7
+                        and isinstance(parsed_chunk[7], str)
+                        and parsed_chunk[7]
+                    ):
+                        latest_response_id = parsed_chunk[7]
+                        yield ("response_id", latest_response_id)
+                    candidate = parse_response_chunk(parsed_chunk)
+                    if candidate.finish_reason is not None:
+                        latest_finish_reason = candidate.finish_reason
+                    if candidate.thinking:
+                        yield ("thinking", candidate.thinking)
+                    if candidate.reasoning_images:
+                        yield ("reasoning_images", candidate.reasoning_images)
+                    if candidate.function_calls:
+                        yield ("tool_calls", candidate.function_calls)
+                    if candidate.images:
+                        yield ("images", candidate.images)
+                    if candidate.text:
+                        yield ("body", candidate.text)
+                    if candidate.thought_signature:
+                        yield ("thought_signature", candidate.thought_signature)
         raw_response = "".join(raw_parts)
         _dump_stream_exchange(
             model=model,
@@ -153,5 +158,7 @@ class StreamingGateway:
                 raise RequestError(status_code, detail)
             raise RequestError(status_code, "")
 
+        if latest_finish_reason is not None:
+            yield ("finish_reason", latest_finish_reason)
         yield ("usage", latest_usage)
         yield ("done", None)

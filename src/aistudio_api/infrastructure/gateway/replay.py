@@ -40,7 +40,9 @@ class RequestReplayService:
 
             import httpx
 
-            async with httpx.AsyncClient(timeout=float(timeout)) as client:
+            async with httpx.AsyncClient(
+                timeout=float(timeout), proxy=settings.proxy_url
+            ) as client:
                 resp = await client.post(
                     captured.url,
                     content=body.encode("utf-8"),

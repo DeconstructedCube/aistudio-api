@@ -225,8 +225,10 @@ class ModelDiscoveryService:
         if auth_header:
             headers["Authorization"] = auth_header
 
+        from aistudio_api.config import settings
+
         url = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/ListModels"
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, proxy=settings.proxy_url) as client:
             resp = await client.post(url, headers=headers, content="[]")
             if resp.status_code == 200:
                 return self._parse_raw_models(resp.json())

@@ -91,6 +91,8 @@ class BrowserSession:
         self._switch_event = asyncio.Event()
         self._switch_event.set()
         self._last_activity_time: float = time.time()
+        self._hooks_installed: bool = False
+        self._stream_cleanup_count: int = 0
 
     def get_current_auth_user(self) -> str:
         """获取当前活跃账号的 auth_user 编号（0, 1, 2...）。"""
@@ -190,6 +192,8 @@ class BrowserSession:
         """Ensure Chromium process is running and CDPPage is connected and responsive."""
         async with self._lock:
             if self._page is not None and not self._page.is_closed():
+                if self._hooks_installed:
+                    return self._page
                 if (
                     self._proc is None or self._proc.is_alive()
                 ) and await self._page.is_alive(timeout_s=1.5):
@@ -215,6 +219,7 @@ class BrowserSession:
                 self._profile_dir = self._derive_profile_dir(auth_file)
                 self._bootstrap_template = None
                 self._snap_key = None
+                self._hooks_installed = False
                 hot_switched = False
                 if self._page is not None and not self._page.is_closed():
                     try:
@@ -266,24 +271,38 @@ class BrowserSession:
 
     async def ensure_botguard_service(self, force_refresh: bool = False) -> CDPPage:
         """Ensure BotGuardService is captured in page context."""
+        if (
+            not force_refresh
+            and self._page is not None
+            and not self._page.is_closed()
+            and self._hooks_installed
+            and self._snap_key
+        ):
+            return self._page
+
         page = await self.ensure_context()
         if "aistudio.google.com" not in (page.url or ""):
             await self._goto_aistudio(page)
         await self._install_hooks(page)
 
-        if not force_refresh and await page.evaluate("() => !!window.__bg_service"):
+        if not force_refresh and (
+            self._hooks_installed or await page.evaluate("() => !!window.__bg_service")
+        ):
             return page
 
         async with self._botguard_lock:
-            if not force_refresh and await page.evaluate("() => !!window.__bg_service"):
+            if not force_refresh and (
+                self._hooks_installed
+                or await page.evaluate("() => !!window.__bg_service")
+            ):
                 return page
 
             if force_refresh:
+                self._hooks_installed = False
                 with suppress(Exception):
                     await page.evaluate(
                         "() => { window.__bg_service = null; window.__bg_snapshot = null; window.__bg_hooked = false; window.__snap_key = null; }"
                     )
-                self._snap_key = None
                 self._bootstrap_template = None
                 await self._goto_aistudio(page)
                 await self._install_hooks(page)
@@ -679,15 +698,17 @@ class BrowserSession:
                 await self.cleanup_stream_page()
 
     async def cleanup_stream_page(self) -> None:
-        """Execute post-stream DOM cleanup and V8 garbage collection."""
+        """Execute post-stream DOM cleanup and throttled V8 garbage collection."""
+        self._stream_cleanup_count += 1
         if self._page is not None and not self._page.is_closed():
             with suppress(Exception):
                 await self._page.evaluate(DOM_GC_CLEANUP_JS)
-            with suppress(Exception):
-                await self._page.collect_garbage()
-        import gc
+            if self._in_flight <= 0 and (self._stream_cleanup_count % 10 == 0):
+                with suppress(Exception):
+                    await self._page.collect_garbage()
+                import gc
 
-        gc.collect()
+                gc.collect()
 
     async def close(self) -> None:
         """Close browser session and free resources."""
@@ -708,6 +729,7 @@ class BrowserSession:
         self._page = None
         self._snap_key = None
         self._bootstrap_template = None
+        self._hooks_installed = False
 
     async def _ensure_browser_cdp(self) -> CDPPage:
         """Launch Chromium subprocess and connect async CDP client."""
@@ -875,17 +897,21 @@ class BrowserSession:
     async def _install_hooks(self, page: CDPPage) -> None:
         result = await page.evaluate(INSTALL_HOOKS_JS)
         if result == "already_hooked":
+            self._hooks_installed = True
             return
         if isinstance(result, str) and result.startswith("hooked:"):
             self._snap_key = result.split(":", 1)[1]
+            self._hooks_installed = True
             return
         for _ in range(3):
             await page.wait_for_timeout(2000)
             result = await page.evaluate(INSTALL_HOOKS_JS)
             if result == "already_hooked":
+                self._hooks_installed = True
                 return
             if isinstance(result, str) and result.startswith("hooked:"):
                 self._snap_key = result.split(":", 1)[1]
+                self._hooks_installed = True
                 return
         page_url = page.url if page else "(no page)"
         page_title = await page.title() if page else ""
@@ -988,12 +1014,6 @@ class BrowserSession:
         is_verified = False
         with suppress(Exception):
             is_verified = bool(await page.evaluate(CHECK_IDENTITY_JS, expected_email))
-
-        if not is_verified:
-            with suppress(Exception):
-                page_html = await page.content()
-                if expected_email in page_html:
-                    is_verified = True
 
         if not is_verified:
             with suppress(Exception):

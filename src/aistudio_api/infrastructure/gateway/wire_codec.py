@@ -227,6 +227,7 @@ class AistudioWireCodec:
         system_instruction: str | None = None,
         system_instruction_content: AistudioContent | None = None,
         tools: list[list] | None = None,
+        tool_config: list[object] | None = None,
         safety_settings: list[list] | None = None,
         images: list[str | tuple[str, str]] | None = None,
         temperature: float | None = None,
@@ -291,7 +292,8 @@ class AistudioWireCodec:
             request.safety_settings = [[None, None, cat, 5] for cat in [7, 8, 9, 10]]
 
         request.tools = tools if tools else None
-
+        if tool_config is not None:
+            request.tool_config = tool_config
         return self.encode(request)
 
     def _build_user_content(
@@ -419,6 +421,7 @@ def modify_body(
     system_instruction: str | None = None,
     system_instruction_content: AistudioContent | None = None,
     tools: list[list] | None = None,
+    tool_config: list[object] | None = None,
     safety_settings: list[list] | None = None,
     images: list[str | tuple[str, str]] | None = None,
     temperature: float | None = None,
@@ -438,6 +441,7 @@ def modify_body(
         system_instruction=system_instruction,
         system_instruction_content=system_instruction_content,
         tools=tools,
+        tool_config=tool_config,
         safety_settings=safety_settings,
         images=images,
         temperature=temperature,

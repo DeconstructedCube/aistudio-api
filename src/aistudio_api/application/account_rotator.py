@@ -313,7 +313,8 @@ class AccountRotator:
         self._store = account_store
         self._stats: dict[str, AccountStats] = {}
         self._lock = asyncio.Lock()
-
+        self._last_saved_time: float = 0.0
+        self._save_task: asyncio.Task | None = None
         self.load_state()
         for account in self._store.list_accounts():
             if account.id not in self._stats:
@@ -349,8 +350,32 @@ class AccountRotator:
         try:
             payload = {acc_id: stats.to_dict() for acc_id, stats in self._stats.items()}
             atomic_write_json(state_file, payload)
+            self._last_saved_time = time.time()
         except Exception as e:
             logger.warning("持久化账号调度状态到 %s 失败: %s", state_file, e)
+
+    def _schedule_debounced_save(self, delay: float = 2.0) -> None:
+        if not settings.persist_rotator:
+            return
+        now = time.time()
+        if now - self._last_saved_time >= 5.0:
+            self.save_state()
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.save_state()
+            return
+
+        if self._save_task is not None and not self._save_task.done():
+            return
+
+        async def _delayed():
+            await asyncio.sleep(delay)
+            self.save_state()
+
+        self._save_task = loop.create_task(_delayed())
 
     def get_all_stats(self) -> dict[str, dict[str, object]]:
         """获取所有账号的运行与配额状态。"""
@@ -510,8 +535,7 @@ class AccountRotator:
         if account_id not in self._stats:
             self._stats[account_id] = AccountStats(account_id=account_id)
         self._stats[account_id].record_success(model)
-
-        self.save_state()
+        self._schedule_debounced_save()
 
     def record_rate_limited(
         self,

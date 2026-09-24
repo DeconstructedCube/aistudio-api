@@ -682,7 +682,7 @@ class CDPPage:
             )
             return True
         except Exception as e:
-            log.debug("send_control_enter failed: %s", e)
+            log.debug("发送 Ctrl+Enter 失败: %s", e)
             return False
 
     async def get_cookies(self) -> list[dict[str, object]]:
@@ -807,7 +807,7 @@ class CDPPage:
                 return base64.b64decode(body).decode("utf-8", errors="replace")
             return body
         except Exception as e:
-            log.debug("get_response_body(%s) failed: %s", request_id, e)
+            log.debug("获取响应体失败 (req_id=%s): %s", request_id, e)
             return ""
 
     async def collect_garbage(self) -> None:
@@ -922,7 +922,7 @@ class CDPClient:
                 return page
             except Exception as e:
                 last_exc = e
-                log.debug("connect_page attempt %d failed: %s", attempt + 1, e)
+                log.debug("连接页面第 %d 次尝试失败: %s", attempt + 1, e)
                 if attempt < 2:
                     await asyncio.sleep(0.3)
         raise RuntimeError(

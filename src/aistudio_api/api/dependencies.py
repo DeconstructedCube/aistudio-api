@@ -62,7 +62,7 @@ def require_web_auth(request: Request) -> None:
     ):
         return
     client_ip = request.client.host if request.client else "unknown"
-    logger.warning("Web console auth failed: invalid password from %s", client_ip)
+    logger.warning("管理控制台鉴权失败: 来自 %s 的密码无效", client_ip)
     raise HTTPException(
         status_code=401,
         detail="管理控制台鉴权失败，请输入正确的管理密码",
@@ -86,7 +86,7 @@ def require_api_key(request: Request) -> None:
     token = _extract_request_token(request)
     if not token:
         client_ip = request.client.host if request.client else "unknown"
-        logger.warning("API auth failed: missing API key from %s", client_ip)
+        logger.warning("API 鉴权失败: 来自 %s 的请求缺少 API Key", client_ip)
         raise HTTPException(
             status_code=401,
             detail={
@@ -108,7 +108,7 @@ def require_api_key(request: Request) -> None:
     ):
         return
     client_ip = request.client.host if request.client else "unknown"
-    logger.warning("API auth failed: invalid API key from %s", client_ip)
+    logger.warning("API 鉴权失败: 来自 %s 的 API Key 无效", client_ip)
     raise HTTPException(
         status_code=401,
         detail={

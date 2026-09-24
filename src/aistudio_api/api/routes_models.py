@@ -62,7 +62,7 @@ async def list_models(
 
     discovered = await model_discovery.get_models(session=session)
     models = [_to_gemini_model(item) for item in discovered]
-    logger.info("List models completed (discovered=%d)", len(models))
+    logger.info("获取模型列表完成 (共发现 %d 个)", len(models))
     return GeminiModelListResponse(models=models)
 
 
@@ -83,12 +83,12 @@ async def get_model(
         model_raw_id = str(model_info.get("id") or model_info.get("name") or "")
         model_clean_id = model_raw_id.removeprefix("models/")
         if model_clean_id == clean_target:
-            logger.info("Model retrieved: %s", clean_target)
+            logger.info("成功获取模型元数据: %s", clean_target)
             return _to_gemini_model(model_info)
     for model_info in _FALLBACK_MODELS:
         model_raw_id = str(model_info.get("id") or model_info.get("name") or "")
         model_clean_id = model_raw_id.removeprefix("models/")
         if model_clean_id == clean_target:
-            logger.info("Model retrieved from fallback: %s", clean_target)
+            logger.info("从保底列表中获取模型元数据: %s", clean_target)
             return _to_gemini_model(model_info)
     raise HTTPException(status_code=404, detail="Model not found")

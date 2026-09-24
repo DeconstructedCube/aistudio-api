@@ -10,10 +10,6 @@
             img.src = '';
             img.remove();
         });
-        document.querySelectorAll('img').forEach(img => {
-            img.src = '';
-            img.remove();
-        });
     } catch (e) {}
 
     const ta = document.querySelector('textarea');

@@ -80,3 +80,4 @@ class GeminiGenerateContentRequest(BaseModel):
     tools: list[GeminiTool] | None = None
     generationConfig: GeminiGenerationConfig | None = None
     safetySettings: list[GeminiSafetySetting] | None = None
+    toolConfig: dict[str, object] | None = None

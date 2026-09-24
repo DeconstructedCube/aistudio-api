@@ -180,8 +180,8 @@ def _decode_wire_argument_pairs(raw_args: object) -> object:
         for item in raw_args
     ):
         result = {}
-        for key, value in raw_args:
-            result[key] = _decode_wire_value(value)
+        for item in raw_args:
+            result[item[0]] = _decode_wire_value(item[1])
         return result
 
     if len(raw_args) == 1 and isinstance(raw_args[0], list):

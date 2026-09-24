@@ -44,6 +44,8 @@ class RuntimeState:
     model_stats: dict[str, ModelStatsItem] = field(
         default_factory=lambda: defaultdict(ModelStatsItem)
     )
+    _last_saved_time: float = field(default=0.0, repr=False)
+    _save_task: object | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         self.load_stats()
@@ -84,8 +86,38 @@ class RuntimeState:
         try:
             payload = {model: asdict(item) for model, item in self.model_stats.items()}
             atomic_write_json(stats_path, payload)
+            import time
+
+            self._last_saved_time = time.time()
         except Exception as e:
             logger.warning("持久化模型统计到 %s 失败: %s", stats_path, e)
+
+    def _schedule_debounced_save(self, delay: float = 2.0) -> None:
+        if not settings.persist_stats:
+            return
+        import asyncio
+        import time
+
+        now = time.time()
+        if now - self._last_saved_time >= 5.0:
+            self.save_stats()
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.save_stats()
+            return
+
+        task = getattr(self, "_save_task", None)
+        if task is not None and not task.done():
+            return
+
+        async def _delayed():
+            await asyncio.sleep(delay)
+            self.save_stats()
+
+        self._save_task = loop.create_task(_delayed())
 
     def record(
         self,
@@ -112,7 +144,10 @@ class RuntimeState:
             stats.prompt_tokens += pt if isinstance(pt, int) else 0
             stats.completion_tokens += ct if isinstance(ct, int) else 0
             stats.total_tokens += tt if isinstance(tt, int) else 0
-        self.save_stats()
+        if result in ("rate_limited", "errors"):
+            self.save_stats()
+        else:
+            self._schedule_debounced_save()
 
 
 runtime_state = RuntimeState()

@@ -20,7 +20,9 @@ class SnapshotCache:
 
     @staticmethod
     def _hash(key_or_prompt: str) -> str:
-        if len(key_or_prompt) == 64 and all(c in "0123456789abcdefABCDEF" for c in key_or_prompt):
+        if len(key_or_prompt) == 64 and all(
+            c in "0123456789abcdefABCDEF" for c in key_or_prompt
+        ):
             return key_or_prompt.lower()
         return hashlib.sha256(key_or_prompt.encode("utf-8")).hexdigest()
 
@@ -41,7 +43,9 @@ class SnapshotCache:
         logger.info("Snapshot 缓存命中: %s... (%ss ago)", key[:8], int(age))
         return snapshot, url, headers, body
 
-    def put(self, key_or_prompt: str, snapshot: str, url: str, headers: dict, body: str):
+    def put(
+        self, key_or_prompt: str, snapshot: str, url: str, headers: dict, body: str
+    ):
         key = self._hash(key_or_prompt)
         # Evict oldest if at capacity
         while len(self._cache) >= self.max_size:
@@ -49,5 +53,16 @@ class SnapshotCache:
             logger.info("Snapshot 缓存淘汰: %s...", evicted_key[:8])
         self._cache[key] = (snapshot, url, headers, body, time.time())
         logger.info("Snapshot 已缓存: %s...", key[:8])
+
+    def set(
+        self,
+        key_or_prompt: str,
+        snapshot: str,
+        url: str = "",
+        headers: dict | None = None,
+        body: str = "",
+    ) -> None:
+        self.put(key_or_prompt, snapshot, url, headers or {}, body)
+
     def clear(self):
         self._cache.clear()

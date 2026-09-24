@@ -140,7 +140,7 @@ async def activate_account(
     )
     if account is None:
         raise HTTPException(status_code=404, detail="账号不存在或切换失败")
-    log.info("Account activated manually: %s (%s)", account.id, account.name)
+    log.info("手动激活账号: %s (%s)", account.id, account.name)
     return AccountResponse(
         id=account.id,
         name=account.name,
@@ -157,12 +157,34 @@ async def activate_account(
 async def delete_account(
     account_id: str,
     account_service: AccountService = Depends(get_account_service),
+    runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> dict[str, bool]:
     """删除账号。"""
+    active_account = account_service.get_active_account()
+    is_active = active_account is not None and active_account.id == account_id
+
     success = account_service.delete_account(account_id)
     if not success:
         raise HTTPException(status_code=404, detail="账号不存在")
-    log.info("Account deleted: %s", account_id)
+
+    if is_active:
+        remaining_accounts = account_service.list_accounts()
+        new_active = remaining_accounts[0] if remaining_accounts else None
+        browser_session = (
+            runtime_state.client._session if runtime_state.client else None
+        )
+        if new_active is not None:
+            account_service.set_active_account(new_active.id)
+            if browser_session is not None:
+                new_auth_path = account_service.get_account_auth_path(new_active.id)
+                await browser_session.switch_auth(
+                    str(new_auth_path) if new_auth_path else None
+                )
+        else:
+            if browser_session is not None:
+                await browser_session.switch_auth(None)
+
+    log.info("已删除账号: %s", account_id)
     return {"ok": True}
 
 
@@ -178,7 +200,7 @@ async def delete_cookie_group(
         acc_cid = getattr(a, "cookie_id", None) or f"cookie_{a.created_at[:16]}"
         if acc_cid == cookie_id and account_service.delete_account(a.id):
             deleted_count += 1
-            log.info("Deleted sub-account %s in group %s", a.id, cookie_id)
+            log.info("已删除组 %s 下的子账号 %s", cookie_id, a.id)
     return {"deleted": deleted_count}
 
 
@@ -192,7 +214,7 @@ async def update_account(
     account = account_service.update_account(account_id, req.name)
     if account is None:
         raise HTTPException(status_code=404, detail="账号不存在")
-    log.info("Account updated: %s -> %s", account.id, req.name)
+    log.info("账号已更新: %s -> %s", account.id, req.name)
     return AccountResponse(
         id=account.id,
         name=account.name,
@@ -249,9 +271,9 @@ async def import_cookies(
                 req.cookies,
                 auth_file=str(auth_path) if auth_path else None,
             )
-            log.info("Injected %d cookies, saved auth.json for %s", count, account.name)
+            log.info("已注入 %d 个 Cookie 并为 %s 保存 auth.json", count, account.name)
     except Exception as e:
-        log.warning("Browser cookie injection failed for %s: %s", account.name, e)
+        log.warning("为 %s 注入浏览器 Cookie 失败: %s", account.name, e)
 
     return ImportCookiesResponse(
         account_id=account.id,
@@ -302,7 +324,7 @@ async def probe_and_import(
         for account in metas
     ]
 
-    log.info("Probe and import completed: imported %d accounts", len(imported_accounts))
+    log.info("探活与导入完成: 成功导入 %d 个账号", len(imported_accounts))
     return ProbeAndImportResponse(
         imported_count=len(imported_accounts),
         accounts=imported_accounts,

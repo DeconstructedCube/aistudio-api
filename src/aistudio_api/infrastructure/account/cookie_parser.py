@@ -288,13 +288,15 @@ async def probe_google_accounts_infinite(
 
     import httpx
 
+    from aistudio_api.config import settings
+
     cookie_header = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
     valid_accounts: list[dict[str, object]] = []
 
     auth_user_idx = 0
     consecutive_failures = 0
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, proxy=settings.proxy_url) as client:
         while True:
             u_index = str(auth_user_idx)
             auth_header = calculate_sapisid_hash(cookie_dict)

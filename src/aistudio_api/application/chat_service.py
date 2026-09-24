@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import base64
 import contextlib
-import tempfile
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -35,6 +32,7 @@ class NormalizedGeminiRequest:
     capture_prompt: str
     capture_images: list[str | tuple[str, str]] | None
     cleanup_paths: list[str]
+    tool_config: list[object] | None = None
     temperature: float | None = None
     top_p: float | None = None
     top_k: int | None = None
@@ -67,14 +65,6 @@ def cleanup_files(paths: list[str]):
     for path in paths:
         with contextlib.suppress(OSError):
             Path(path).unlink()
-
-
-def inline_data_to_file(mime_type: str, data: str, tmp_dir: str | None = None) -> str:
-    effective_tmp = Path(tmp_dir) if tmp_dir else Path(tempfile.gettempdir())
-    ext = mime_type.split("/")[-1].replace("jpeg", "jpg")
-    path_obj = effective_tmp / f"aistudio_img_{uuid.uuid4().hex[:8]}.{ext}"
-    path_obj.write_bytes(base64.b64decode(data))
-    return str(path_obj)
 
 
 def encode_schema_to_wire(
@@ -213,6 +203,48 @@ def _normalize_gemini_image_config(
     if aspect_ratio is not None or image_size is not None:
         normalized["output_resolution"] = [aspect_ratio, image_size]
     return normalized
+
+
+def _normalize_gemini_tool_config(value: object) -> list[object] | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    model_dump_fn = getattr(value, "model_dump", None)
+    if callable(model_dump_fn):
+        value = model_dump_fn(mode="json", exclude_none=True)
+    if not isinstance(value, dict):
+        return None
+
+    fcc = value.get("functionCallingConfig") or value.get("function_calling_config")
+    if not isinstance(fcc, dict):
+        return None
+
+    mode_map = {
+        "MODE_UNSPECIFIED": 0,
+        "AUTO": 1,
+        "ANY": 2,
+        "NONE": 3,
+        "VALIDATED": 4,
+    }
+    raw_mode = fcc.get("mode", "AUTO")
+    if isinstance(raw_mode, int):
+        mode_code = raw_mode
+    else:
+        mode_code = mode_map.get(str(raw_mode).strip().upper(), 1)
+
+    allowed_names = fcc.get("allowedFunctionNames") or fcc.get("allowed_function_names")
+    fcc_wire: list[object] = [mode_code]
+    if isinstance(allowed_names, list) and allowed_names:
+        fcc_wire.append(list(allowed_names))
+
+    include_invocations = value.get("includeServerSideToolInvocations") or value.get(
+        "include_server_side_tool_invocations"
+    )
+    tool_config_wire: list[object] = [None, fcc_wire]
+    if include_invocations is not None:
+        tool_config_wire.append(bool(include_invocations))
+    return tool_config_wire
 
 
 def _extract_google_search_tool_names(
@@ -488,6 +520,7 @@ def normalize_gemini_request(
         )
         tools = injected if injected else None
 
+    tool_config = _normalize_gemini_tool_config(getattr(req, "toolConfig", None))
     generation_config = req.generationConfig
     generation_config_overrides = {
         key: value
@@ -562,6 +595,7 @@ def normalize_gemini_request(
         contents=contents,
         system_instruction=system_instruction,
         tools=tools if tools is not None else None,
+        tool_config=tool_config,
         safety_settings=_normalize_gemini_safety_settings(
             req.safetySettings,
             drop_unsupported=model_defaults.drop_unsupported_params,

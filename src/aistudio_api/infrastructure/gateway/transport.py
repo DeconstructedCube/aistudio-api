@@ -150,7 +150,7 @@ class XHRStreamTransport:
                     "Runtime.addBinding", {"name": "__aistudio_stream_push__"}
                 )
 
-        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue(maxsize=64)
+        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
         self._queues[rid] = queue
 
         init_args = build_streaming_init_args(
@@ -189,10 +189,12 @@ class XHRStreamTransport:
                     status = int(str(event.get("status") or 0))
                     yield ("status", status)
                     status_sent = True
+                    deadline = asyncio.get_running_loop().time() + timeout_s
                 elif etype == "chunk":
                     text = str(event.get("text") or "")
                     if text:
                         yield ("chunk", text.encode("utf-8"))
+                        deadline = asyncio.get_running_loop().time() + timeout_s
                 elif etype == "error":
                     message = str(event.get("message") or "unknown error")
                     raise RuntimeError(f"streaming request failed: {message}")

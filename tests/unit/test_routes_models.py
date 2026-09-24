@@ -1,15 +1,11 @@
 import httpx
 import pytest
-from fastapi import Depends, FastAPI
 
-from aistudio_api.api.dependencies import require_api_key
-from aistudio_api.api.routes_models import router as models_router
+from aistudio_api.api.app import app
 from aistudio_api.config import settings
 
 
 def _build_client() -> httpx.AsyncClient:
-    app = FastAPI()
-    app.include_router(models_router, dependencies=[Depends(require_api_key)])
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     )
@@ -74,5 +70,7 @@ async def test_get_single_model_not_found_returns_404(monkeypatch):
         response = await client.get("/v1beta/models/non-existent-unknown-model-12345")
         assert response.status_code == 404
         data = response.json()
-        assert "detail" in data
-        assert data["detail"] == "Model not found"
+        assert "error" in data
+        assert data["error"]["code"] == 404
+        assert data["error"]["message"] == "Model not found"
+        assert data["error"]["status"] == "NOT_FOUND"

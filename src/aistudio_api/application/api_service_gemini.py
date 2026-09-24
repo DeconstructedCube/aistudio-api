@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from fastapi import HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
 
 from aistudio_api.api.response_models import (
@@ -38,6 +39,34 @@ from aistudio_api.infrastructure.utils.logger import get_logger
 logger = get_logger("api.gemini")
 
 
+WIRE_TO_GEMINI_FINISH_REASON: dict[int, str] = {
+    0: "FINISH_REASON_UNSPECIFIED",
+    1: "STOP",
+    2: "MAX_TOKENS",
+    3: "SAFETY",
+    4: "RECITATION",
+    5: "LANGUAGE",
+    6: "OTHER",
+    7: "BLOCKLIST",
+    8: "PROHIBITED_CONTENT",
+    9: "SPII",
+    10: "MALFORMED_FUNCTION_CALL",
+    11: "IMAGE_SAFETY",
+    12: "UNEXPECTED_TOOL_CALL",
+    13: "TOO_MANY_TOOL_CALLS",
+    14: "IMAGE_PROHIBITED_CONTENT",
+    15: "NO_IMAGE",
+    16: "IMAGE_RECITATION",
+    17: "IMAGE_OTHER",
+}
+
+
+def to_gemini_finish_reason(wire_code: int | None) -> str:
+    if wire_code is None:
+        return "STOP"
+    return WIRE_TO_GEMINI_FINISH_REASON.get(wire_code, "STOP")
+
+
 def classify_gemini_error_payload(exc: Exception) -> tuple[int, str, str]:
     """Extract standard Gemini HTTP status code, message, and status string from an exception."""
     if isinstance(exc, SessionExpiredError):
@@ -50,7 +79,7 @@ def classify_gemini_error_payload(exc: Exception) -> tuple[int, str, str]:
         return 403, str(exc), "PERMISSION_DENIED"
     if isinstance(exc, UsageLimitExceeded):
         return 429, str(exc), "RESOURCE_EXHAUSTED"
-    if isinstance(exc, ValueError):
+    if isinstance(exc, (ValueError, RequestValidationError)):
         return 400, str(exc), "INVALID_ARGUMENT"
     if isinstance(exc, HTTPException):
         status = exc.status_code
@@ -87,6 +116,8 @@ def classify_gemini_error_payload(exc: Exception) -> tuple[int, str, str]:
             str(exc),
             status_map.get(status, "INTERNAL" if status >= 500 else "UNKNOWN"),
         )
+    if isinstance(exc, AistudioError):
+        return 500, str(exc), "INTERNAL"
 
     return 500, str(exc), "INTERNAL"
 
@@ -250,6 +281,7 @@ async def handle_gemini_generate_content(
                 contents=normalized.contents,
                 system_instruction_content=normalized.system_instruction,
                 tools=normalized.tools,
+                tool_config=normalized.tool_config,
                 safety_settings=normalized.safety_settings,
                 temperature=normalized.temperature,
                 top_p=normalized.top_p,
@@ -280,7 +312,11 @@ async def handle_gemini_generate_content(
                                 reasoning_images=output.reasoning_images,
                             ),
                         ),
-                        finishReason="STOP",
+                        finishReason=to_gemini_finish_reason(
+                            output.candidates[0].finish_reason
+                            if output.candidates
+                            else None
+                        ),
                         index=0,
                     )
                 ],
@@ -312,61 +348,97 @@ async def handle_gemini_generate_content(
     ) from last_error
 
 
-def format_sse_event(event_type: str, text: object) -> str | None:
+def format_sse_event(
+    event_type: str,
+    text: object,
+    *,
+    model_version: str | None = None,
+    response_id: str | None = None,
+    thought_signature: str | None = None,
+) -> str | None:
     """Format a single Gemini streaming event into SSE chunk string."""
     if not text:
         return None
+
+    parts: list[dict[str, object]] = []
     if event_type == "body":
-        safe_text = json.dumps(text, ensure_ascii=False)
-        return f'data: {{"candidates": [{{"content": {{"role": "model", "parts": [{{"text": {safe_text}}}]}}, "index": 0}}]}}\n\n'
-    if event_type == "tool_calls":
+        p: dict[str, object] = {"text": str(text)}
+        if thought_signature:
+            p["thoughtSignature"] = thought_signature
+        parts.append(p)
+    elif event_type == "thinking":
+        p = {"text": str(text), "thought": True}
+        if thought_signature:
+            p["thoughtSignature"] = thought_signature
+        parts.append(p)
+    elif event_type == "tool_calls":
         fc_list = text if isinstance(text, list) else []
         parts = [
             part.model_dump(mode="json", exclude_none=True)
             for part in to_gemini_parts("", function_calls=fc_list)
         ]
-        payload = {
-            "candidates": [{"content": {"role": "model", "parts": parts}, "index": 0}]
-        }
-        return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
-    if event_type == "thought_signature":
-        safe_sig = json.dumps(str(text), ensure_ascii=False)
-        return f'data: {{"candidates": [{{"content": {{"role": "model", "parts": [{{"thoughtSignature": {safe_sig}}}]}}, "index": 0}}]}}\n\n'
-    if event_type == "images":
+        if thought_signature and parts:
+            parts[0]["thoughtSignature"] = thought_signature
+    elif event_type == "images":
         img_list = text if isinstance(text, list) else []
         parts = [
             part.model_dump(mode="json", exclude_none=True)
             for part in to_gemini_parts("", images=img_list)
         ]
-        payload = {
-            "candidates": [{"content": {"role": "model", "parts": parts}, "index": 0}]
-        }
-        return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
-    if event_type == "reasoning_images":
+        if thought_signature and parts:
+            parts[0]["thoughtSignature"] = thought_signature
+    elif event_type == "reasoning_images":
         r_img_list = text if isinstance(text, list) else []
         parts = [
             part.model_dump(mode="json", exclude_none=True)
             for part in to_gemini_parts("", reasoning_images=r_img_list)
         ]
-        payload = {
-            "candidates": [{"content": {"role": "model", "parts": parts}, "index": 0}]
-        }
-        return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
-    if event_type == "thinking":
-        safe_text = json.dumps(text, ensure_ascii=False)
-        return f'data: {{"candidates": [{{"content": {{"role": "model", "parts": [{{"text": {safe_text}, "thought": true}}]}}, "index": 0}}]}}\n\n'
-    return None
+        if thought_signature and parts:
+            parts[0]["thoughtSignature"] = thought_signature
+    else:
+        return None
+
+    payload: dict[str, object] = {
+        "candidates": [{"content": {"role": "model", "parts": parts}, "index": 0}]
+    }
+    if model_version:
+        payload["modelVersion"] = model_version
+    if response_id:
+        payload["responseId"] = response_id
+    return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
 
 
-def format_sse_usage(final_usage: dict[str, object] | None) -> str:
+def format_sse_usage(
+    final_usage: dict[str, object] | None,
+    *,
+    finish_reason: str = "STOP",
+    model_version: str | None = None,
+    response_id: str | None = None,
+) -> str:
     """Format final completion usage metadata into SSE chunk string."""
     effective_usage = final_usage or {
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
     }
-    usage_json = to_gemini_usage_metadata(effective_usage).model_dump_json()
-    return f'data: {{"candidates": [{{"content": {{"role": "model", "parts": []}}, "finishReason": "STOP", "index": 0}}], "usageMetadata": {usage_json}}}\n\n'
+    usage_dict = to_gemini_usage_metadata(effective_usage).model_dump(
+        mode="json", exclude_none=True
+    )
+    payload: dict[str, object] = {
+        "candidates": [
+            {
+                "content": {"role": "model", "parts": []},
+                "finishReason": finish_reason,
+                "index": 0,
+            }
+        ],
+        "usageMetadata": usage_dict,
+    }
+    if model_version:
+        payload["modelVersion"] = model_version
+    if response_id:
+        payload["responseId"] = response_id
+    return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
 
 
 def format_sse_error(exc: Exception) -> str:
@@ -405,6 +477,9 @@ def _build_gemini_streaming_response(
                 len(req.contents),
             )
             final_usage: dict[str, object] | None = None
+            final_finish_reason: str = "STOP"
+            latest_response_id: str | None = None
+            buffered_thought_sig: str | None = None
             for stream_attempt in range(MAX_RETRIES):
                 has_yielded_data = False
                 await ensure_active_account(stream_attempt, model=model_path)
@@ -417,6 +492,7 @@ def _build_gemini_streaming_response(
                         contents=normalized.contents,
                         system_instruction_content=normalized.system_instruction,
                         tools=normalized.tools,
+                        tool_config=normalized.tool_config,
                         safety_settings=normalized.safety_settings,
                         temperature=normalized.temperature,
                         top_p=normalized.top_p,
@@ -429,8 +505,25 @@ def _build_gemini_streaming_response(
                         has_yielded_data = True
                         if event_type == "usage":
                             final_usage = text if isinstance(text, dict) else None
+                        elif event_type == "finish_reason":
+                            final_finish_reason = (
+                                to_gemini_finish_reason(text)
+                                if isinstance(text, int)
+                                else str(text)
+                            )
+                        elif event_type == "response_id":
+                            latest_response_id = str(text)
+                        elif event_type == "thought_signature":
+                            buffered_thought_sig = str(text)
                         else:
-                            chunk = format_sse_event(event_type, text)
+                            chunk = format_sse_event(
+                                event_type,
+                                text,
+                                model_version=normalized.model,
+                                response_id=latest_response_id,
+                                thought_signature=buffered_thought_sig,
+                            )
+                            buffered_thought_sig = None
                             if chunk:
                                 yield chunk
                     break
@@ -456,7 +549,12 @@ def _build_gemini_streaming_response(
                 final_usage.get("prompt_tokens") if final_usage else 0,
                 final_usage.get("completion_tokens") if final_usage else 0,
             )
-            yield format_sse_usage(final_usage)
+            yield format_sse_usage(
+                final_usage,
+                finish_reason=final_finish_reason,
+                model_version=target_model,
+                response_id=latest_response_id,
+            )
         except Exception as exc:
             yield format_sse_error(exc)
         finally:

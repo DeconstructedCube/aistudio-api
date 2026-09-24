@@ -173,3 +173,13 @@ def test_parse_image_output_keeps_only_final_images_in_images_field():
     assert output.reasoning_images[0].mime == "image/jpeg"
     assert output.images[0].data != output.reasoning_images[0].data
     assert output.thinking.startswith("**Envisioning a Kitty Scene**")
+
+
+def test_decode_wire_argument_pairs_with_three_element_array():
+    from aistudio_api.infrastructure.gateway.wire_parser import (
+        _decode_wire_argument_pairs,
+    )
+
+    raw = [["city", "San Francisco", "extra_field"]]
+    decoded = _decode_wire_argument_pairs(raw)
+    assert decoded == {"city": "San Francisco"}

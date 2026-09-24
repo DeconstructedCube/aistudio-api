@@ -77,8 +77,7 @@ class IncrementalJSONStreamParser:
                 break
 
     def finish(self) -> Generator[list[object], None, None]:
-        return
-        yield []
+        yield from ()
 
 
 def classify_chunk(chunk: list) -> tuple[str, object]:

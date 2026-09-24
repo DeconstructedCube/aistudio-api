@@ -8,10 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 from aistudio_api.api.app import app
 from aistudio_api.api.dependencies import get_client
+from aistudio_api.domain.errors import UsageLimitExceeded
 from aistudio_api.domain.models import Candidate, ModelOutput
 
 
@@ -241,5 +242,92 @@ async def test_genai_sdk_function_calling_and_response_flow(
                 == "The current weather in San Francisco is sunny and 18°C."
             )
             assert len(captured_requests) == 2
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_genai_sdk_standard_api_error_parsing(mock_client: MagicMock) -> None:
+    """Verify google-genai SDK APIError parses standard Google error format."""
+    mock_client.generate_content = AsyncMock(
+        side_effect=UsageLimitExceeded("Daily quota exhausted for model")
+    )
+    app.dependency_overrides[get_client] = lambda: mock_client
+
+    try:
+        sdk_client = genai.Client(
+            api_key="test-key",
+            http_options=types.HttpOptions(base_url="http://testserver"),
+        )
+        async with sdk_client.aio as aio_client:
+            aio_client._api_client._async_httpx_client = httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+            )
+            with pytest.raises(errors.APIError) as exc_info:
+                await aio_client.models.generate_content(
+                    model="gemini-3.8-flash",
+                    contents="Hello",
+                )
+            err = exc_info.value
+            assert err.code == 429
+            assert err.status == "RESOURCE_EXHAUSTED"
+            assert "daily quota" in str(err.message).lower()
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_genai_sdk_tool_config_forwarding(mock_client: MagicMock) -> None:
+    """Verify google-genai SDK tool_config (mode=ANY) is parsed and forwarded."""
+    mock_client.generate_content = AsyncMock(
+        return_value=ModelOutput(
+            candidates=[Candidate(text="Called")],
+            usage={"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+        )
+    )
+    app.dependency_overrides[get_client] = lambda: mock_client
+
+    try:
+        sdk_client = genai.Client(
+            api_key="test-key",
+            http_options=types.HttpOptions(base_url="http://testserver"),
+        )
+        async with sdk_client.aio as aio_client:
+            aio_client._api_client._async_httpx_client = httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url="http://testserver",
+            )
+            await aio_client.models.generate_content(
+                model="gemini-3.8-flash",
+                contents="What is the weather?",
+                config=types.GenerateContentConfig(
+                    tools=[
+                        types.Tool(
+                            function_declarations=[
+                                types.FunctionDeclaration(
+                                    name="get_weather",
+                                    description="Get weather",
+                                    parameters=types.Schema(
+                                        type=types.Type.OBJECT,
+                                        properties={
+                                            "city": types.Schema(type=types.Type.STRING)
+                                        },
+                                    ),
+                                )
+                            ]
+                        )
+                    ],
+                    tool_config=types.ToolConfig(
+                        function_calling_config=types.FunctionCallingConfig(
+                            mode=types.FunctionCallingConfigMode.ANY,
+                        )
+                    ),
+                ),
+            )
+            assert mock_client.generate_content.called
+            call_kwargs = mock_client.generate_content.call_args.kwargs
+            assert "tool_config" in call_kwargs
+            assert call_kwargs["tool_config"] == [None, [2]]
     finally:
         app.dependency_overrides.clear()

@@ -16,11 +16,13 @@
 - [6. 工具与函数声明 (Tools & Function Calling)](#6-工具与函数声明-tools--function-calling)
   - [6.1 内置工具模板](#61-内置工具模板)
   - [6.2 结构化 Schema 编码与类型字典](#62-结构化-schema-编码与类型字典)
+  - [6.3 工具控制模式 (ToolConfig)](#63-工具控制模式-toolconfig)
 - [7. 响应报文解析与 Token 使用量 (Response & Usage)](#7-响应报文解析与-token-使用量-response--usage)
   - [7.1 响应 Chunk 容器](#71-响应-chunk-容器)
   - [7.2 Candidate 与 Part 字段解析](#72-candidate-与-part-字段解析)
   - [7.3 Token 使用量 (UsageMetadata)](#73-token-使用量-usagemetadata)
-
+  - [7.4 FinishReason 完整状态码映射表](#74-finishreason-完整状态码映射表)
+- [8. 前端逆向新特性与高价值发现](#8-前端逆向新特性与高价值发现)
 ---
 
 ## 1. 协议概览与序列化机制
@@ -161,6 +163,36 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 - **必填属性列表 (Index 7)**：`["field1", "field2"]`
 - **属性声明顺序 (Index 22)**：`["field1", "field2"]`
 
+
+### 6.3 工具控制模式 (ToolConfig)
+
+位于顶层数组下标 `7` (Proto Field 8)。
+
+内部为 `ToolConfig` 消息序列化数组：
+
+```json
+[
+  null,
+  [mode_code, ["allowed_func_1", "allowed_func_2"]],
+  include_server_side_tool_invocations
+]
+```
+
+| 下标 | Proto 字段 | 名称 | 说明 |
+|---|---|---|---|
+| `0` | Field 1 | `retrieval_config` | 知识检索配置，未配置时为 `null` |
+| `1` | Field 2 | `function_calling_config` | 函数调用模式控制数组：`[mode, allowed_function_names]` |
+| `2` | Field 3 | `include_server_side_tool_invocations` | `bool \| null`，服务端工具回显控制 |
+
+#### 函数调用模式码 (Mode Code)
+- `0`：`MODE_UNSPECIFIED`
+- `1`：`AUTO` (自动模型决策)
+- `2`：`ANY` (强制必须调用工具)
+- `3`：`NONE` (禁止调用工具)
+- `4`：`VALIDATED` (验证模式)
+
+> [!CRITICAL]
+> `function_calling_config` 属于 Protobuf Field 2，必须下发在下标 `1`（前置 `null` 占位符 `[null, fcc_wire]`）。若错误编码为 `[fcc_wire]`，Google 后端会按 Field 1 (`retrieval_config`) 反序列化导致类型不匹配报错。
 ---
 
 ## 7. 响应报文解析与 Token 使用量 (Response & Usage)
@@ -220,3 +252,52 @@ Google AI Studio 响应为 Protobuf JSON 数组，每个流式分块或单次响
 > [!NOTE]
 > 最终对齐 Gemini API 标准时：
 > `completion_tokens = visible_completion_tokens + (reasoning_tokens or 0)`
+
+### 7.4 FinishReason 完整状态码映射表
+
+上游 Protobuf 在 Candidate 的 Field 2 (下标 `1`) 返回整数代码，对应 Google API 标准字符串枚举：
+
+| 代码 | 标准枚举值 | 说明 |
+|---|---|---|
+| `0` | `FINISH_REASON_UNSPECIFIED` | 未指定 |
+| `1` | `STOP` | 自然停止或遇到停止序列 |
+| `2` | `MAX_TOKENS` | 达到最大输出 Token 上限 |
+| `3` | `SAFETY` | 触发安全过滤策略拦截 |
+| `4` | `RECITATION` | 触发版权/原文背诵拦截 |
+| `5` | `LANGUAGE` | 不支持的语言策略拦截 |
+| `6` | `OTHER` | 其他终止原因 |
+| `7` | `BLOCKLIST` | 触发禁用词黑名单 |
+| `8` | `PROHIBITED_CONTENT` | 触发违规有害内容拦截 |
+| `9` | `SPII` | 敏感个人身份信息拦截 |
+| `10` | `MALFORMED_FUNCTION_CALL` | 模型生成了非法的函数调用参数 |
+| `11` | `IMAGE_SAFETY` | 生成图片触发安全策略 |
+| `12` | `UNEXPECTED_TOOL_CALL` | 意外的工具调用 |
+| `13` | `TOO_MANY_TOOL_CALLS` | 工具链连续调用超限退出 |
+| `14` | `IMAGE_PROHIBITED_CONTENT` | 图片包含违规内容 |
+| `15` | `NO_IMAGE` | 预期生图但未生成 |
+| `16` | `IMAGE_RECITATION` | 生图版权来源相似度拦截 |
+| `17` | `IMAGE_OTHER` | 生图其他未知原因终止 |
+
+AI Studio Web 核心过滤数组：
+`hCb = [0, 3, 4, 5, 7, 8, 9, 11, 14, 15, 17]`
+前端逻辑中 `1` (`STOP`) 与 `2` (`MAX_TOKENS`) 视为常规完成，其余在 `hCb` 中的代码均触发错误或警告弹窗处理。
+
+---
+
+## 8. 前端逆向新特性与高价值发现
+
+通过对 AI Studio 最新前端代码包（`m=_b.js`）的 AST 深度逆向，发现如下具有高挖掘价值的协议特性与未公开接口：
+
+1. **原生 MCP (Model Context Protocol) 支持**：
+   前端 `toolType` 解析中内置 `mcp_server_tool_call`（枚举代码 `6`），表明 Google 正在或已在 AI Studio 底层协议中预留了连接本地/远程 MCP Server 的标准工具通道。
+2. **原生文件检索工具 (`file_search`)**：
+   工具分支代码中存在 `case 8: return "file_search"` 与 `file_search_call`，区别于传统的代码执行与普通检索，属于针对多文档的大规模知识库检索能力。
+3. **语音自定义词汇表 (`customVocabulary`)**：
+   GenerationConfig 字段 32（`_.cu` / Field 32）下支持向语音端点下发专属专业术语、专有名词与人名词典，显著提升高精度音频转录/生成的准确度。
+4. **音频高级控制标记**：
+   - `wordTimestamps`：字级别（Word-level）输出时间戳；
+   - `speakerDiarization`：多说话人角色分离与标签标记；
+   - `smartTranscription`：去除口语赘字（Filler words）、自动语法重构与口误纠正；
+   - `fillerWords`：允许自然停顿与语气词（"hmm", "ahh"）。
+5. **视频帧流式抽取服务 (`StreamExtractVideoFrames`)**：
+   RPC 服务 `/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/StreamExtractVideoFrames`，用于在后端按时间戳或指定采样率无损切片视频流并回传图片帧。

@@ -56,8 +56,13 @@ def _refresh_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
     except ImportError:
         log.warning("未安装 curl_cffi，保持原始 Cookie 返回")
         return dict(cookies)
+    from aistudio_api.config import settings
 
-    session = requests.Session()
+    session = (
+        requests.Session(proxy=settings.proxy_url)
+        if settings.proxy_url
+        else requests.Session()
+    )
     for name, value in cookies.items():
         session.cookies.set(name, value, domain=".google.com")
 

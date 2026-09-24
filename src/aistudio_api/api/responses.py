@@ -41,13 +41,14 @@ def to_gemini_usage_metadata(
         completion_details = {}
     reasoning_tokens = _coerce_usage_int(completion_details.get("reasoning_tokens"))
     visible_tokens = _coerce_usage_int(completion_details.get("visible_tokens"))
-    candidates_tokens = visible_tokens or _coerce_usage_int(
-        usage.get("completion_tokens")
-    )
+    completion_tokens = _coerce_usage_int(usage.get("completion_tokens"))
+    if completion_tokens == 0:
+        completion_tokens = visible_tokens + reasoning_tokens
+    candidates_tokens = completion_tokens
     prompt_tokens = _coerce_usage_int(usage.get("prompt_tokens"))
     total_tokens = _coerce_usage_int(usage.get("total_tokens"))
-    if total_tokens == 0 and (prompt_tokens or candidates_tokens or reasoning_tokens):
-        total_tokens = prompt_tokens + _coerce_usage_int(usage.get("completion_tokens"))
+    if total_tokens == 0 and (prompt_tokens or candidates_tokens):
+        total_tokens = prompt_tokens + candidates_tokens
     return GeminiUsageMetadata(
         promptTokenCount=prompt_tokens,
         candidatesTokenCount=candidates_tokens,

@@ -55,6 +55,7 @@ class RequestCaptureService:
         system_instruction: str | None = None,
         system_instruction_content: AistudioContent | None = None,
         tools: list[list] | None = None,
+        tool_config: list[object] | None = None,
         safety_settings: list[list] | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
@@ -71,7 +72,26 @@ class RequestCaptureService:
         snapshot_contents = rewritten_contents or [
             self._build_capture_content(prompt=prompt, images=images)
         ]
-        snapshot = await self._session.generate_snapshot(snapshot_contents)
+        content_hash = self._compute_content_hash(snapshot_contents)
+        cached_entry = self._snapshot_cache.get(content_hash)
+        if cached_entry:
+            snapshot = (
+                cached_entry[0] if isinstance(cached_entry, tuple) else cached_entry
+            )
+            logger.info(
+                "Snapshot 命中缓存: hash=%s, snapshot=%s chars",
+                content_hash[:8],
+                len(snapshot),
+            )
+        else:
+            snapshot = await self._session.generate_snapshot(snapshot_contents)
+            self._snapshot_cache.set(
+                content_hash,
+                snapshot,
+                template.url,
+                template.headers,
+                template.body,
+            )
         body = modify_body(
             template.body,
             model=model,
@@ -80,6 +100,7 @@ class RequestCaptureService:
             system_instruction=system_instruction,
             system_instruction_content=system_instruction_content,
             tools=tools,
+            tool_config=tool_config,
             safety_settings=safety_settings,
             images=images,
             temperature=temperature,
@@ -150,3 +171,20 @@ class RequestCaptureService:
                 )
         parts.append(AistudioPart(text=prompt))
         return AistudioContent(role="user", parts=parts)
+
+    @staticmethod
+    def _compute_content_hash(contents: list[AistudioContent]) -> str:
+        from hashlib import sha256
+
+        hash_parts: list[str] = []
+        for content in contents:
+            for part in content.parts:
+                if part.text is not None:
+                    hash_parts.append(str(part.text))
+                elif part.inline_data is not None:
+                    hash_parts.append(str(part.inline_data[1]))
+                elif part.file_id is not None:
+                    hash_parts.append(str(part.file_id))
+                else:
+                    hash_parts.append("")
+        return sha256(" ".join(hash_parts).encode("utf-8")).hexdigest()

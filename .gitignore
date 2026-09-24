@@ -28,7 +28,7 @@ data2/
 chrome-headless
 .cloakbrowser/
 server-logs/
-cache/
+/cache/
 db/
 *.log
 *.pid
