@@ -93,10 +93,11 @@ async def list_accounts(
             id=a.id,
             name=a.name,
             email=a.email,
-            created_at=a.created_at,
+            created_at=a.created_at or "",
             last_used=a.last_used,
-            auth_user=getattr(a, "auth_user", "0"),
-            cookie_id=getattr(a, "cookie_id", None) or f"cookie_{a.created_at[:16]}",
+            auth_user=getattr(a, "auth_user", "0") or "0",
+            cookie_id=getattr(a, "cookie_id", None)
+            or (f"cookie_{a.created_at[:16]}" if getattr(a, "created_at", None) else f"cookie_{a.id}"),
         )
         for a in accounts
     ]
@@ -114,11 +115,11 @@ async def get_active_account(
         id=account.id,
         name=account.name,
         email=account.email,
-        created_at=account.created_at,
+        created_at=account.created_at or "",
         last_used=account.last_used,
-        auth_user=getattr(account, "auth_user", "0"),
+        auth_user=getattr(account, "auth_user", "0") or "0",
         cookie_id=getattr(account, "cookie_id", None)
-        or f"cookie_{account.created_at[:16]}",
+        or (f"cookie_{account.created_at[:16]}" if getattr(account, "created_at", None) else f"cookie_{account.id}"),
     )
 
 
@@ -145,11 +146,11 @@ async def activate_account(
         id=account.id,
         name=account.name,
         email=account.email,
-        created_at=account.created_at,
+        created_at=account.created_at or "",
         last_used=account.last_used,
-        auth_user=getattr(account, "auth_user", "0"),
+        auth_user=getattr(account, "auth_user", "0") or "0",
         cookie_id=getattr(account, "cookie_id", None)
-        or f"cookie_{account.created_at[:16]}",
+        or (f"cookie_{account.created_at[:16]}" if getattr(account, "created_at", None) else f"cookie_{account.id}"),
     )
 
 

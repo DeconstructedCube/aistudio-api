@@ -54,6 +54,12 @@ def get_seconds_until_pacific_midnight() -> float:
         return float(remaining)
 
 
+def normalize_model_key(model: str | None) -> str | None:
+    """统一模型标识（去除 models/ 前缀并转小写），确保单模型统计准确隔离。"""
+    if not model:
+        return None
+    return model.removeprefix("models/").lower()
+
 @dataclass
 class AccountStats:
     """单账号的运行与配额统计。"""
@@ -72,6 +78,7 @@ class AccountStats:
     model_cooldowns: dict[str, float] = field(default_factory=dict)
     model_rate_limited_dates: dict[str, str] = field(default_factory=dict)
     model_requests: dict[str, int] = field(default_factory=dict)
+    model_requests_dates: dict[str, str] = field(default_factory=dict)
     model_rate_limited: dict[str, int] = field(default_factory=dict)
     model_drip_mode: dict[str, bool] = field(default_factory=dict)
 
@@ -91,6 +98,7 @@ class AccountStats:
             "model_cooldowns": dict(self.model_cooldowns),
             "model_rate_limited_dates": dict(self.model_rate_limited_dates),
             "model_requests": dict(self.model_requests),
+            "model_requests_dates": dict(self.model_requests_dates),
             "model_rate_limited": dict(self.model_rate_limited),
             "model_drip_mode": dict(self.model_drip_mode),
         }
@@ -116,6 +124,12 @@ class AccountStats:
             for k, v in raw_reqs.items():
                 with contextlib.suppress(ValueError, TypeError):
                     model_requests[str(k)] = int(str(v))
+
+        raw_req_dates = data.get("model_requests_dates")
+        model_requests_dates: dict[str, str] = {}
+        if isinstance(raw_req_dates, dict):
+            for k, v in raw_req_dates.items():
+                model_requests_dates[str(k)] = str(v)
 
         raw_limits = data.get("model_rate_limited")
         model_rate_limited: dict[str, int] = {}
@@ -157,10 +171,31 @@ class AccountStats:
             if data.get("rate_limited_date_la")
             else None,
             model_cooldowns=model_cooldowns,
+            model_rate_limited_dates=model_rate_limited_dates,
             model_requests=model_requests,
+            model_requests_dates=model_requests_dates,
             model_rate_limited=model_rate_limited,
             model_drip_mode=model_drip_mode,
         )
+
+    def _check_date_reset(self, model: str | None, current_la: str) -> None:
+        """检查美西午夜跨天，自动重置单日请求计数与限流锁定。"""
+        model = normalize_model_key(model)
+        if self.rate_limited_date_la and self.rate_limited_date_la < current_la:
+            self.rate_limited_date_la = None
+
+        if model:
+            req_date = self.model_requests_dates.get(model)
+            if req_date and req_date < current_la:
+                self.model_requests[model] = 0
+                self.model_requests_dates[model] = current_la
+
+            limit_date = self.model_rate_limited_dates.get(model)
+            if limit_date and limit_date < current_la:
+                self.model_rate_limited_dates.pop(model, None)
+                self.model_cooldowns.pop(model, None)
+                self.model_rate_limited.pop(model, None)
+                self.model_drip_mode.pop(model, None)
 
     def is_available(
         self, model: str | None = None, *, ignore_auth_cooldown: bool = False
@@ -170,24 +205,15 @@ class AccountStats:
         if not ignore_auth_cooldown and self.auth_cooldown > now:
             return False
 
+        model = normalize_model_key(model)
         current_la = get_pacific_date_key(now)
+        self._check_date_reset(model, current_la)
 
-        # 检查全局 429 标记是否已跨过美西午夜
+        # 检查全局 429 标记
         if self.rate_limited_date_la:
-            if self.rate_limited_date_la < current_la:
-                self.rate_limited_date_la = None
-            else:
-                return False
+            return False
 
         if model:
-            # 检查指定模型 429 标记是否已跨过美西午夜
-            limit_date = self.model_rate_limited_dates.get(model)
-            if limit_date and limit_date < current_la:
-                self.model_rate_limited_dates.pop(model, None)
-                self.model_cooldowns.pop(model, None)
-                self.model_rate_limited.pop(model, None)
-                self.model_drip_mode.pop(model, None)
-
             cd = self.model_cooldowns.get(model, 0.0)
             return now >= cd
 
@@ -195,6 +221,7 @@ class AccountStats:
 
     def get_cooldown_remaining(self, model: str | None = None) -> float:
         """获取距离配额刷新的剩余秒数。"""
+        model = normalize_model_key(model)
         if self.is_available(model):
             return 0.0
         now = time.time()
@@ -205,7 +232,6 @@ class AccountStats:
             if cd > now:
                 return max(0.0, cd - now)
         return get_seconds_until_pacific_midnight()
-
     def record_success(self, model: str | None = None) -> None:
         now = time.time()
         self.requests += 1
@@ -213,15 +239,16 @@ class AccountStats:
         self.last_used = now
         self.auth_errors = 0
         self.auth_cooldown = 0.0
+        model = normalize_model_key(model)
         if model:
+            la_date = get_pacific_date_key(now)
+            self._check_date_reset(model, la_date)
             self.model_requests[model] = self.model_requests.get(model, 0) + 1
+            self.model_requests_dates[model] = la_date
             self.model_cooldowns.pop(model, None)
             self.model_rate_limited_dates.pop(model, None)
-            # 在 drip 模式下消费了 1 次恢复额度：保持 drip 模式（上限 1-2 次，不盲目重置为满额大号），
-            # 若非 drip 模式，则清空限流计数
             if not self.model_drip_mode.get(model):
                 self.model_rate_limited.pop(model, None)
-
     def record_rate_limited(self, model: str | None = None) -> None:
         now = time.time()
         self.requests += 1
@@ -229,28 +256,17 @@ class AccountStats:
         self.last_rate_limited = now
         la_date = get_pacific_date_key(now)
         cooldown_seconds = get_seconds_until_pacific_midnight()
+        model = normalize_model_key(model)
 
         if model:
-            # 检查是否已跨过美西午夜，如果是新的一天则重置该模型的限流计数
-            prev_date = self.model_rate_limited_dates.get(model)
-            if prev_date and prev_date < la_date:
-                self.model_rate_limited.pop(model, None)
-                self.model_rate_limited_dates.pop(model, None)
-                self.model_cooldowns.pop(model, None)
-                self.model_drip_mode.pop(model, None)
+            self._check_date_reset(model, la_date)
 
             is_drip = bool(self.model_drip_mode.get(model))
             limit_count = self.model_rate_limited.get(model, 0) + 1
             self.model_requests[model] = self.model_requests.get(model, 0) + 1
+            self.model_requests_dates[model] = la_date
             self.model_rate_limited[model] = limit_count
 
-            # 动态阶梯与滴漏恢复冷却：
-            # 1. 如果已处于滴漏模式 (drip_mode)，说明大额度早已耗尽，恢复出来的 1-2 次已用完，
-            #    立即进入 300s (5分钟) 滴漏冷却等待下一次令牌桶滴入，绝不频繁 60s 冲击上游浪费时间；
-            # 2. 如果处于初始状态：
-            #    - 第 1-2 次: 60s (应对短时并发/RPM 抖动，不轻易断定大额度耗尽)
-            #    - 第 3 次起: 判定大额度用尽，进入 drip_mode，并冷却 300s (5分钟) 等待额度渗漏恢复；
-            #    - 达到第 5 次连续无可用额度时适度延长至 600s (10分钟)，封顶 1800s，绝不死锁一整天！
             if is_drip:
                 cooldown_duration = 300.0 if limit_count <= 4 else 600.0
             elif limit_count <= 2:
@@ -262,12 +278,14 @@ class AccountStats:
             effective_cooldown = min(cooldown_duration, max(60.0, cooldown_seconds))
             self.model_cooldowns[model] = now + effective_cooldown
             self.model_rate_limited_dates[model] = la_date
-            self.rate_limited_date_la = la_date if model is None else None
+        else:
+            self.rate_limited_date_la = la_date
 
     def record_error(self, model: str | None = None) -> None:
         self.requests += 1
         self.errors += 1
         self.last_used = time.time()
+        model = normalize_model_key(model)
         if model:
             self.model_requests[model] = self.model_requests.get(model, 0) + 1
 
@@ -282,6 +300,7 @@ class AccountStats:
         self.last_auth_error = now
         self.last_used = now
         self.auth_cooldown = now + cooldown_seconds
+        model = normalize_model_key(model)
         if model:
             self.model_requests[model] = self.model_requests.get(model, 0) + 1
 
@@ -289,19 +308,22 @@ class AccountStats:
         """手动清除冷却与 429/403 锁定。"""
         self.auth_cooldown = 0.0
         self.auth_errors = 0
+        model = normalize_model_key(model)
         if model:
             self.model_cooldowns.pop(model, None)
             self.model_rate_limited_dates.pop(model, None)
             self.model_rate_limited.pop(model, None)
             self.model_drip_mode.pop(model, None)
+            self.model_requests.pop(model, None)
+            self.model_requests_dates.pop(model, None)
         else:
             self.rate_limited_date_la = None
             self.model_cooldowns.clear()
             self.model_rate_limited_dates.clear()
             self.model_rate_limited.clear()
             self.model_drip_mode.clear()
-
-
+            self.model_requests.clear()
+            self.model_requests_dates.clear()
 class AccountRotator:
     """黏性账号调度管理器。
 
@@ -466,11 +488,14 @@ class AccountRotator:
                         if a.id == current_account_id:
                             return a
                 # 故障转移：按最少 auth_errors、最少 errors、最久未用挑选
-                # 故障转移：优先非 drip_mode 的充沛额度账号，然后按最少 auth_errors、最少 errors、最久未用挑选
+                # 故障转移：优先用该模型与总使用次数少、非 drip_mode 的充沛额度健康账号
+                norm_m = normalize_model_key(model)
                 account, _ = min(
                     candidates,
                     key=lambda x: (
-                        1 if (model and x[1].model_drip_mode.get(model)) else 0,
+                        1 if (norm_m and x[1].model_drip_mode.get(norm_m)) else 0,
+                        x[1].model_requests.get(norm_m, 0) if norm_m else 0,
+                        x[1].requests,
                         x[1].auth_errors,
                         x[1].errors,
                         x[1].last_used,
@@ -479,7 +504,6 @@ class AccountRotator:
                 if current_account_id and account.id != current_account_id:
                     logger.info("账号故障转移切换: %s (model=%s)", account.name, model)
                 return account
-            # 如果没有其他可用账号（如单账号或全部其他账号均 429 耗尽）：
             if failed_account_id:
                 for a, _ in available:
                     if a.id == failed_account_id:
@@ -515,10 +539,13 @@ class AccountRotator:
                     for a, s in candidates:
                         if a.id == current_account_id:
                             return a, s
+                norm_m = normalize_model_key(model)
                 return min(
                     candidates,
                     key=lambda x: (
-                        1 if (model and x[1].model_drip_mode.get(model)) else 0,
+                        1 if (norm_m and x[1].model_drip_mode.get(norm_m)) else 0,
+                        x[1].model_requests.get(norm_m, 0) if norm_m else 0,
+                        x[1].requests,
                         x[1].auth_errors,
                         x[1].errors,
                         x[1].last_used,

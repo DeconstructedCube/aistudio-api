@@ -48,10 +48,9 @@ export const useAccountsStore = defineStore('accounts', () => {
 
       if (activeRes.status === 'fulfilled') {
         activeAccount.value = activeRes.value
-      } else if (accsRes.status === 'fulfilled' && accsRes.value.length === 0) {
+      } else {
         activeAccount.value = null
       }
-
       if (rotStatsRes.status === 'fulfilled' && rotStatsRes.value?.accounts) {
         rotationAccounts.value = rotStatsRes.value.accounts
       }
@@ -71,6 +70,7 @@ export const useAccountsStore = defineStore('accounts', () => {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '激活失败'
       toast.error(msg)
+      await fetchAll()
     } finally {
       activatingId.value = null
     }

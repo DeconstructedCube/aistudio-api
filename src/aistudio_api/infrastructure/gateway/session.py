@@ -277,6 +277,7 @@ class BrowserSession:
             and not self._page.is_closed()
             and self._hooks_installed
             and self._snap_key
+            and self._bootstrap_template is not None
         ):
             return self._page
 
@@ -286,14 +287,15 @@ class BrowserSession:
         await self._install_hooks(page)
 
         if not force_refresh and (
-            self._hooks_installed or await page.evaluate("() => !!window.__bg_service")
+            (self._hooks_installed and self._bootstrap_template is not None and self._snap_key)
+            or (await page.evaluate("() => !!window.__bg_service") and self._bootstrap_template is not None and self._snap_key)
         ):
             return page
 
         async with self._botguard_lock:
             if not force_refresh and (
-                self._hooks_installed
-                or await page.evaluate("() => !!window.__bg_service")
+                (self._hooks_installed and self._bootstrap_template is not None and self._snap_key)
+                or (await page.evaluate("() => !!window.__bg_service") and self._bootstrap_template is not None and self._snap_key)
             ):
                 return page
 
@@ -410,6 +412,11 @@ class BrowserSession:
                         # 预热即刻截断：捕获到 BotGuardService 后立即停止生成，无需等待模型吐字
                         with suppress(Exception):
                             await page.evaluate(STOP_GENERATION_JS)
+                        if not captured:
+                            for _ in range(20):
+                                if captured:
+                                    break
+                                await page.wait_for_timeout(100)
                         if captured and self._bootstrap_template is None:
                             self._bootstrap_template = dict(captured)
                         await page.fill("textarea", original_text)
@@ -427,7 +434,6 @@ class BrowserSession:
                 unsub()
                 with suppress(Exception):
                     await page.fill("textarea", original_text)
-
     async def import_cookies(
         self, cookie_string: str, auth_file: str | None = None
     ) -> int:
@@ -486,9 +492,10 @@ class BrowserSession:
         """Execute browser action flow to capture request template without caching in session."""
         async with self._template_lock:
             page = await self.ensure_botguard_service()
+            if not self._bootstrap_template:
+                await self.ensure_botguard_service(force_refresh=True)
             if self._bootstrap_template:
                 return dict(self._bootstrap_template)
-
             captured: dict[str, object] = {}
             last_response: dict[str, object] | None = None
 

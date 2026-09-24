@@ -420,3 +420,54 @@ async def test_browser_session_send_streaming_batch_events():
     assert ("status", 200) in results
     assert ("chunk", b"hello ") in results
     assert ("chunk", b"world") in results
+
+
+@pytest.mark.asyncio
+async def test_rotator_prioritizes_least_used_account():
+    """测试轮询机制优先使用使用次数少的账号，同时在当前号健康时保持黏性（减少切换）。"""
+    store = MagicMock(spec=AccountStore)
+    acc1 = AccountMeta(id="acc_1", name="Account 1", email="acc1@test.com", created_at="2026-01-01")
+    acc2 = AccountMeta(id="acc_2", name="Account 2", email="acc2@test.com", created_at="2026-01-01")
+    store.list_accounts.return_value = [acc1, acc2]
+
+    rotator = AccountRotator(account_store=store)
+    # acc1 调用了 50 次，acc2 只调用了 5 次
+    rotator._stats["acc_1"].model_requests["gemini-3.8-flash"] = 50
+    rotator._stats["acc_1"].requests = 50
+    rotator._stats["acc_2"].model_requests["gemini-3.8-flash"] = 5
+    rotator._stats["acc_2"].requests = 5
+
+    # 1. 减少切换（黏性优先）：如果当前活跃号是 acc1 且健康可用，继续复用 acc1
+    chosen = await rotator.get_next_account(
+        model="models/gemini-3.8-flash",
+        current_account_id="acc_1",
+    )
+    assert chosen is not None
+    assert chosen.id == "acc_1"
+
+    # 2. 发生故障转移（如 acc1 触发 429）或初次调度时：优先选择调用次数少的 acc2
+    chosen_failover = await rotator.get_next_account(
+        model="models/gemini-3.8-flash",
+        current_account_id="acc_1",
+        failed_account_id="acc_1",
+    )
+    assert chosen_failover is not None
+    assert chosen_failover.id == "acc_2"
+
+    # 3. 前缀统一规范化：带 models/ 前缀与不带前缀均指向相同的调用计数
+    rotator.record_success("acc_2", model="models/gemini-3.8-flash")
+    assert rotator._stats["acc_2"].model_requests["gemini-3.8-flash"] == 6
+
+
+@pytest.mark.asyncio
+async def test_model_requests_midnight_reset():
+    """测试美西午夜跨天后，模型的单日请求计数与限流锁定自动归零刷新。"""
+    stats = AccountStats(account_id="acc_1")
+    stats.model_requests["gemini-3.8-flash"] = 50
+    stats.model_requests_dates["gemini-3.8-flash"] = "2020-01-01"  # 过去的日期
+    stats.model_cooldowns["gemini-3.8-flash"] = time.time() + 3600
+    stats.model_rate_limited_dates["gemini-3.8-flash"] = "2020-01-01"
+
+    # 跨天后自动恢复可用且单日请求计数清零
+    assert stats.is_available("gemini-3.8-flash")
+    assert stats.model_requests["gemini-3.8-flash"] == 0
