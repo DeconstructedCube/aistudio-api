@@ -36,14 +36,17 @@ export interface ModelProfileItem {
   safety_settings?: SafetySettingsMap
 }
 
-export type ModelOverrideMap = Record<string, {
+export interface ModelOverrideItem {
+  is_image_model?: boolean
   default_tools?: string[]
   generation_config_defaults?: GenerationConfigDefaults
   clear_generation_config_indexes?: number[]
   disable_safety_settings?: boolean
   drop_unsupported_params?: boolean
   safety_settings?: SafetySettingsMap
-}>
+}
+
+export type ModelOverrideMap = Record<string, ModelOverrideItem>
 
 export interface ModelDefaultsConfig {
   drop_unsupported_params?: boolean

@@ -24,6 +24,36 @@ export interface FieldDefinition {
   suggestions?: { label: string; value: string | number; description?: string }[]
   tags?: string[]
 }
+export const TOOL_SUGGESTIONS = [
+  { label: '网页+图片搜索', value: 'google_search_and_image_search', description: '适用于生图模型 (支持搜索参考图)' },
+  { label: 'Google 网页搜索', value: 'google_search', description: '常规文本问答联网搜索' },
+  { label: '仅图片搜索', value: 'image_search', description: '仅用于图像检索' },
+  { label: '代码执行 (Python)', value: 'code_execution', description: '文本模型 Python 计算与绘图' },
+  { label: 'Google 地图', value: 'google_maps', description: '地理与地图位置检索' },
+  { label: '网页抓取与上下文', value: 'url_context', description: '提取 URL 内容上下文' },
+]
+
+export const IMAGE_MODE_OPTIONS = [
+  { value: 'image_only', label: 'image_only (仅输出图片)', description: '推荐：适合第三方画图客户端' },
+  { value: 'text_and_image', label: 'text_and_image (文字与图片混排)', description: '包含提示词分析与图片实体' },
+  { value: null, label: '不显式指定 (Null)', description: '遵循上游默认' },
+]
+
+export const THINKING_LEVEL_OPTIONS = [
+  { value: 'MINIMAL', label: 'MINIMAL (极速 / 最小思考)', description: '生图或短回复推荐' },
+  { value: 'LOW', label: 'LOW (轻度思考)', description: '兼顾速度与简单推理' },
+  { value: 'MEDIUM', label: 'MEDIUM (标准中度思考)', description: '平衡模式' },
+  { value: 'HIGH', label: 'HIGH (深度慢思考)', description: '推理模型默认' },
+  { value: null, label: '不显式指定 (Null)', description: '遵循模型默认' },
+]
+
+export const MEDIA_RESOLUTION_OPTIONS = [
+  { value: 'HIGH', label: 'HIGH (高分辨率 / 1024+)', description: '原图细节，多模态推荐' },
+  { value: 'MEDIUM', label: 'MEDIUM (标准清晰度)', description: '标准分辨率' },
+  { value: 'LOW', label: 'LOW (低画质缩略)', description: '节省 Token' },
+  { value: null, label: '默认 (Null)', description: '遵循上游默认' },
+]
+
 
 export const CONFIG_SCHEMA: Record<string, FieldDefinition> = {
   'profile.name': {
@@ -85,6 +115,16 @@ export const CONFIG_SCHEMA: Record<string, FieldDefinition> = {
     description: '精确匹配特定模型全称（忽略 models/ 前缀与大小写）。',
     explanation: '适合对特定版本模型进行精确指定（如 gemini-3.7-flash）。',
     defaultValue: [],
+    tags: ['匹配规则'],
+  },
+  'match.rules': {
+    key: 'match.rules',
+    title: '模型名称匹配规则 (Match Rules)',
+    category: 'match',
+    type: 'tags',
+    description: '系统按 contains、prefixes、exact 顺序依次检测模型名，命中后自动应用该组配置。',
+    explanation: '支持前缀匹配（如 gemini-）、关键词包含（如 image）与全称精确匹配。',
+    defaultValue: {},
     tags: ['匹配规则'],
   },
   'profile.default_tools': {
@@ -165,6 +205,16 @@ export const CONFIG_SCHEMA: Record<string, FieldDefinition> = {
     recommendedValue: [7, 13, 17],
     tags: ['高级项', '生图兼容'],
   },
+  'generation.defaults': {
+    key: 'generation.defaults',
+    title: '生成参数默认值 (Generation Config Defaults)',
+    category: 'generation',
+    type: 'select',
+    description: '映射至 Google Wire 请求中的 generation_config 结构，控制思考深度、生图模式与多模态分辨率。',
+    explanation: '可为整组或单个模型定义专用的生成与多模态配置，下发请求时自动注入。',
+    defaultValue: {},
+    tags: ['生成配置'],
+  },
   'safety.disable_safety_settings': {
     key: 'safety.disable_safety_settings',
     title: '完全禁用安全规则下发 (disable_safety_settings)',
@@ -197,6 +247,27 @@ export const CONFIG_SCHEMA: Record<string, FieldDefinition> = {
     defaultValue: false,
     recommendedValue: true,
     tags: ['兼容性', '容错', '防拦截'],
+  },
+  'system.drop_unsupported_params': {
+    key: 'system.drop_unsupported_params',
+    title: '全局丢弃不支持参数 (drop_unsupported_params)',
+    category: 'system',
+    type: 'boolean',
+    description: '在全局维度自动丢弃下游客户端传入的未知安全类别（如 CIVIC_INTEGRITY）或模型不兼容工具。',
+    explanation: '当特定模型或 Profile 未单独指定 drop_unsupported_params 时，默认以此全局设置为准，避免上游 400 报错。',
+    defaultValue: false,
+    recommendedValue: true,
+    tags: ['全局配置', '防拦截'],
+  },
+  'model.override': {
+    key: 'model.override',
+    title: '单模型精确覆盖规则 (Model Override)',
+    category: 'overrides',
+    type: 'string',
+    description: '针对特定具体模型（如 gemini-2.0-flash）精确覆盖规则，优先级高于 Profiles 分组规则。',
+    explanation: '支持单独配置生图模式、思考强度、多模态清晰度、专用工具集与独立安全规则。',
+    defaultValue: {},
+    tags: ['精确覆盖'],
   },
 }
 

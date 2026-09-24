@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import type { ModelProfileItem } from './types.ts'
+import {
+  TOOL_SUGGESTIONS,
+  IMAGE_MODE_OPTIONS,
+  THINKING_LEVEL_OPTIONS,
+  MEDIA_RESOLUTION_OPTIONS,
+} from './schema.ts'
 import ConfigSwitch from './ConfigSwitch.vue'
 import ConfigSelect from './ConfigSelect.vue'
 import ConfigInput from './ConfigInput.vue'
@@ -28,34 +34,11 @@ const emit = defineEmits<{
 
 const expanded = ref(true)
 
-const toolSuggestions = [
-  { label: '网页+图片搜索', value: 'google_search_and_image_search', description: '适用于生图模型' },
-  { label: 'Google 搜索', value: 'google_search', description: '网页搜索工具' },
-  { label: '图片搜索', value: 'image_search', description: '仅图片检索' },
-  { label: '代码执行环境', value: 'code_execution', description: 'Python 代码解释器' },
-  { label: 'Google 地图', value: 'google_maps', description: '地理与地图位置' },
-  { label: '网页抓取与上下文', value: 'url_context', description: 'URL 内容抓取' },
-]
-
-const imageModeOptions = [
-  { value: 'image_only', label: 'image_only (仅输出图片)', description: '默认推荐生图模式' },
-  { value: 'text_and_image', label: 'text_and_image (文字与图片混排)', description: '输出解说文字与图片' },
-  { value: null, label: '不显式指定 (Null)', description: '遵循上游默认' },
-]
-
-const thinkingLevelOptions = [
-  { value: 'MINIMAL', label: 'MINIMAL (极速 / 最小思考)', description: '生图或短回复推荐' },
-  { value: 'LOW', label: 'LOW (轻度思考)' },
-  { value: 'MEDIUM', label: 'MEDIUM (标准中度思考)' },
-  { value: 'HIGH', label: 'HIGH (深度慢思考)', description: '推理模型默认' },
-]
-
-const mediaResolutionOptions = [
-  { value: 'HIGH', label: 'HIGH (高分辨率 / 1024+)' },
-  { value: 'MEDIUM', label: 'MEDIUM (标准清晰度)' },
-  { value: 'LOW', label: 'LOW (低画质缩略)' },
-  { value: null, label: '默认 (Null)' },
-]
+function handleDelete() {
+  if (confirm(`确定要删除规则组 "${props.profile.name || 'unnamed'}" 吗？`)) {
+    emit('delete')
+  }
+}
 
 function updateField<K extends keyof ModelProfileItem>(key: K, val: ModelProfileItem[K]) {
   const next = { ...props.profile, [key]: val }
@@ -136,7 +119,7 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
           type="button"
           class="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
           title="删除该规则预设"
-          @click="emit('delete')"
+          @click="handleDelete"
         >
           <Trash2 class="w-4 h-4" />
         </button>
@@ -185,10 +168,7 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
             <Layers class="w-4 h-4 text-brand-600" />
             <span>模型名称匹配条件 (Match Rules)</span>
           </div>
-          <FieldHelpTip
-            title="匹配规则"
-            content="系统按 contains、prefixes、exact 顺序依次检测模型名，命中后自动应用该组配置。"
-          />
+          <FieldHelpTip schema-key="match.rules" />
         </div>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
           <ConfigTagList
@@ -229,7 +209,7 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
         <ConfigTagList
           label="已启用的默认工具"
           description="客户端未显式传 tools 时，默认自动挂载的工具"
-          :suggestions="toolSuggestions"
+          :suggestions="TOOL_SUGGESTIONS"
           @update:model-value="updateField('default_tools', $event as string[])"
         />
       </div>
@@ -241,61 +221,105 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
             <Cpu class="w-4 h-4 text-brand-600" />
             <span>生成参数默认值 (Generation Config Defaults)</span>
           </div>
-          <FieldHelpTip
-            title="生成参数"
-            content="映射至 Google Wire 请求中的 generation_config 结构，控制思考深度、生图模式与多模态分辨率。"
-          />
+          <FieldHelpTip schema-key="generation.defaults" />
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-          <ConfigSelect
-            :model-value="profile.generation_config_defaults?.image_output_mode"
-            label="图片输出模式 (image_output_mode)"
-            :options="imageModeOptions"
-            @update:model-value="updateGenerationConfig('image_output_mode', $event as string | null)"
-          />
+          <div class="flex items-center gap-1.5">
+            <div class="flex-1">
+              <ConfigSelect
+                :model-value="profile.generation_config_defaults?.image_output_mode"
+                label="图片输出模式 (image_output_mode)"
+                :options="IMAGE_MODE_OPTIONS"
+                @update:model-value="updateGenerationConfig('image_output_mode', $event as string | null)"
+              />
+            </div>
+            <FieldHelpTip
+              schema-key="generation.image_output_mode"
+              class="mt-4 shrink-0"
+            />
+          </div>
 
-          <ConfigSelect
-            :model-value="profile.generation_config_defaults?.thinking_config?.level"
-            label="思考强度等级 (thinking_level)"
-            :options="thinkingLevelOptions"
-            @update:model-value="updateThinkingConfig($event as any)"
-          />
+          <div class="flex items-center gap-1.5">
+            <div class="flex-1">
+              <ConfigSelect
+                :model-value="profile.generation_config_defaults?.thinking_config?.level"
+                label="思考强度等级 (thinking_level)"
+                :options="THINKING_LEVEL_OPTIONS"
+                @update:model-value="updateThinkingConfig($event as any)"
+              />
+            </div>
+            <FieldHelpTip
+              schema-key="generation.thinking_level"
+              class="mt-4 shrink-0"
+            />
+          </div>
 
-          <ConfigSelect
-            :model-value="profile.generation_config_defaults?.media_resolution"
-            label="多模态输入分辨率 (media_resolution)"
-            :options="mediaResolutionOptions"
-            @update:model-value="updateGenerationConfig('media_resolution', $event as string | null)"
-          />
+          <div class="flex items-center gap-1.5">
+            <div class="flex-1">
+              <ConfigSelect
+                :model-value="profile.generation_config_defaults?.media_resolution"
+                label="多模态输入分辨率 (media_resolution)"
+                :options="MEDIA_RESOLUTION_OPTIONS"
+                @update:model-value="updateGenerationConfig('media_resolution', $event as string | null)"
+              />
+            </div>
+            <FieldHelpTip
+              schema-key="generation.media_resolution"
+              class="mt-4 shrink-0"
+            />
+          </div>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-          <ConfigSwitch
-            :model-value="Boolean(profile.drop_unsupported_params)"
-            label="自动丢弃不支持参数 (drop_unsupported_params)"
-            description="自动过滤未知安全类别（如 CIVIC_INTEGRITY）或不兼容工具，避免 400 报错"
-            @update:model-value="updateField('drop_unsupported_params', $event)"
-          />
+          <div class="flex items-center gap-1.5">
+            <div class="flex-1">
+              <ConfigSwitch
+                :model-value="Boolean(profile.drop_unsupported_params)"
+                label="自动丢弃不支持参数 (drop_unsupported_params)"
+                description="自动过滤未知安全类别（如 CIVIC_INTEGRITY）或不兼容工具，避免 400 报错"
+                @update:model-value="updateField('drop_unsupported_params', $event)"
+              />
+            </div>
+            <FieldHelpTip
+              schema-key="profile.drop_unsupported_params"
+              class="shrink-0"
+            />
+          </div>
 
-          <ConfigSwitch
-            :model-value="Boolean(profile.disable_safety_settings)"
-            label="完全不下发安全规则 (disable_safety_settings)"
-            description="生图模型通常开启此项以避免被安全机制误拦截"
-            @update:model-value="updateField('disable_safety_settings', $event)"
-          />
+          <div class="flex items-center gap-1.5">
+            <div class="flex-1">
+              <ConfigSwitch
+                :model-value="Boolean(profile.disable_safety_settings)"
+                label="完全不下发安全规则 (disable_safety_settings)"
+                description="生图模型通常开启此项以避免被安全机制误拦截"
+                @update:model-value="updateField('disable_safety_settings', $event)"
+              />
+            </div>
+            <FieldHelpTip
+              schema-key="safety.disable_safety_settings"
+              class="shrink-0"
+            />
+          </div>
         </div>
 
-        <div class="pt-1">
-          <ConfigTagList
-            :model-value="profile.clear_generation_config_indexes || []"
-            label="清空 generation_config 特殊下标 (clear_indexes)"
-            description="针对特定模型发送前清除的 wire 数组索引 (如 7, 13, 17)"
-            :is-number="true"
-            placeholder="输入数字下标按回车"
-            @update:model-value="updateField('clear_generation_config_indexes', $event as number[])"
+        <div class="flex items-center gap-1.5 pt-1">
+          <div class="flex-1">
+            <ConfigTagList
+              :model-value="profile.clear_generation_config_indexes || []"
+              label="清空 generation_config 特殊下标 (clear_indexes)"
+              description="针对特定模型发送前清除的 wire 数组索引 (如 7, 13, 17)"
+              :is-number="true"
+              placeholder="输入数字下标按回车"
+              @update:model-value="updateField('clear_generation_config_indexes', $event as number[])"
+            />
+          </div>
+          <FieldHelpTip
+            schema-key="generation.clear_indexes"
+            class="mt-4 shrink-0"
           />
         </div>
       </div>
+
 
       <!-- Safety Settings (If not completely disabled) -->
       <div v-if="!profile.disable_safety_settings">

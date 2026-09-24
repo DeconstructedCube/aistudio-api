@@ -4,11 +4,11 @@ import { systemApi } from '@/api/system.ts'
 import { useToastStore } from '@/stores/toast.ts'
 import type { SystemConfig } from '@/types/system.ts'
 import Button from '@/components/ui/Button.vue'
+import ConfigSelect from '@/components/config/ConfigSelect.vue'
+import ConfigSwitch from '@/components/config/ConfigSwitch.vue'
 import {
   Activity,
-  Sliders,
   Save,
-  CheckCircle2,
   Bug,
   Info,
 } from 'lucide-vue-next'
@@ -39,10 +39,10 @@ watch(
 )
 
 const logLevels = [
-  { value: 'DEBUG', label: 'DEBUG (详细调试输出)', desc: '输出最详尽的底层网络与调度跟踪信息' },
-  { value: 'INFO', label: 'INFO (标准运行信息)', desc: '推荐生产使用，输出关键请求与账号切换' },
-  { value: 'WARNING', label: 'WARNING (仅警告与错误)', desc: '仅输出异常告警与故障重试' },
-  { value: 'ERROR', label: 'ERROR (仅严重错误)', desc: '仅记录系统无法自动恢复的严重故障' },
+  { value: 'DEBUG', label: 'DEBUG (详细调试输出)', description: '输出最详尽的底层网络与调度跟踪信息' },
+  { value: 'INFO', label: 'INFO (标准运行信息)', description: '推荐生产使用，输出关键请求与账号切换' },
+  { value: 'WARNING', label: 'WARNING (仅警告与错误)', description: '仅输出异常告警与故障重试' },
+  { value: 'ERROR', label: 'ERROR (仅严重错误)', description: '仅记录系统无法自动恢复的严重故障' },
 ]
 
 async function handleSave() {
@@ -116,65 +116,30 @@ async function handleSave() {
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <!-- Log Level Configuration -->
-      <div class="space-y-2">
-        <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5">
-          <Sliders class="w-3.5 h-3.5 text-gray-500" />
-          <span>日志输出级别 (Log Level)</span>
-        </label>
-        <select
-          v-model="logLevel"
-          class="w-full px-3.5 py-2.5 text-xs bg-gray-50/80 border border-gray-200 rounded-xl text-gray-900 outline-none focus:ring-2 focus:ring-brand-500 focus:bg-white font-medium transition-all"
-        >
-          <option
-            v-for="item in logLevels"
-            :key="item.value"
-            :value="item.value"
-          >
-            {{ item.label }}
-          </option>
-        </select>
+      <div class="space-y-1.5">
+        <ConfigSelect
+          :model-value="logLevel"
+          label="日志输出级别 (Log Level)"
+          description="运行时热重载"
+          :options="logLevels"
+          @update:model-value="logLevel = String($event || 'INFO')"
+        />
         <p class="text-[11px] text-gray-400">
           修改后无需重启服务，后端各模块即时生效。
         </p>
       </div>
 
       <!-- Request Dump Toggle -->
-      <div class="space-y-2">
-        <label class="block text-xs font-bold text-gray-700 uppercase tracking-wider flex items-center gap-1.5">
-          <Bug class="w-3.5 h-3.5 text-gray-500" />
-          <span>请求转储 (Dump Requests)</span>
-        </label>
-        <div class="flex items-center justify-between p-3 bg-gray-50/80 border border-gray-200 rounded-xl">
-          <div class="pr-3">
-            <div class="text-xs font-medium text-gray-900 flex items-center gap-1.5">
-              <span>转储每次请求与响应详情</span>
-              <span
-                v-if="dumpRequests"
-                class="text-[10px] text-emerald-600 font-semibold flex items-center gap-0.5"
-              >
-                <CheckCircle2 class="w-3 h-3" /> 已开启
-              </span>
-            </div>
-            <p class="text-[11px] text-gray-400 mt-0.5 leading-snug">
-              完整打印每次 API 请求的 Headers、Query、Body 及响应状态与耗时
-            </p>
-          </div>
-          <button
-            type="button"
-            :class="[
-              dumpRequests ? 'bg-brand-600' : 'bg-gray-300',
-              'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden',
-            ]"
-            @click="dumpRequests = !dumpRequests"
-          >
-            <span
-              :class="[
-                dumpRequests ? 'translate-x-5' : 'translate-x-0',
-                'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out',
-              ]"
-            />
-          </button>
+      <div class="space-y-1.5">
+        <div class="block text-xs font-semibold text-gray-700">
+          请求转储 (Dump Requests)
         </div>
+        <ConfigSwitch
+          :model-value="dumpRequests"
+          label="转储每次请求与响应详情"
+          description="完整打印每次 API 请求的 Headers、Query、Body 及响应状态与耗时"
+          @update:model-value="dumpRequests = $event"
+        />
         <p class="text-[11px] text-gray-400">
           亦可通过启动环境变量 <code>DEBUG=true</code> 快速开启。
         </p>

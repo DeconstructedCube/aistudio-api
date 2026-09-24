@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import type { ModelOverrideMap } from './types.ts'
+import type { ModelOverrideMap, ModelOverrideItem, ThinkingConfig } from './types.ts'
+import {
+  TOOL_SUGGESTIONS,
+  IMAGE_MODE_OPTIONS,
+  THINKING_LEVEL_OPTIONS,
+  MEDIA_RESOLUTION_OPTIONS,
+} from './schema.ts'
 import ConfigSelect from './ConfigSelect.vue'
 import ConfigTagList from './ConfigTagList.vue'
 import ConfigSafetyGrid from './ConfigSafetyGrid.vue'
 import ConfigSwitch from './ConfigSwitch.vue'
-import { Plus, Trash2, ChevronDown, ChevronRight, Layers } from 'lucide-vue-next'
-
-type OverrideItem = NonNullable<ModelOverrideMap[string]>
+import FieldHelpTip from './FieldHelpTip.vue'
+import Button from '@/components/ui/Button.vue'
+import { Plus, Trash2, ChevronDown, ChevronRight, Layers, Cpu, Wrench } from 'lucide-vue-next'
 
 const props = defineProps<{
   models: ModelOverrideMap
@@ -20,35 +26,6 @@ const emit = defineEmits<{
 const newModelName = ref('')
 const expandedMap = ref<Record<string, boolean>>({})
 
-const toolSuggestions = [
-  { label: '网页+图片搜索', value: 'google_search_and_image_search' },
-  { label: 'Google 搜索', value: 'google_search' },
-  { label: '图片搜索', value: 'image_search' },
-  { label: '代码执行环境', value: 'code_execution' },
-  { label: 'Google 地图', value: 'google_maps' },
-  { label: '网页抓取与上下文', value: 'url_context' },
-]
-
-const imageModeOptions = [
-  { value: 'image_only', label: 'image_only (仅输出图片)' },
-  { value: 'text_and_image', label: 'text_and_image (文字与图片混排)' },
-  { value: null, label: '不显式指定 (Null)' },
-]
-
-const thinkingLevelOptions = [
-  { value: 'MINIMAL', label: 'MINIMAL (极速 / 最小思考)' },
-  { value: 'LOW', label: 'LOW (轻度思考)' },
-  { value: 'MEDIUM', label: 'MEDIUM (标准中度思考)' },
-  { value: 'HIGH', label: 'HIGH (深度慢思考)' },
-]
-
-const mediaResolutionOptions = [
-  { value: 'HIGH', label: 'HIGH (高分辨率)' },
-  { value: 'MEDIUM', label: 'MEDIUM (标准清晰度)' },
-  { value: 'LOW', label: 'LOW (低画质缩略)' },
-  { value: null, label: '默认 (Null)' },
-]
-
 function toggleExpand(modelKey: string) {
   expandedMap.value[modelKey] = !expandedMap.value[modelKey]
 }
@@ -59,13 +36,7 @@ function handleAddModel() {
 
   const next: ModelOverrideMap = { ...(props.models || {}) }
   if (!next[name]) {
-    next[name] = {
-      default_tools: [],
-      generation_config_defaults: {
-        image_output_mode: null,
-        media_resolution: null,
-      },
-    }
+    next[name] = {}
     expandedMap.value[name] = true
     emit('update:models', next)
   }
@@ -73,25 +44,53 @@ function handleAddModel() {
 }
 
 function handleDeleteModel(modelKey: string) {
-  const next: ModelOverrideMap = { ...(props.models || {}) }
-  delete next[modelKey]
-  emit('update:models', next)
+  if (confirm(`确定要删除模型 "${modelKey}" 的专用覆盖规则吗？`)) {
+    const next: ModelOverrideMap = { ...(props.models || {}) }
+    delete next[modelKey]
+    emit('update:models', next)
+  }
 }
 
-function updateModelField<K extends keyof OverrideItem>(modelKey: string, field: K, val: OverrideItem[K]) {
+function updateModelField<K extends keyof ModelOverrideItem>(
+  modelKey: string,
+  field: K,
+  val: ModelOverrideItem[K],
+) {
   const next: ModelOverrideMap = { ...(props.models || {}) }
   const current = next[modelKey] || {}
   next[modelKey] = { ...current, [field]: val }
   emit('update:models', next)
 }
 
-function updateModelGenConfig(modelKey: string, key: string, val: unknown) {
+function updateModelGenField(modelKey: string, key: string, val: unknown) {
   const next: ModelOverrideMap = { ...(props.models || {}) }
   const current = next[modelKey] || {}
-  const currentGen = current.generation_config_defaults || {}
+  const currentGen = { ...(current.generation_config_defaults || {}) }
+  if (val === null || val === undefined) {
+    delete (currentGen as Record<string, unknown>)[key]
+  } else {
+    ;(currentGen as Record<string, unknown>)[key] = val
+  }
   next[modelKey] = {
     ...current,
-    generation_config_defaults: { ...currentGen, [key]: val },
+    generation_config_defaults: Object.keys(currentGen).length ? currentGen : undefined,
+  }
+  emit('update:models', next)
+}
+
+function updateModelThinkingConfig(modelKey: string, level: string | null) {
+  const next: ModelOverrideMap = { ...(props.models || {}) }
+  const current = next[modelKey] || {}
+  const currentGen = { ...(current.generation_config_defaults || {}) }
+  if (level === null) {
+    delete currentGen.thinking_config
+  } else {
+    const prevThinking = currentGen.thinking_config || { mode: 1 }
+    currentGen.thinking_config = { ...prevThinking, level: level as ThinkingConfig['level'] }
+  }
+  next[modelKey] = {
+    ...current,
+    generation_config_defaults: Object.keys(currentGen).length ? currentGen : undefined,
   }
   emit('update:models', next)
 }
@@ -119,15 +118,15 @@ function updateModelGenConfig(modelKey: string, key: string, val: unknown) {
           class="px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-mono outline-none focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20"
           @keydown.enter.prevent="handleAddModel"
         >
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="sm"
           :disabled="!newModelName.trim()"
-          class="px-3 py-1.5 bg-brand-500 hover:bg-brand-600 text-white rounded-xl text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
           @click="handleAddModel"
         >
           <Plus class="w-3.5 h-3.5" />
           <span>添加覆盖</span>
-        </button>
+        </Button>
       </div>
     </div>
 
@@ -163,6 +162,12 @@ function updateModelGenConfig(modelKey: string, key: string, val: unknown) {
             <span class="text-brand-700 bg-brand-50 px-2 py-0.5 rounded border border-brand-200/60">
               {{ modelKey }}
             </span>
+            <span
+              v-if="override.is_image_model"
+              class="px-2 py-0.2 text-[10px] font-semibold rounded-full bg-purple-100 text-purple-800"
+            >
+              生图模型
+            </span>
           </div>
 
           <button
@@ -180,54 +185,148 @@ function updateModelGenConfig(modelKey: string, key: string, val: unknown) {
           v-if="expandedMap[String(modelKey)]"
           class="p-4 space-y-4"
         >
-          <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-            <ConfigSelect
-              :model-value="override.generation_config_defaults?.image_output_mode"
-              label="图片输出模式 (image_output_mode)"
-              :options="imageModeOptions"
-              @update:model-value="updateModelGenConfig(String(modelKey), 'image_output_mode', $event)"
+          <!-- Image Model Switch -->
+          <div class="flex items-center gap-1.5">
+            <div class="flex-1">
+              <ConfigSwitch
+                :model-value="Boolean(override.is_image_model)"
+                label="作为生图模型 (is_image_model)"
+                description="将该模型设为生图模式，启用多模态图片编码与专用处理管线"
+                @update:model-value="updateModelField(String(modelKey), 'is_image_model', $event)"
+              />
+            </div>
+            <FieldHelpTip
+              schema-key="profile.is_image_model"
+              class="shrink-0"
             />
+          </div>
 
-            <ConfigSelect
-              :model-value="override.generation_config_defaults?.thinking_config?.level"
-              label="思考强度等级 (thinking_level)"
-              :options="thinkingLevelOptions"
-              @update:model-value="updateModelGenConfig(String(modelKey), 'thinking_config', $event ? { level: $event, mode: 1 } : null)"
-            />
+          <!-- Generation Config Defaults -->
+          <div class="p-3.5 bg-gray-50/70 border border-gray-200/70 rounded-xl space-y-3">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2 text-xs font-bold text-gray-800">
+                <Cpu class="w-4 h-4 text-brand-600" />
+                <span>生成参数覆盖 (Generation Config Defaults)</span>
+              </div>
+              <FieldHelpTip schema-key="generation.defaults" />
+            </div>
 
-            <ConfigSelect
-              :model-value="override.generation_config_defaults?.media_resolution"
-              label="多模态输入分辨率 (media_resolution)"
-              :options="mediaResolutionOptions"
-              @update:model-value="updateModelGenConfig(String(modelKey), 'media_resolution', $event)"
-            />
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              <div class="flex items-center gap-1.5">
+                <div class="flex-1">
+                  <ConfigSelect
+                    :model-value="override.generation_config_defaults?.image_output_mode"
+                    label="图片输出模式 (image_output_mode)"
+                    :options="IMAGE_MODE_OPTIONS"
+                    @update:model-value="updateModelGenField(String(modelKey), 'image_output_mode', $event)"
+                  />
+                </div>
+                <FieldHelpTip
+                  schema-key="generation.image_output_mode"
+                  class="mt-4 shrink-0"
+                />
+              </div>
+
+              <div class="flex items-center gap-1.5">
+                <div class="flex-1">
+                  <ConfigSelect
+                    :model-value="override.generation_config_defaults?.thinking_config?.level"
+                    label="思考强度等级 (thinking_level)"
+                    :options="THINKING_LEVEL_OPTIONS"
+                    @update:model-value="updateModelThinkingConfig(String(modelKey), $event as string | null)"
+                  />
+                </div>
+                <FieldHelpTip
+                  schema-key="generation.thinking_level"
+                  class="mt-4 shrink-0"
+                />
+              </div>
+
+              <div class="flex items-center gap-1.5">
+                <div class="flex-1">
+                  <ConfigSelect
+                    :model-value="override.generation_config_defaults?.media_resolution"
+                    label="多模态输入分辨率 (media_resolution)"
+                    :options="MEDIA_RESOLUTION_OPTIONS"
+                    @update:model-value="updateModelGenField(String(modelKey), 'media_resolution', $event)"
+                  />
+                </div>
+                <FieldHelpTip
+                  schema-key="generation.media_resolution"
+                  class="mt-4 shrink-0"
+                />
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+              <div class="flex items-center gap-1.5">
+                <div class="flex-1">
+                  <ConfigSwitch
+                    :model-value="Boolean(override.drop_unsupported_params)"
+                    label="自动丢弃不支持参数 (drop_unsupported_params)"
+                    description="自动过滤未知安全类别与不兼容工具"
+                    @update:model-value="updateModelField(String(modelKey), 'drop_unsupported_params', $event)"
+                  />
+                </div>
+                <FieldHelpTip
+                  schema-key="profile.drop_unsupported_params"
+                  class="shrink-0"
+                />
+              </div>
+
+              <div class="flex items-center gap-1.5">
+                <div class="flex-1">
+                  <ConfigSwitch
+                    :model-value="Boolean(override.disable_safety_settings)"
+                    label="完全不下发安全规则 (disable_safety_settings)"
+                    description="生图模型通常开启此项以避免被安全机制误拦截"
+                    @update:model-value="updateModelField(String(modelKey), 'disable_safety_settings', $event)"
+                  />
+                </div>
+                <FieldHelpTip
+                  schema-key="safety.disable_safety_settings"
+                  class="shrink-0"
+                />
+              </div>
+            </div>
+
+            <!-- Clear Indexes -->
+            <div class="flex items-center gap-1.5 pt-1">
+              <div class="flex-1">
+                <ConfigTagList
+                  :model-value="override.clear_generation_config_indexes || []"
+                  label="清空 generation_config 特殊下标 (clear_indexes)"
+                  description="针对该模型发送前清除的 wire 数组索引 (如 7, 13, 17)"
+                  :is-number="true"
+                  placeholder="输入数字下标按回车"
+                  @update:model-value="updateModelField(String(modelKey), 'clear_generation_config_indexes', $event as number[])"
+                />
+              </div>
+              <FieldHelpTip
+                schema-key="generation.clear_indexes"
+                class="mt-4 shrink-0"
+              />
+            </div>
           </div>
 
           <!-- Tools -->
-          <ConfigTagList
-            :model-value="override.default_tools || []"
-            label="指定该模型专用工具 (default_tools)"
-            description="覆盖通用 profile 的工具列表"
-            :suggestions="toolSuggestions"
-            @update:model-value="updateModelField(String(modelKey), 'default_tools', $event as string[])"
-          />
-
-          <!-- Switches Grid -->
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <ConfigSwitch
-              :model-value="Boolean(override.drop_unsupported_params)"
-              label="自动丢弃不支持参数 (drop_unsupported_params)"
-              description="自动过滤未知安全类别与不兼容工具"
-              @update:model-value="updateModelField(String(modelKey), 'drop_unsupported_params', $event)"
-            />
-
-            <ConfigSwitch
-              :model-value="Boolean(override.disable_safety_settings)"
-              label="完全不下发安全规则 (disable_safety_settings)"
-              description="生图模型通常开启此项以避免被安全机制误拦截"
-              @update:model-value="updateModelField(String(modelKey), 'disable_safety_settings', $event)"
+          <div class="p-3.5 bg-gray-50/70 border border-gray-200/70 rounded-xl space-y-2">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2 text-xs font-bold text-gray-800">
+                <Wrench class="w-4 h-4 text-brand-600" />
+                <span>指定该模型专用工具 (default_tools)</span>
+              </div>
+              <FieldHelpTip schema-key="profile.default_tools" />
+            </div>
+            <ConfigTagList
+              :model-value="override.default_tools || []"
+              label="覆盖通用 profile 的工具列表"
+              description="客户端未显式传 tools 时挂载的专用工具"
+              :suggestions="TOOL_SUGGESTIONS"
+              @update:model-value="updateModelField(String(modelKey), 'default_tools', $event as string[])"
             />
           </div>
+
           <!-- Safety Settings -->
           <div v-if="!override.disable_safety_settings">
             <ConfigSafetyGrid

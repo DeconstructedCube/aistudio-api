@@ -197,10 +197,69 @@ function updateGlobalDropUnsupported(val: boolean) {
 
 function handleResetDefaults() {
   if (confirm('确定要将所有模型规则重置为官方推荐默认预设吗？')) {
-    const defaultYaml = `# API 客户端调用鉴权密钥列表\napi_keys: []\n\nmodel_defaults:\n  profiles:\n    - name: image_models\n      match:\n        contains:\n          - image\n      is_image_model: true\n      default_tools:\n        - google_search_and_image_search\n      generation_config_defaults:\n        response_mime_type: null\n        image_output_mode: image_only\n        thinking_config:\n          level: MINIMAL\n          mode: 1\n      clear_generation_config_indexes:\n        - 7\n        - 13\n        - 17\n      disable_safety_settings: true\n    - name: gemma_models\n      match:\n        prefixes:\n          - gemma-\n      default_tools:\n        - google_search\n      safety_settings:\n        Harassment: 5\n        Hate: 5\n        Sexually Explicit: 5\n        Dangerous Content: 5\n    - name: gemini_models\n      match:\n        prefixes:\n          - gemini-\n      default_tools:\n        - google_search\n      safety_settings:\n        Harassment: 5\n        Hate: 5\n        Sexually Explicit: 5\n        Dangerous Content: 5\n  models: {}\n`
-    rawYaml.value = defaultYaml
-    parseYamlToState(defaultYaml)
-    toast.info('已载入默认规则，请点击右上角保存并生效')
+    const currentApiKeys = parsedConfig.value.api_keys || []
+    const currentLogging = (parsedConfig.value as Record<string, unknown>).logging || {
+      level: 'INFO',
+      dump_requests: false,
+    }
+    const doc: ParsedConfigYaml = {
+      api_keys: currentApiKeys,
+      logging: currentLogging,
+      model_defaults: {
+        drop_unsupported_params: false,
+        profiles: [
+          {
+            name: 'image_models',
+            match: {
+              contains: ['image'],
+            },
+            is_image_model: true,
+            default_tools: ['google_search_and_image_search'],
+            generation_config_defaults: {
+              response_mime_type: null,
+              image_output_mode: 'image_only',
+              thinking_config: {
+                level: 'MINIMAL',
+                mode: 1,
+              },
+            },
+            clear_generation_config_indexes: [7, 13, 17],
+            disable_safety_settings: true,
+          },
+          {
+            name: 'gemma_models',
+            match: {
+              prefixes: ['gemma-'],
+            },
+            default_tools: ['google_search'],
+            safety_settings: {
+              Harassment: 5,
+              Hate: 5,
+              'Sexually Explicit': 5,
+              'Dangerous Content': 5,
+            },
+          },
+          {
+            name: 'gemini_models',
+            match: {
+              prefixes: ['gemini-'],
+            },
+            default_tools: ['google_search'],
+            safety_settings: {
+              Harassment: 5,
+              Hate: 5,
+              'Sexually Explicit': 5,
+              'Dangerous Content': 5,
+            },
+            drop_unsupported_params: true,
+          },
+        ],
+        models: {},
+      },
+    }
+    parsedConfig.value = doc
+    syncStateToYaml()
+    toast.info('已载入默认规则（保留现有 API Key 与日志配置），请点击右上角保存并生效')
   }
 }
 
@@ -250,15 +309,15 @@ async function handleSave() {
 
       <!-- Controls & Actions -->
       <div class="flex items-center gap-2 flex-wrap">
-        <button
-          type="button"
-          class="px-3 py-1.5 text-xs text-gray-700 bg-gray-100 hover:bg-gray-200/80 rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer font-medium"
+        <Button
+          variant="secondary"
+          size="sm"
           title="查看所有配置项详细规范与推荐说明"
           @click="dictModalOpen = true"
         >
           <BookOpen class="w-3.5 h-3.5 text-brand-600" />
           <span>参数规范字典</span>
-        </button>
+        </Button>
 
         <!-- Tab Pill Toggle -->
         <div class="flex items-center bg-gray-100 p-1 rounded-xl text-xs font-medium">
@@ -282,15 +341,15 @@ async function handleSave() {
           </button>
         </div>
 
-        <button
-          type="button"
-          class="px-2.5 py-1.5 text-xs text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-colors flex items-center gap-1 cursor-pointer"
+        <Button
+          variant="ghost"
+          size="sm"
           title="重置为官方推荐规则"
           @click="handleResetDefaults"
         >
           <RotateCcw class="w-3.5 h-3.5" />
           <span class="hidden md:inline">重置默认</span>
-        </button>
+        </Button>
 
         <Button
           variant="primary"
@@ -345,7 +404,7 @@ async function handleSave() {
           <div class="text-xs font-bold text-gray-900 flex items-center gap-1.5">
             <span>全局丢弃不支持参数 (drop_unsupported_params)</span>
             <span class="text-[10px] text-brand-700 bg-brand-50 px-1.5 py-0.5 rounded font-mono border border-brand-200/60 font-semibold">全局默认</span>
-            <FieldHelpTip schema-key="profile.drop_unsupported_params" />
+            <FieldHelpTip schema-key="system.drop_unsupported_params" />
           </div>
           <p class="text-[11px] text-gray-400 mt-0.5">
             自动过滤下游客户端传入的未知安全类别（如 HARM_CATEGORY_CIVIC_INTEGRITY）或模型不支持的工具，避免 400 报错阻断

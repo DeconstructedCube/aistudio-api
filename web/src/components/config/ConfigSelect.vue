@@ -14,7 +14,7 @@ interface Props {
   disabled?: boolean
 }
 
-withDefaults(defineProps<Props>(), {
+const props = withDefaults(defineProps<Props>(), {
   description: '',
   disabled: false,
 })
@@ -24,14 +24,16 @@ const emit = defineEmits<{
 }>()
 
 function handleChange(e: Event) {
-  const val = (e.target as HTMLSelectElement).value
-  if (val === '__null__') {
+  const raw = (e.target as HTMLSelectElement).value
+  if (raw === '__null__') {
     emit('update:modelValue', null)
-  } else if (!Number.isNaN(Number(val)) && typeof val === 'string' && val.trim() !== '' && !val.includes('.')) {
-    // If original option was number, cast back
-    emit('update:modelValue', val)
+    return
+  }
+  const match = props.options.find((opt) => String(opt.value) === raw)
+  if (match) {
+    emit('update:modelValue', match.value)
   } else {
-    emit('update:modelValue', val)
+    emit('update:modelValue', raw)
   }
 }
 </script>
