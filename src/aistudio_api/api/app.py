@@ -285,16 +285,40 @@ async def auth_check():
 
     return {"auth_enabled": settings.auth_enabled}
 
+@app.middleware("http")
+async def spa_navigation_middleware(request: Request, call_next):
+    """统一处理前端 SPA 单页应用导航：浏览器页面直达/刷新响应 index.html，API 请求直通 JSON。"""
+    accept = request.headers.get("accept", "")
+    is_html_nav = (
+        request.method == "GET"
+        and "text/html" in accept
+        and "application/json" not in accept
+    )
+    is_api = request.url.path.startswith(
+        (
+            "/v1beta",
+            "/auth",
+            "/assets",
+            "/static",
+            "/health",
+            "/stats",
+            "/rotation",
+            "/config",
+            "/api-keys",
+        )
+    )
+    if is_html_nav and not is_api and index_html_path.is_file():
+        return FileResponse(index_html_path)
+
+    return await call_next(request)
+
 
 @app.get("/")
-@app.get("/login")
-@app.get("/settings")
-async def serve_spa():
-    """为前端 SPA 提供统一入口页面。"""
+async def root_index():
+    """根路径兜底响应。"""
     if index_html_path.is_file():
         return FileResponse(index_html_path)
-    return {"message": "AI Studio API Web UI"}
-
+    return JSONResponse({"message": "AI Studio API Web UI"})
 
 def main():
     from aistudio_api.config import settings

@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from aistudio_api.api.dependencies import (
     get_account_service,
-    get_account_service_optional,
     get_runtime_state,
 )
 from aistudio_api.infrastructure.account.cookie_parser import parse_cookie_string
@@ -69,25 +66,9 @@ class ProbeAndImportResponse(BaseModel):
 @router.get("", response_model=list[AccountResponse])
 @router.get("/", response_model=list[AccountResponse])
 async def list_accounts(
-    request: Request,
-    account_service: AccountService | None = Depends(get_account_service_optional),
-) -> Response | list[AccountResponse]:
-    """列出所有账号或作为浏览器导航入口。"""
-    accept = request.headers.get("accept", "")
-    if "text/html" in accept and "application/json" not in accept:
-        static_dir = Path(__file__).resolve().parents[1] / "static"
-        index_html = static_dir / "index.html"
-        if index_html.is_file():
-            return FileResponse(index_html)
-
-    if account_service is None:
-        raise HTTPException(
-            503,
-            detail={
-                "message": "Account service not initialized",
-                "type": "service_unavailable",
-            },
-        )
+    account_service: AccountService = Depends(get_account_service),
+) -> list[AccountResponse]:
+    """列出所有账号。"""
     accounts = account_service.list_accounts()
     return [
         AccountResponse(
@@ -102,7 +83,6 @@ async def list_accounts(
         )
         for a in accounts
     ]
-
 
 @router.get("/active", response_model=AccountResponse)
 async def get_active_account(
