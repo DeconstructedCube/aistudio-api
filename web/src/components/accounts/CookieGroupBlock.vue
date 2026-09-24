@@ -75,7 +75,7 @@ const emit = defineEmits<{
             <span
               class="truncate max-w-[140px]"
               :title="group.id"
-            >会话指纹: {{ group.id.replace(/^cookie_/, '') }}</span>
+            >会话指纹: {{ String(group.id || '').replace(/^cookie_/, '') }}</span>
           </div>
         </div>
       </div>

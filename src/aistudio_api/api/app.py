@@ -288,7 +288,6 @@ async def auth_check():
 
 @app.get("/")
 @app.get("/login")
-@app.get("/accounts")
 @app.get("/settings")
 async def serve_spa():
     """为前端 SPA 提供统一入口页面。"""

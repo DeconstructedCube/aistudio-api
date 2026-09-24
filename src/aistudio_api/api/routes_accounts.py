@@ -67,6 +67,7 @@ class ProbeAndImportResponse(BaseModel):
 
 
 @router.get("", response_model=list[AccountResponse])
+@router.get("/", response_model=list[AccountResponse])
 async def list_accounts(
     request: Request,
     account_service: AccountService | None = Depends(get_account_service_optional),
