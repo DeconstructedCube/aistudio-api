@@ -240,8 +240,19 @@ class BrowserSession:
                             )
                             new_cookies = data.get("cookies") or []
                             if new_cookies:
-                                await self._page.set_cookies(new_cookies)
-
+                                cleaned_cookies = [
+                                    c
+                                    for c in new_cookies
+                                    if str(c.get("name") or "")
+                                    not in {
+                                        "OSID",
+                                        "__Secure-OSID",
+                                        "SIDCC",
+                                        "__Secure-1PSIDCC",
+                                        "__Secure-3PSIDCC",
+                                    }
+                                ]
+                                await self._page.set_cookies(cleaned_cookies or new_cookies)
                         # 3. 页面导航至目标账号对应的 /u/{auth_user}/ 路径并执行 DOM GC 清理
                         await self._goto_aistudio(self._page)
                         await self._install_hooks(self._page)
@@ -772,8 +783,20 @@ class BrowserSession:
                     with suppress(Exception):
                         await self._page.cdp.send("Network.clearBrowserCookies")
                         await self._page.cdp.send("Network.clearBrowserCache")
-                    await self._page.set_cookies(cached)
-                    log.info("已从 %s 载入 %d 个 Cookie", self._auth_file, len(cached))
+                    cleaned_cached = [
+                        c
+                        for c in cached
+                        if str(c.get("name") or "")
+                        not in {
+                            "OSID",
+                            "__Secure-OSID",
+                            "SIDCC",
+                            "__Secure-1PSIDCC",
+                            "__Secure-3PSIDCC",
+                        }
+                    ]
+                    await self._page.set_cookies(cleaned_cached or cached)
+                    log.info("已从 %s 载入 %d 个 Cookie", self._auth_file, len(cleaned_cached or cached))
             except Exception as e:
                 log.debug("从 %s 载入 Cookie 失败: %s", self._auth_file, e)
         await self._goto_aistudio(self._page)

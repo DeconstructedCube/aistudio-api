@@ -224,12 +224,16 @@ class AccountStore:
         return registry.accounts.get(account_id)
 
     def get_active_account(self) -> AccountMeta | None:
-        """获取当前活跃账号。"""
+        """获取当前活跃账号（若未设置或失效，自动兜底至首个账号）。"""
         registry = self._load_registry()
-        if registry.active_account_id is None:
-            return None
-        return registry.accounts.get(registry.active_account_id)
-
+        if registry.active_account_id and registry.active_account_id in registry.accounts:
+            return registry.accounts[registry.active_account_id]
+        if registry.accounts:
+            first_id = next(iter(registry.accounts))
+            registry.active_account_id = first_id
+            self._save_registry(registry)
+            return registry.accounts[first_id]
+        return None
     def get_active_auth_path(self) -> Path | None:
         """获取当前活跃账号的 auth.json 路径。"""
         account = self.get_active_account()
