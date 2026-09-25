@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from fastapi import HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -66,6 +67,59 @@ def to_gemini_finish_reason(wire_code: int | None) -> str:
         return "STOP"
     return WIRE_TO_GEMINI_FINISH_REASON.get(wire_code, "STOP")
 
+def clean_upstream_error_message(raw_msg: str) -> str:
+    """Extract a clean, readable error message from Google/JSPB upstream error strings."""
+    if not raw_msg:
+        return ""
+    text = raw_msg.strip()
+
+    # Only unpack if it contains a JSPB bracket array like [,[ or [null,[
+    if "[,[" not in text and "[null,[" not in text and not text.startswith("[,"):
+        return text
+
+    m = re.match(r"^HTTP\s+\d+:\s*(.*)$", text)
+    inner = m.group(1).strip() if m else text
+
+    normalized = inner
+    if normalized.startswith("[,"):
+        normalized = "[null," + normalized[2:]
+
+    try:
+        data = json.loads(normalized)
+
+        def find_msg(obj):
+            if isinstance(obj, list):
+                if len(obj) >= 2 and isinstance(obj[1], str) and obj[1]:
+                    return obj[1]
+                for item in obj:
+                    res = find_msg(item)
+                    if res:
+                        return res
+            return None
+
+        extracted = find_msg(data)
+        if extracted:
+            return extracted
+    except Exception:
+        pass
+
+    match = re.search(r'\[\s*,\s*\[\s*\d+\s*,\s*"([^"\\]*(?:\\.[^"\\]*)*)"', inner)
+    if match:
+        try:
+            return json.loads(f'"{match.group(1)}"')
+        except Exception:
+            return match.group(1)
+
+    match2 = re.search(r'\[\s*null\s*,\s*\[\s*\d+\s*,\s*"([^"\\]*(?:\\.[^"\\]*)*)"', inner)
+    if match2:
+        try:
+            return json.loads(f'"{match2.group(1)}"')
+        except Exception:
+            return match2.group(1)
+
+    return text
+
+
 
 def classify_gemini_error_payload(exc: Exception) -> tuple[int, str, str]:
     """Extract standard Gemini HTTP status code, message, and status string from an exception."""
@@ -86,6 +140,7 @@ def classify_gemini_error_payload(exc: Exception) -> tuple[int, str, str]:
         detail = exc.detail
         raw_msg = detail.get("message") if isinstance(detail, dict) else detail
         msg = str(raw_msg) if raw_msg is not None else ""
+        clean_msg = clean_upstream_error_message(msg)
         status_map = {
             400: "INVALID_ARGUMENT",
             401: "UNAUTHENTICATED",
@@ -97,11 +152,12 @@ def classify_gemini_error_payload(exc: Exception) -> tuple[int, str, str]:
         }
         return (
             status,
-            msg,
+            clean_msg,
             status_map.get(status, "INTERNAL" if status >= 500 else "UNKNOWN"),
         )
     if isinstance(exc, RequestError):
         status = exc.status if exc.status > 0 else 500
+        clean_msg = clean_upstream_error_message(str(exc))
         status_map = {
             400: "INVALID_ARGUMENT",
             401: "UNAUTHENTICATED",
@@ -113,7 +169,7 @@ def classify_gemini_error_payload(exc: Exception) -> tuple[int, str, str]:
         }
         return (
             status,
-            str(exc),
+            clean_msg,
             status_map.get(status, "INTERNAL" if status >= 500 else "UNKNOWN"),
         )
     if isinstance(exc, AistudioError):
@@ -232,6 +288,21 @@ async def handle_attempt_exception(
                 if client._session is not None:
                     await client._session._close_internal()
                 return True
+
+    if isinstance(exc, RequestError):
+        clean_msg = clean_upstream_error_message(str(exc))
+        status_code = exc.status if exc.status > 0 else 500
+        error_type = (
+            "bad_request"
+            if status_code == 400
+            else "not_found"
+            if status_code == 404
+            else "upstream_error"
+        )
+        logger.warning("Gemini 上游请求错误 (%d): %s", status_code, clean_msg)
+        raise HTTPException(
+            status_code, detail={"message": clean_msg, "type": error_type}
+        ) from exc
 
     if isinstance(exc, AistudioError):
         runtime_state.record(target_model, "errors")

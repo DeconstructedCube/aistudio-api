@@ -408,3 +408,38 @@ model_defaults:
     with pytest.raises(ValueError, match="Unsupported safety category"):
         normalize_gemini_request(req, "models/gemini-2.5-flash")
     invalidate_config_cache()
+
+
+def test_normalize_gemini_request_mode_none_suppresses_tools():
+    """Verify toolConfig mode=NONE suppresses tools for pure text output."""
+    req = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [
+                {"role": "user", "parts": [{"text": "Hello, please summarize."}]}
+            ],
+            "tools": [
+                {
+                    "functionDeclarations": [
+                        {
+                            "name": "read",
+                            "description": "read file",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"path": {"type": "string"}},
+                                "required": ["path"],
+                            },
+                        }
+                    ]
+                }
+            ],
+            "toolConfig": {
+                "functionCallingConfig": {
+                    "mode": "NONE",
+                }
+            },
+        }
+    )
+    normalized = normalize_gemini_request(req, "models/gemini-3.8-flash")
+    # Tools and tool_config must both be None so MakerSuite generates text without calling functions
+    assert normalized.tools is None
+    assert normalized.tool_config is None

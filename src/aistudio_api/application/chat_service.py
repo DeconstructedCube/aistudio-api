@@ -520,7 +520,30 @@ def normalize_gemini_request(
         )
         tools = injected if injected else None
 
-    tool_config = _normalize_gemini_tool_config(getattr(req, "toolConfig", None))
+    raw_tool_config = getattr(req, "toolConfig", None)
+    tool_config = _normalize_gemini_tool_config(raw_tool_config)
+
+    # 检查工具调用模式。若为 NONE，显式置空 tools 与 tool_config，确保模型仅输出纯文本且不调用任何工具。
+    is_mode_none = False
+    if isinstance(raw_tool_config, dict):
+        fcc = raw_tool_config.get("functionCallingConfig") or raw_tool_config.get(
+            "function_calling_config"
+        )
+        if isinstance(fcc, dict):
+            m_val = fcc.get("mode")
+            if m_val in (3, "NONE", "none"):
+                is_mode_none = True
+    elif (
+        isinstance(tool_config, list)
+        and len(tool_config) > 1
+        and isinstance(tool_config[1], list)
+    ):
+        if tool_config[1] and tool_config[1][0] == 3:
+            is_mode_none = True
+
+    if is_mode_none:
+        tools = None
+        tool_config = None
     generation_config = req.generationConfig
     generation_config_overrides = {
         key: value

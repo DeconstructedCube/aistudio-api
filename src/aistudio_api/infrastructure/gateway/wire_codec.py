@@ -293,7 +293,25 @@ class AistudioWireCodec:
 
         request.tools = tools if tools else None
         if tool_config is not None:
-            request.tool_config = tool_config
+            is_none_mode = False
+            if (
+                isinstance(tool_config, list)
+                and len(tool_config) > 1
+                and isinstance(tool_config[1], list)
+            ):
+                if tool_config[1] and tool_config[1][0] == 3:
+                    is_none_mode = True
+            elif isinstance(tool_config, dict):
+                fcc = tool_config.get("functionCallingConfig") or tool_config.get(
+                    "function_calling_config"
+                )
+                if isinstance(fcc, dict) and fcc.get("mode") in (3, "NONE", "none"):
+                    is_none_mode = True
+            if is_none_mode:
+                request.tools = None
+                request.tool_config = None
+            else:
+                request.tool_config = tool_config
         return self.encode(request)
 
     def _build_user_content(

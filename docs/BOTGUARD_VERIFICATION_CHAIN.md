@@ -83,7 +83,7 @@ sequenceDiagram
 ## 2. 阶段一：页面加载与服务初始化
 
 1. **页面与路由加载**：
-   - 用户访问 `https://aistudio.google.com/prompts/new_chat?model=gemini-3.7-flash`（或子账号路由 `/u/{auth_user}/...`）。
+   - 用户访问 `https://aistudio.google.com/prompts/new_chat?model=gemini-3.8-flash`（或子账号路由 `/u/{auth_user}/...`）。
    - HTML 页面引入 `boq-makersuite` JavaScript Bundle。
 2. **依赖注入容器初始化**：
    - Angular 根组件启动时，DI 容器解析并实例化 `BotGuardService`（即混淆类 `_.Vv`，注入令牌 `_.Vv.sa`）单例：
@@ -232,7 +232,7 @@ _.l(requestProto, 5, t);             // 3. 将 Token 注入 Protobuf 字段 5 (W
 
 ```json
 [
-  "models/gemini-3.7-flash",
+  "models/gemini-3.8-flash",
   [
     [
       [[null, "用户输入的提示词内容"]],
@@ -258,14 +258,14 @@ _.l(requestProto, 5, t);             // 3. 将 Token 注入 Protobuf 字段 5 (W
 
 | 数组索引 | Proto 字段号 | 字段名称 | 类型与说明 |
 |---|---|---|---|
-| **`0`** | `Field 1` | `model` | 目标模型名称（如 `"models/gemini-3.7-flash"`） |
+| **`0`** | `Field 1` | `model` | 目标模型名称（如 `"models/gemini-3.8-flash"`、`"models/gemini-3.7-flash"`） |
 | **`1`** | `Field 2` | `contents` | 结构化对话轮次与多模态数据数组 |
 | **`2`** | `Field 3` | `safety_settings` | 安全审核阈值配置数组 |
 | **`3`** | `Field 4` | `generation_config` | 生成控制参数（temperature, topP, topK, maxTokens 等） |
 | **`4`** | `Field 5` | `snapshot` | **BotGuard 快照签名 Token（以 `!` 开头）** |
 | **`5`** | `Field 6` | `system_instruction` | 系统指令角色与提示词块 |
 | **`6`** | `Field 7` | `tools` | 工具声明列表（Google 搜索、代码执行、Google Maps 等） |
-| **`7`** | `Field 8` | `tool_config` | 工具调用模式控制 |
+| **`7`** | `Field 8` | `evergreen_model_uri` | 动态常青模型 URI（如 `"models/gemini-..."`） |
 | **`10`** | `Field 11` | `request_flag` | 请求行为标记（固定值 `1`） |
 | **`11`** | `Field 12` | `cached_content` | 上下文缓存资源名称 |
 | **`13`** | `Field 14` | `location` | 用户位置与时区声明（如 `[[null, null, "Asia/Tokyo"]]`） |

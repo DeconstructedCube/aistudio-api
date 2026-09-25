@@ -99,3 +99,25 @@ def test_classify_gemini_error_payload():
         "HTTP 429: rate limit",
         "RESOURCE_EXHAUSTED",
     )
+    # JSPB bracket array error from upstream Google MakerSuite
+    jspb_400 = 'HTTP 400: [,[3,"Invalid value (), Unexpected list for single non-message field.",[["type.googleapis.com/google.rpc.BadRequest"]]]]'
+    assert classify_gemini_error_payload(RequestError(400, jspb_400)) == (
+        400,
+        "Invalid value (), Unexpected list for single non-message field.",
+        "INVALID_ARGUMENT",
+    )
+
+
+def test_clean_upstream_error_message():
+    from aistudio_api.application.api_service_gemini import clean_upstream_error_message
+
+    assert clean_upstream_error_message("") == ""
+    assert clean_upstream_error_message("Normal plain error") == "Normal plain error"
+    assert clean_upstream_error_message("HTTP 429: rate limit") == "HTTP 429: rate limit"
+    jspb_nested = 'HTTP 400: [,[3,"Please enable tool_config.include_server_side_tool_invocations to use Built-in tools with Function calling.",[["type.googleapis.com/details"]]]]'
+    assert (
+        clean_upstream_error_message(jspb_nested)
+        == "Please enable tool_config.include_server_side_tool_invocations to use Built-in tools with Function calling."
+    )
+    jspb_404 = 'HTTP 404: [,[5,"Requested entity was not found."]]'
+    assert clean_upstream_error_message(jspb_404) == "Requested entity was not found."

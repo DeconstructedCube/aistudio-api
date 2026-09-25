@@ -15,8 +15,9 @@
 - [5. 安全策略 (SafetySettings)](#5-安全策略-safetysettings)
 - [6. 工具与函数声明 (Tools & Function Calling)](#6-工具与函数声明-tools--function-calling)
   - [6.1 内置工具模板](#61-内置工具模板)
-  - [6.2 结构化 Schema 编码与类型字典](#62-结构化-schema-编码与类型字典)
-  - [6.3 工具控制模式 (ToolConfig)](#63-工具控制模式-toolconfig)
+  - [6.2 自定义函数声明 (Function Declarations)](#62-自定义函数声明-function-declarations)
+  - [6.3 结构化 Schema 编码与类型字典](#63-结构化-schema-编码与类型字典)
+  - [6.4 工具控制模式 (ToolConfig)](#64-工具控制模式-toolconfig)
 - [7. 响应报文解析与 Token 使用量 (Response & Usage)](#7-响应报文解析与-token-使用量-response--usage)
   - [7.1 响应 Chunk 容器](#71-响应-chunk-容器)
   - [7.2 Candidate 与 Part 字段解析](#72-candidate-与-part-字段解析)
@@ -41,14 +42,14 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 
 | 数组索引 | Proto 字段号 | 字段名称 | 类型 | 说明 |
 |---|---|---|---|---|
-| **`0`** | Field 1 | `model` | `string` | 目标模型路径，如 `"models/gemini-3.7-flash"` |
+| **`0`** | Field 1 | `model` | `string` | 目标模型路径，如 `"models/gemini-3.8-flash"`、`"models/gemini-3.7-flash"` |
 | **`1`** | Field 2 | `contents` | `list` | 结构化对话轮次数组（`AistudioContent` 列表） |
 | **`2`** | Field 3 | `safety_settings` | `list \| null` | 安全拦截阈值数组 |
 | **`3`** | Field 4 | `generation_config` | `list` | 生成控制参数数组（见第 4 节） |
 | **`4`** | Field 5 | `snapshot` | `string` | **BotGuard WAA 快照签名 Token**（以 `!` 开头） |
 | **`5`** | Field 6 | `system_instruction` | `list \| null` | 系统提示词内容（格式同 Content） |
 | **`6`** | Field 7 | `tools` | `list \| null` | 工具声明列表（内置工具与自定义函数） |
-| **`7`** | Field 8 | `tool_config` | `list \| null` | 工具调用控制模式 |
+| **`7`** | Field 8 | `evergreen_model_uri` | `string \| null` | 动态常青模型 URI（如 `"models/gemini-..."`） |
 | **`10`** | Field 11 | `request_flag` | `int` | 请求行为标记，固定值 `1` |
 | **`11`** | Field 12 | `cached_content` | `string \| null` | 缓存上下文名称 |
 | **`13`** | Field 14 | `location` | `list \| null` | 用户位置与时区声明，如 `[[null, null, "Asia/Tokyo"], null, 1]` |
@@ -74,18 +75,28 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 
 ### 3.2 Part 字段定义与多态表示
 
-每个 Part 是一个稀疏数组，根据其数据类型的不同占用不同的下标位置：
+每个 Part 是一个稀疏数组，根据其数据类型的不同占用不同的下标位置（对应 Protobuf 字段号 `N` 位于下标 `N - 1`）：
 
 | Part 类型 | 数组结构映射 | 说明 |
 |---|---|---|
-| **文本 (Text)** | `[null, "文本内容"]` | 普通文本块 |
-| **思考文本 (Thinking)** | `[null, "思考链内容", ..., ..., ..., ..., ..., ..., ..., ..., ..., null, 1]` | 下标 `12` 为 `1` 时标记该文本为思维链 |
-| **内联多模态 (InlineData)** | `[null, null, ["image/jpeg", "base64_data"]]` | 下标 `2` 为 `[mimeType, base64]` |
-| **资源引用 (FileData)** | `[null, null, null, null, null, ["file_id"]]` | 下标 `5` 为 `[file_id]` |
-| **工具调用 (FunctionCall)** | `[..., ..., ..., [name, args, call_id]]` | 请求中下标 `10`（部分响应中下标 `3`） |
-| **工具结果 (FunctionResponse)** | `[..., ..., ..., ..., [name, response, call_id]]` | 请求中下标 `11`（部分响应中下标 `4`） |
+| **文本 (Text)** | `[null, "文本内容"]` | 下标 `1` (Field 2) 为普通文本块 |
+| **思考文本 (Thinking)** | `[null, "思考链内容", ..., ..., ..., ..., ..., ..., ..., ..., ..., null, 1]` | 下标 `1` 为思维文本，下标 `12` (Field 13) 为 `1` 标记思维链 |
+| **内联多模态 (InlineData)** | `[null, null, ["image/jpeg", "base64_data"]]` | 下标 `2` (Field 3) 为 `[mimeType, base64]` |
+| **资源引用 (FileData)** | `[null, null, null, null, null, ["file_id"]]` | 下标 `5` (Field 6) 为 `[file_id]` |
+| **工具调用 (FunctionCall)** | `[..., [name, args_struct, call_id]]` | 请求中位于下标 `10` (Field 11)；响应中位于候选 Part 下标 `3` (Field 4) |
+| **工具结果 (FunctionResponse)** | `[..., [name, response_struct, call_id]]` | 请求中位于下标 `11` (Field 12) |
 | **思维签名 (ThoughtSignature)** | 位于任意 Part 的下标 `14` (`part[14] = "signature"`) | Google 官方校验思维链真实性的签名字符串 |
 
+#### 参数与返回值的 Protobuf 结构体编码 (Struct & Value)
+在 `FunctionCall.args` 与 `FunctionResponse.response` 中，键值数据遵循 `google.protobuf.Struct` 紧凑数组格式：
+- **Struct 容器**：`[[key, value_wire], ...]`
+- **Value 节点**（按值类型映射）：
+  - `null`：`[0]`
+  - `number` (int/float)：`[null, num]`
+  - `string`：`[null, null, str]`
+  - `boolean`：`[null, null, null, bool]`
+  - `object` (嵌套 Struct)：`[null, null, null, null, [struct_fields]]`
+  - `array` (ListValue)：`[null, null, null, null, null, [[item_values]]]`
 ---
 
 ## 4. 生成控制参数 (GenerationConfig)
@@ -133,7 +144,7 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 
 ## 6. 工具与函数声明 (Tools & Function Calling)
 
-位于顶层数组下标 `6`。
+位于顶层数组下标 `6` (Proto Field 7)。`tools` 是一个工具容器列表，支持内置工具与自定义函数声明。
 
 ### 6.1 内置工具模板
 
@@ -146,7 +157,26 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 | **谷歌地图 (Google Maps)** | `[null, null, null, null, null, null, null, null, null, null, []]` |
 | **URL 上下文提取 (URL Context)** | `[null, null, null, null, null, null, null, []]` |
 
-### 6.2 结构化 Schema 编码与类型字典
+### 6.2 自定义函数声明 (Function Declarations)
+
+在 `tools` 列表中，自定义函数集合序列化为 Tool 消息的 Field 2（前置 `null` 占位）：
+
+```json
+[
+  null,
+  [
+    [func_name, func_description, parameters_schema],
+    ...
+  ]
+]
+```
+
+单个函数声明三元数组结构如下：
+- **下标 `0` (Field 1)**：`name` (`string`)，函数唯一名称；
+- **下标 `1` (Field 2)**：`description` (`string | null`)，函数功能说明；
+- **下标 `2` (Field 3)**：`parameters` (`list | null`)，参数 Schema 定义（遵循下文 6.3 节 Schema 编码规范）。
+
+### 6.3 结构化 Schema 编码与类型字典
 
 针对自定义函数声明（Function Declarations）与结构化输出（Response Schema），字段类型码映射如下：
 
@@ -163,37 +193,16 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 - **必填属性列表 (Index 7)**：`["field1", "field2"]`
 - **属性声明顺序 (Index 22)**：`["field1", "field2"]`
 
+### 6.4 工具控制模式 (ToolConfig)
 
-### 6.3 工具控制模式 (ToolConfig)
+MakerSuite 协议无独立顶层工具控制字段，Gemini API 的 `toolConfig` 在网关层按语义映射：
 
-位于顶层数组下标 `7` (Proto Field 8)。
-
-内部为 `ToolConfig` 消息序列化数组：
-
-```json
-[
-  null,
-  [mode_code, ["allowed_func_1", "allowed_func_2"]],
-  include_server_side_tool_invocations
-]
-```
-
-| 下标 | Proto 字段 | 名称 | 说明 |
-|---|---|---|---|
-| `0` | Field 1 | `retrieval_config` | 知识检索配置，未配置时为 `null` |
-| `1` | Field 2 | `function_calling_config` | 函数调用模式控制数组：`[mode, allowed_function_names]` |
-| `2` | Field 3 | `include_server_side_tool_invocations` | `bool \| null`，服务端工具回显控制 |
-
-#### 函数调用模式码 (Mode Code)
-- `0`：`MODE_UNSPECIFIED`
-- `1`：`AUTO` (自动模型决策)
-- `2`：`ANY` (强制必须调用工具)
-- `3`：`NONE` (禁止调用工具)
-- `4`：`VALIDATED` (验证模式)
-
-> [!CRITICAL]
-> `function_calling_config` 属于 Protobuf Field 2，必须下发在下标 `1`（前置 `null` 占位符 `[null, fcc_wire]`）。若错误编码为 `[fcc_wire]`，Google 后端会按 Field 1 (`retrieval_config`) 反序列化导致类型不匹配报错。
----
+| 模式 (Mode) | 语义说明 | 网关处理策略 |
+|---|---|---|
+| **`AUTO`** | 模型自主决定文本或工具调用 | 保持 `tools` 原样下发 |
+| **`NONE`** | 禁用工具调用，强制纯文本输出 | 置空 `tools` 为 `null` |
+| **`ANY`** | 强制执行工具调用 | 若配置 `allowedFunctionNames`，在网关层过滤候选工具列表 |
+| **`VALIDATED`** | 受限解码验证 | 保持 `tools` 原样下发 |
 
 ## 7. 响应报文解析与 Token 使用量 (Response & Usage)
 
