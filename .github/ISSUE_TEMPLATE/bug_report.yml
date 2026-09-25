@@ -1,0 +1,68 @@
+name: 🐛 Bug 反馈 (Bug Report)
+description: 提交遇到问题、异常报错或意外行为的反馈
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢提交 Bug 反馈！请尽可能提供详尽的运行环境、调用配置与报错日志，便于快速复现排查。
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: 运行平台与环境 (Operating Environment)
+      description: 请选择你当前运行 aistudio-api 的主要平台
+      options:
+        - "Android (Termux / proot-distro)"
+        - "Linux (Docker 容器部署)"
+        - "Linux (原生宿主 Python)"
+        - "macOS"
+        - "Windows"
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: 涉及的模型名称 (Model Name)
+      placeholder: "例如: gemini-3.8-flash, gemini-3.7-flash"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述 (Problem Description)
+      description: 请详细描述遇到的异常行为与预期表现的差异
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 (Reproduction Steps)
+      description: 说明重现该问题的步骤或调用方式（如使用 cURL、Python SDK 还是某款 AI 工具客户端）
+      placeholder: |
+        1. 启动服务: uv run python3 main.py server
+        2. 发起请求: ...
+        3. 观察到返回 HTTP 400 / 500 ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 错误日志与终端输出 (Logs & Error Traces)
+      description: 请粘贴发生错误时的服务端终端控制台日志或客户端报错信息
+      render: shell
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: 自查清单 (Self Check)
+      options:
+        - label: 我已查阅现有 Issues 与文档，确认此问题尚未被解决或报告
+          required: true
+        - label: 我确认未在上述日志或描述中泄露敏感信息（如 Google Cookie、账号密码或 API Key）
+          required: true

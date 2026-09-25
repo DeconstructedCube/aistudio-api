@@ -1,0 +1,37 @@
+name: 💡 功能与适配提议 (Feature Request)
+description: 提议新特性、协议适配或优化建议
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢为 aistudio-api 提出改进建议！请详述需求场景与期望的行为方式。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 需求背景 / 遇到的痛点 (Use Case)
+      description: 当前缺少什么功能？或者某个工作流有哪些不便之处？
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 期望的实现方案 (Proposed Solution)
+      description: 请清晰描述你希望服务如何实现或行为，包括期望的 API 形式或参数
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考虑过的替代方案 (Alternatives Considered)
+      description: 是否有任何替代的解决方法或参考实现？
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: 其他补充信息 (Additional Context)
+      description: 截图、文档链接或相关规范说明
