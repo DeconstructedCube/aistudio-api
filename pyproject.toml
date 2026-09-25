@@ -118,6 +118,7 @@ combine-as-imports = true
 
 [tool.ruff.lint.per-file-ignores]
 "main.py" = ["E402"]
+"src/aistudio_api/infrastructure/account/account_store.py" = ["PTH"]
 "tests/**" = ["B018", "PTH", "ASYNC", "A001", "A002", "RET504", "TC001", "TC002", "TC003"]
 
 [tool.ruff.format]

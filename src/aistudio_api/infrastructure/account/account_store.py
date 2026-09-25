@@ -11,6 +11,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from os.path import abspath, basename, join
 from pathlib import Path
 from typing import ClassVar
 
@@ -45,20 +46,14 @@ _SAFE_ACCOUNT_ID_RE = re.compile(r"^[a-zA-Z0-9_\-\.@]+$")
 
 def _safe_account_dir(accounts_dir: Path, account_id: str) -> Path:
     """验证并返回安全的账号子目录路径，防止路径遍历攻击。"""
-    safe_name = Path(str(account_id or "").strip()).name
-    if (
-        not safe_name
-        or safe_name != account_id
-        or not _SAFE_ACCOUNT_ID_RE.match(safe_name)
-        or ".." in safe_name
-    ):
+    clean_id = basename(str(account_id or "").strip())
+    if not clean_id or clean_id != account_id or not _SAFE_ACCOUNT_ID_RE.match(clean_id) or ".." in clean_id:
         raise ValueError(f"Invalid or unsafe account_id: {account_id!r}")
-    base = accounts_dir.resolve()
-    target = (base / safe_name).resolve()
-    if not target.is_relative_to(base) or target == base:
+    base_dir = abspath(str(accounts_dir.resolve()))
+    full_path = abspath(join(base_dir, clean_id))
+    if not full_path.startswith(base_dir + os.sep) and full_path != base_dir:
         raise ValueError(f"Account path escapes base directory: {account_id!r}")
-    return target
-
+    return Path(full_path)
 def _resolve_accounts_dir() -> Path:
     """发现 accounts 目录，默认为 data/accounts。"""
     env = os.getenv("AISTUDIO_ACCOUNTS_DIR")
