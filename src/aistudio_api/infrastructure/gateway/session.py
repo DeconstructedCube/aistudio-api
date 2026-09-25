@@ -13,6 +13,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from hashlib import sha256
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from aistudio_api.config import settings
 from aistudio_api.domain.errors import SessionExpiredError
@@ -48,14 +49,22 @@ TEMPLATE_CAPTURE_PROMPT = "say 't'"
 def _is_login_page_url(url: str | None) -> bool:
     if not url:
         return False
-    u = url.lower()
+    try:
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").lower()
+        path = (parsed.path or "").lower()
+        query = (parsed.query or "").lower()
+    except Exception:
+        return False
+    if host == "accounts.google.com" or host.endswith(".accounts.google.com"):
+        return True
     return (
-        "accounts.google.com" in u
-        or "signin" in u
-        or "servicelogin" in u
-        or "accountchooser" in u
+        "signin" in path
+        or "servicelogin" in path
+        or "accountchooser" in path
+        or "signin" in query
+        or "servicelogin" in query
     )
-
 
 DEFAULT_BOOTSTRAP_TEMPLATE = {
     "url": "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent",
@@ -867,8 +876,14 @@ class BrowserSession:
                             if auth_user and auth_user != "0"
                             else "aistudio.google.com"
                         )
-                        if "aistudio.google.com" in curr and (
-                            expected_match in curr
+                        curr_parsed = urlsplit(curr)
+                        curr_host = (curr_parsed.hostname or "").lower()
+                        is_aistudio = (
+                            curr_host == "aistudio.google.com"
+                            or curr_host.endswith(".aistudio.google.com")
+                        )
+                        if is_aistudio and (
+                            expected_match in curr_parsed.path
                             or expected_match == "aistudio.google.com"
                         ):
                             log.debug(

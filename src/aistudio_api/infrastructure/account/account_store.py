@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import shutil
 import threading
 import time
@@ -16,20 +17,20 @@ from typing import ClassVar
 
 def _atomic_write_json(path: Path, data: object) -> None:
     """原子写入 JSON 文件（写唯一临时文件后原子替换，防止写穿或损坏）。"""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(f".tmp.{os.getpid()}_{time.time_ns()}")
+    target_path = path.resolve()
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = target_path.with_suffix(f".tmp.{os.getpid()}_{time.time_ns()}")
     try:
         tmp_path.write_text(
             json.dumps(data, ensure_ascii=False, separators=(",", ":")),
             encoding="utf-8",
         )
-        tmp_path.replace(path)
+        tmp_path.replace(target_path)
     except Exception:
         if tmp_path.exists():
             with contextlib.suppress(OSError):
                 tmp_path.unlink()
         raise
-
 
 # 默认搜索路径（与 config.py 保持一致）
 _SEARCH_ROOTS: list[Path] = [
@@ -39,6 +40,18 @@ _SEARCH_ROOTS: list[Path] = [
     .parents[4],  # src/aistudio_api/infrastructure/account -> 项目根
 ]
 
+_SAFE_ACCOUNT_ID_RE = re.compile(r"^[a-zA-Z0-9_\-\.@]+$")
+
+
+def _safe_account_dir(accounts_dir: Path, account_id: str) -> Path:
+    """验证并返回安全的账号子目录路径，防止路径遍历攻击。"""
+    if not account_id or not _SAFE_ACCOUNT_ID_RE.match(account_id) or ".." in account_id:
+        raise ValueError(f"Invalid or unsafe account_id: {account_id!r}")
+    base = accounts_dir.resolve()
+    target = (base / account_id).resolve()
+    if not target.is_relative_to(base) or target == base:
+        raise ValueError(f"Account path escapes base directory: {account_id!r}")
+    return target
 
 def _resolve_accounts_dir() -> Path:
     """发现 accounts 目录，默认为 data/accounts。"""
@@ -286,7 +299,7 @@ class AccountStore:
             auth_user=auth_user,
             cookie_id=cookie_id,
         )
-        account_dir = self._accounts_dir / account_id
+        account_dir = _safe_account_dir(self._accounts_dir, account_id)
         account_dir.mkdir(parents=True, exist_ok=True)
         # 原子写入 auth.json 与 meta.json
         _atomic_write_json(account_dir / "auth.json", storage_state)
@@ -304,7 +317,7 @@ class AccountStore:
         if account_id not in registry.accounts:
             return False
         # 删除目录
-        account_dir = self._accounts_dir / account_id
+        account_dir = _safe_account_dir(self._accounts_dir, account_id)
         if account_dir.is_dir():
             shutil.rmtree(account_dir, ignore_errors=True)
         # 从注册表移除
@@ -321,7 +334,7 @@ class AccountStore:
             return None
         registry.accounts[account_id].name = name
         # 同步更新 meta.json
-        account_dir = self._accounts_dir / account_id
+        account_dir = _safe_account_dir(self._accounts_dir, account_id)
         meta_path = account_dir / "meta.json"
         if meta_path.exists():
             _atomic_write_json(meta_path, registry.accounts[account_id].to_dict())
@@ -339,7 +352,7 @@ class AccountStore:
         registry = self._load_registry()
         if account_id not in registry.accounts:
             return None
-        path = self._accounts_dir / account_id / "auth.json"
+        path = _safe_account_dir(self._accounts_dir, account_id) / "auth.json"
         if require_exists and not path.exists():
             return None
         return path
@@ -349,4 +362,4 @@ class AccountStore:
         registry = self._load_registry()
         if account_id not in registry.accounts:
             return None
-        return self._accounts_dir / account_id / "profile"
+        return _safe_account_dir(self._accounts_dir, account_id) / "profile"

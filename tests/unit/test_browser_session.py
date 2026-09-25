@@ -314,3 +314,15 @@ async def test_capture_service_single_pass_full_payload():
     assert captured.snapshot == "!fresh_snapshot_token"
     assert "You are a helpful assistant" in captured.body
     assert "models/gemini-3.7-flash" in captured.body
+
+
+def test_is_login_page_url():
+    """Verify _is_login_page_url correctly identifies login hosts and paths."""
+    from aistudio_api.infrastructure.gateway.session import _is_login_page_url
+
+    assert _is_login_page_url(None) is False
+    assert _is_login_page_url("") is False
+    assert _is_login_page_url("https://aistudio.google.com/prompts/new_chat") is False
+    assert _is_login_page_url("https://accounts.google.com/signin/v2") is True
+    assert _is_login_page_url("https://accounts.google.com/ServiceLogin") is True
+    assert _is_login_page_url("https://myaccount.google.com/accountchooser") is True

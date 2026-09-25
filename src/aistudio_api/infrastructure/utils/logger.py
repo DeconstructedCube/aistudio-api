@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import time
 
@@ -181,6 +182,33 @@ def get_logger(name: str = "aistudio") -> logging.Logger:
 
 dump_logger = get_logger("dump")
 
+_SENSITIVE_FIELD_RE = re.compile(
+    r"(?i)(authorization|api[_-]?key|cookie|set-cookie|token|secret|password|auth)"
+)
+
+
+def _mask_sensitive_value(key: str, val: str) -> str:
+    if not val:
+        return "***"
+    k_lower = key.lower()
+    if "authorization" in k_lower:
+        return val[:12] + "..." if len(val) > 12 else "***"
+    if _SENSITIVE_FIELD_RE.search(k_lower):
+        return val[:6] + "..." if len(val) > 6 else "***"
+    return val
+
+
+def _mask_headers(h: dict[str, str] | None) -> dict[str, str]:
+    if not h:
+        return {}
+    return {k: _mask_sensitive_value(k, str(v)) for k, v in h.items()}
+
+
+def _mask_query_params(qp: dict[str, str] | None) -> dict[str, str]:
+    if not qp:
+        return {}
+    return {k: _mask_sensitive_value(k, str(v)) for k, v in qp.items()}
+
 
 def dump_request_exchange(
     *,
@@ -200,17 +228,8 @@ def dump_request_exchange(
     """转储单次完整请求与响应详细信息。"""
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
 
-    # 格式化请求头
-    safe_headers = dict(headers)
-    if "authorization" in safe_headers:
-        auth_val = safe_headers["authorization"]
-        safe_headers["authorization"] = (
-            auth_val[:12] + "..." if len(auth_val) > 12 else "***"
-        )
-    if "x-goog-api-key" in safe_headers:
-        k_val = safe_headers["x-goog-api-key"]
-        safe_headers["x-goog-api-key"] = k_val[:6] + "..." if len(k_val) > 6 else "***"
-
+    safe_headers = _mask_headers(headers)
+    safe_query_params = _mask_query_params(query_params)
     header_lines = "\n".join(f"    {k}: {v}" for k, v in safe_headers.items())
 
     # 格式化请求体
@@ -246,9 +265,10 @@ def dump_request_exchange(
         pretty_resp = "(空响应体)"
     resp_header_lines = ""
     if response_headers:
+        safe_resp_headers = _mask_headers(response_headers)
         resp_header_lines = (
             "响应头:\n"
-            + "\n".join(f"    {k}: {v}" for k, v in response_headers.items())
+            + "\n".join(f"    {k}: {v}" for k, v in safe_resp_headers.items())
             + "\n"
         )
 
@@ -257,7 +277,7 @@ def dump_request_exchange(
         f"记录时间:     {timestamp}\n"
         f"客户端:       {client}\n"
         f"请求接口:     {method} {url}\n"
-        f"查询参数:     {query_params if query_params else '(无)'}\n"
+        f"查询参数:     {safe_query_params if safe_query_params else '(无)'}\n"
         f"请求头:\n{header_lines}\n"
         f"请求体:\n{pretty_body}\n"
         f"-------------------- [响应报文转储: {req_id}] --------------------\n"

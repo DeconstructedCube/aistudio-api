@@ -223,3 +223,23 @@ def test_account_stats_short_cooldown_sync():
     assert not stats.is_available("gemini-2.5-flash")
     rem3 = stats.get_cooldown_remaining("gemini-2.5-flash")
     assert rem3 > 60.0
+
+
+def test_safe_account_dir_path_traversal_rejection(tmp_path):
+    """Verify _safe_account_dir rejects path traversal and malicious account IDs."""
+    from aistudio_api.infrastructure.account.account_store import _safe_account_dir
+
+    base = tmp_path / "accounts"
+    base.mkdir()
+
+    # Valid account IDs
+    valid_dir = _safe_account_dir(base, "user_123")
+    assert valid_dir == (base / "user_123").resolve()
+
+    valid_email = _safe_account_dir(base, "test.user@gmail.com")
+    assert valid_email == (base / "test.user@gmail.com").resolve()
+
+    # Invalid / traversal IDs
+    for bad_id in ["../etc/passwd", "..", "user/subdir", "user\\subdir", "foo/../bar", ""]:
+        with pytest.raises(ValueError):
+            _safe_account_dir(base, bad_id)
