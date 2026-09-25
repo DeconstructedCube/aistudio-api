@@ -33,10 +33,13 @@ jobs:
         run: uv python install 3.11
 
       - name: Install dependencies
-        run: uv sync --all-extras
+        run: |
+          uv venv
+          uv pip install -e ".[dev]"
 
       - name: Run Ruff Lint
         run: uv run ruff check .
+
       - name: Run Pyright Type Check
         run: uv run pyright
 
