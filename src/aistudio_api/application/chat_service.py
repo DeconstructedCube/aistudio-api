@@ -70,10 +70,18 @@ def cleanup_files(paths: list[str]):
 def encode_schema_to_wire(
     schema: dict[str, object], *, include_required: bool = True
 ) -> list[object]:
-    schema_type = str(schema.get("type") or "").split(".")[-1].strip().lower()
+    raw_type = schema.get("type")
+    if isinstance(raw_type, list):
+        non_null_types = [t for t in raw_type if str(t).lower() != "null"]
+        raw_type = non_null_types[0] if non_null_types else "string"
+    schema_type = str(raw_type or "").split(".")[-1].strip().lower()
+    if not schema_type:
+        if "properties" in schema:
+            schema_type = "object"
+        elif "items" in schema:
+            schema_type = "array"
     type_code = SCHEMA_TYPE_CODES.get(schema_type, 0)
     wire: list[object] = [type_code]
-
     items = schema.get("items")
     if schema_type == "array" and isinstance(items, dict):
         while len(wire) <= 5:
@@ -99,7 +107,9 @@ def encode_schema_to_wire(
             wire.append(None)
         wire[7] = list(required)
 
-    property_ordering = schema.get("propertyOrdering")
+    property_ordering = schema.get("propertyOrdering") or schema.get(
+        "property_ordering"
+    )
     if isinstance(property_ordering, list):
         while len(wire) <= 22:
             wire.append(None)
@@ -109,9 +119,10 @@ def encode_schema_to_wire(
 
 
 def encode_function_declaration_to_wire(declaration: dict[str, object]) -> list[object]:
+    if isinstance(declaration.get("function"), dict):
+        declaration = declaration["function"]  # type: ignore[assignment]
     if not declaration.get("name"):
         raise ValueError("functionDeclarations[].name is required")
-
     wire = [declaration["name"]]
     if declaration.get("description") is not None:
         while len(wire) <= 1:
@@ -467,20 +478,17 @@ def normalize_gemini_request(
     seen_builtin: set[str] = set()
     if req.tools is not None:
         tools = []
+        all_function_declarations: list[list[object]] = []
         for tool in req.tools:
             builtin_tool_names: list[str] = []
             if tool.codeExecution is not None:
                 builtin_tool_names.append("code_execution")
             if tool.functionDeclarations:
-                tools.append(
-                    [
-                        None,
-                        [
+                for decl in tool.functionDeclarations:
+                    if isinstance(decl, dict):
+                        all_function_declarations.append(
                             encode_function_declaration_to_wire(decl)
-                            for decl in tool.functionDeclarations
-                        ],
-                    ]
-                )
+                        )
             builtin_tool_names.extend(
                 _extract_google_search_tool_names(
                     tool, is_image_model=model_defaults.is_image_model
@@ -500,6 +508,8 @@ def normalize_gemini_request(
                     )
                 )
                 seen_builtin.update(builtin_tool_names)
+        if all_function_declarations:
+            tools.append([None, all_function_declarations])
 
     # 仅当客户端未传 tools 时注入 config.yaml 的 default_tools。
     # 若客户端显式声明了 tools（如自定义函数声明），绝不自动混入 Google Search 等内置工具，

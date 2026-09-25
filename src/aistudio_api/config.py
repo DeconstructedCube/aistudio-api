@@ -71,6 +71,14 @@ def _load_dump_requests_env() -> bool:
     return val.strip().lower() in ("1", "true", "yes", "on", "dump", "y", "t")
 
 
+def _load_dump_to_file_env() -> bool:
+    """检查 AISTUDIO_DUMP_FILE / AISTUDIO_DUMP_TO_FILE 环境变量是否启用请求转储落盘。"""
+    val = _load_env("AISTUDIO_DUMP_FILE", "AISTUDIO_DUMP_TO_FILE")
+    if val is None:
+        return False
+    return val.strip().lower() in ("1", "true", "yes", "on", "dump", "y", "t")
+
+
 def _is_debug_env_set() -> bool:
     return _load_env("DEBUG", "AISTUDIO_DEBUG", "AISTUDIO_DUMP_REQUESTS") is not None
 
@@ -261,6 +269,8 @@ class Settings:
     persist_rotator: bool = _load_bool_env("AISTUDIO_PERSIST_ROTATOR", default=True)
     account_max_retries: int = int(os.getenv("AISTUDIO_ACCOUNT_MAX_RETRIES", "3"))
     dump_requests: bool = _load_dump_requests_env()
+    dump_to_file: bool = _load_dump_to_file_env()
+    dump_dir: str = os.getenv("AISTUDIO_DUMP_DIR", str(_PROJECT_ROOT / "dumps"))
     log_level: str = "INFO"
 
     @property

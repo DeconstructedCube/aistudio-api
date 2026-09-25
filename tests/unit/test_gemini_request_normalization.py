@@ -443,3 +443,57 @@ def test_normalize_gemini_request_mode_none_suppresses_tools():
     # Tools and tool_config must both be None so MakerSuite generates text without calling functions
     assert normalized.tools is None
     assert normalized.tool_config is None
+
+
+def test_normalize_gemini_request_supports_snake_case_function_declarations():
+    """Verify tools with snake_case function_declarations (e.g. SillyTavern anti-truncation) are correctly converted."""
+    req = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "Hello"}]}],
+            "tools": [
+                {
+                    "function_declarations": [
+                        {
+                            "name": "emit_complete_response_f8dce5fa2102a5307ad6412d",
+                            "description": "Emit the complete final user-visible reply exactly once.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "content": {
+                                        "type": "string",
+                                        "description": "The complete final reply shown to the user.",
+                                    }
+                                },
+                                "required": ["content"],
+                                "property_ordering": ["content"],
+                            },
+                        }
+                    ]
+                }
+            ],
+            "tool_config": {
+                "function_calling_config": {
+                    "mode": "AUTO",
+                }
+            },
+        }
+    )
+    normalized = normalize_gemini_request(req, "models/gemini-3.8-flash")
+    assert normalized.tools is not None
+    assert len(normalized.tools) == 1
+    # Single Tool entry with function declarations at index 1
+    assert normalized.tools[0][0] is None
+    func_decls = normalized.tools[0][1]
+    assert isinstance(func_decls, list)
+    assert len(func_decls) == 1
+    decl_entry = func_decls[0]
+    assert isinstance(decl_entry, list)
+    assert decl_entry[0] == "emit_complete_response_f8dce5fa2102a5307ad6412d"
+    assert decl_entry[1] == "Emit the complete final user-visible reply exactly once."
+    # Parameters schema wire format
+    schema_wire = decl_entry[2]
+    assert isinstance(schema_wire, list)
+    assert schema_wire[0] == 6  # OBJECT
+    assert schema_wire[6] == [["content", [1]]]
+    assert schema_wire[7] == ["content"]
+    assert schema_wire[22] == ["content"]

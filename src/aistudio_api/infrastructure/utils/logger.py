@@ -13,6 +13,8 @@ import os
 import re
 import sys
 import time
+from datetime import UTC, datetime
+from pathlib import Path
 
 _UNIFIED_LOG_FORMAT = "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
 _UNIFIED_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -54,6 +56,105 @@ class UnifiedFormatter(logging.Formatter):
 _root_handler: logging.Handler | None = None
 _current_level: str = "INFO"
 _dump_requests_override: bool | None = None
+_dump_to_file_override: bool | None = None
+_dump_dir_override: str | None = None
+
+
+def is_dump_to_file_enabled() -> bool:
+    """检查是否启用将请求与响应转储至本地文件。
+
+    优先级：
+    1. 运行时动态配置 (_dump_to_file_override)
+    2. 环境变量 AISTUDIO_DUMP_FILE / AISTUDIO_DUMP_TO_FILE
+    3. config.yaml 中 logging.dump_to_file
+    4. 当 dump_requests 开启时，若 dump_to_file 未显式禁用则默认开启
+    """
+    global _dump_to_file_override
+    if _dump_to_file_override is not None:
+        return _dump_to_file_override
+
+    for name in ("AISTUDIO_DUMP_FILE", "AISTUDIO_DUMP_TO_FILE"):
+        val = os.getenv(name)
+        if val is not None:
+            return val.strip().lower() in ("1", "true", "yes", "on", "dump", "y", "t")
+
+    from aistudio_api.config import settings
+
+    if getattr(settings, "dump_to_file", False):
+        return True
+
+    try:
+        from aistudio_api.infrastructure.gateway.model_defaults import (
+            get_configured_logging_settings,
+        )
+
+        cfg = get_configured_logging_settings()
+        if "dump_to_file" in cfg:
+            return bool(cfg["dump_to_file"])
+        return bool(cfg.get("dump_requests", False))
+    except Exception:
+        return False
+
+
+def set_dump_to_file(enabled: bool | None) -> None:
+    """动态设置是否落盘转储文件。"""
+    global _dump_to_file_override
+    _dump_to_file_override = enabled
+    if enabled is not None:
+        from aistudio_api.config import settings
+
+        settings.dump_to_file = enabled
+
+
+def get_dump_dir() -> Path:
+    """获取或创建请求转储文件存放目录。"""
+    global _dump_dir_override
+    if _dump_dir_override:
+        p = Path(_dump_dir_override)
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    val = os.getenv("AISTUDIO_DUMP_DIR")
+    if val and val.strip():
+        p = Path(val.strip())
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    try:
+        from aistudio_api.infrastructure.gateway.model_defaults import (
+            get_configured_logging_settings,
+        )
+
+        cfg = get_configured_logging_settings()
+        custom_dir = str(cfg.get("dump_dir") or "").strip()
+        if custom_dir:
+            p = Path(custom_dir)
+            p.mkdir(parents=True, exist_ok=True)
+            return p
+    except Exception:
+        pass
+
+    from aistudio_api.config import settings
+
+    cfg_dir = getattr(settings, "dump_dir", None)
+    if cfg_dir and str(cfg_dir).strip():
+        p = Path(str(cfg_dir).strip())
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    default_dir = Path(__file__).resolve().parents[3] / "dumps"
+    default_dir.mkdir(parents=True, exist_ok=True)
+    return default_dir
+
+
+def set_dump_dir(dump_dir: str | Path | None) -> None:
+    """动态设置转储文件存放目录。"""
+    global _dump_dir_override
+    _dump_dir_override = str(dump_dir) if dump_dir is not None else None
+    if dump_dir is not None:
+        from aistudio_api.config import settings
+
+        settings.dump_dir = str(dump_dir)
 
 
 def is_debug_env_active() -> bool:
@@ -263,20 +364,72 @@ def dump_request_exchange(
             )
     else:
         pretty_resp = "(空响应体)"
+    safe_resp_headers = _mask_headers(response_headers)
     resp_header_lines = ""
     if response_headers:
-        safe_resp_headers = _mask_headers(response_headers)
         resp_header_lines = (
             "响应头:\n"
             + "\n".join(f"    {k}: {v}" for k, v in safe_resp_headers.items())
             + "\n"
         )
+    dump_file_path: Path | None = None
+    if is_dump_to_file_enabled():
+        try:
+            dump_folder = get_dump_dir()
+            clean_id = re.sub(r"[^\w\-.]", "_", req_id)
+            dump_file_path = dump_folder / f"{clean_id}.json"
 
+            parsed_body = None
+            if body_text:
+                try:
+                    parsed_body = json.loads(body_text)
+                except Exception:
+                    parsed_body = body_text
+
+            parsed_resp = None
+            if response_text:
+                try:
+                    parsed_resp = json.loads(response_text)
+                except Exception:
+                    parsed_resp = response_text
+
+            record_data = {
+                "req_id": req_id,
+                "timestamp": timestamp,
+                "iso_timestamp": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "method": method,
+                "url": url,
+                "client": client,
+                "headers": headers,
+                "safe_headers": safe_headers,
+                "query_params": query_params,
+                "safe_query_params": safe_query_params,
+                "body": parsed_body,
+                "raw_body": body_text,
+                "status_code": status_code,
+                "elapsed_ms": elapsed_ms,
+                "is_stream": is_stream,
+                "response_headers": response_headers if response_headers else {},
+                "safe_response_headers": safe_resp_headers if response_headers else {},
+                "response_body": parsed_resp,
+                "raw_response_body": response_text,
+            }
+
+            serialized = json.dumps(record_data, ensure_ascii=False, indent=2)
+            dump_file_path.write_text(serialized, encoding="utf-8")
+
+            latest_file = dump_folder / "latest_request.json"
+            latest_file.write_text(serialized, encoding="utf-8")
+        except Exception as e:
+            dump_logger.warning("请求文件转储失败: %s", e)
+
+    file_line = f"转储文件:     {dump_file_path}\n" if dump_file_path else ""
     dump_msg = (
         f"\n==================== [请求报文转储: {req_id}] ====================\n"
         f"记录时间:     {timestamp}\n"
         f"客户端:       {client}\n"
         f"请求接口:     {method} {url}\n"
+        f"{file_line}"
         f"查询参数:     {safe_query_params if safe_query_params else '(无)'}\n"
         f"请求头:\n{header_lines}\n"
         f"请求体:\n{pretty_body}\n"

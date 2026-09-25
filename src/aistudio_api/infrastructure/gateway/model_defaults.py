@@ -493,16 +493,22 @@ def get_configured_logging_settings(
         return {
             "level": str(raw_logging.get("level") or "INFO").strip().upper(),
             "dump_requests": bool(raw_logging.get("dump_requests", False)),
+            "dump_to_file": bool(raw_logging.get("dump_to_file", False)),
+            "dump_dir": str(raw_logging.get("dump_dir") or "").strip(),
         }
     return {
         "level": "INFO",
         "dump_requests": False,
+        "dump_to_file": False,
+        "dump_dir": "",
     }
 
 
 def update_configured_logging_settings(
     level: str | None = None,
     dump_requests: bool | None = None,
+    dump_to_file: bool | None = None,
+    dump_dir: str | None = None,
     config_path: str | os.PathLike[str] | None = None,
 ) -> dict[str, object]:
     """更新 config.yaml 中的 logging 设置并刷新缓存。"""
@@ -520,6 +526,10 @@ def update_configured_logging_settings(
         logging_dict["level"] = level.strip().upper()
     if dump_requests is not None:
         logging_dict["dump_requests"] = dump_requests
+    if dump_to_file is not None:
+        logging_dict["dump_to_file"] = dump_to_file
+    if dump_dir is not None:
+        logging_dict["dump_dir"] = dump_dir
 
     parsed["logging"] = logging_dict
     resolved_path.write_text(

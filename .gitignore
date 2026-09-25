@@ -12,6 +12,7 @@ build/
 /data/
 /tmp/
 stream_response.txt
+dumps/
 .vscode/
 !docs/BOTGUARD_VERIFICATION_CHAIN.md
 .env

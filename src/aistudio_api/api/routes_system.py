@@ -184,9 +184,11 @@ async def get_system_config() -> dict[str, object]:
     """获取系统运行配置与 config.yaml 内容。"""
     from aistudio_api.config import settings
     from aistudio_api.infrastructure.utils.logger import (
+        get_dump_dir,
         get_log_level,
         is_debug_env_active,
         is_dump_requests_enabled,
+        is_dump_to_file_enabled,
     )
 
     config_yaml_path = _resolve_config_path(None)
@@ -205,6 +207,8 @@ async def get_system_config() -> dict[str, object]:
         "log_level": get_log_level(),
         "dump_requests": is_dump_requests_enabled(),
         "debug_env_active": is_debug_env_active(),
+        "dump_to_file": is_dump_to_file_enabled(),
+        "dump_dir": str(get_dump_dir()),
     }
 
 
@@ -227,7 +231,9 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
             raw_logging = parsed["logging"]
             if isinstance(raw_logging, dict):
                 from aistudio_api.infrastructure.utils.logger import (
+                    set_dump_dir,
                     set_dump_requests,
+                    set_dump_to_file,
                     set_log_level,
                 )
 
@@ -235,7 +241,10 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
                     set_log_level(str(raw_logging["level"]))
                 if "dump_requests" in raw_logging:
                     set_dump_requests(bool(raw_logging["dump_requests"]))
-
+                if "dump_to_file" in raw_logging:
+                    set_dump_to_file(bool(raw_logging["dump_to_file"]))
+                if "dump_dir" in raw_logging:
+                    set_dump_dir(str(raw_logging["dump_dir"]))
         logger.info("配置文件 config.yaml 已更新并重新加载")
         return {"ok": True, "message": "配置已保存并重载"}
     except Exception as e:
@@ -245,6 +254,8 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
 class LoggingConfigRequest(BaseModel):
     level: str | None = None
     dump_requests: bool | None = None
+    dump_to_file: bool | None = None
+    dump_dir: str | None = None
 
 
 @protected_router.put("/config/logging")
@@ -254,10 +265,14 @@ async def update_logging_config(req: LoggingConfigRequest) -> dict[str, object]:
         update_configured_logging_settings,
     )
     from aistudio_api.infrastructure.utils.logger import (
+        get_dump_dir,
         get_log_level,
         is_debug_env_active,
         is_dump_requests_enabled,
+        is_dump_to_file_enabled,
+        set_dump_dir,
         set_dump_requests,
+        set_dump_to_file,
         set_log_level,
     )
 
@@ -265,12 +280,23 @@ async def update_logging_config(req: LoggingConfigRequest) -> dict[str, object]:
         set_log_level(req.level)
     if req.dump_requests is not None:
         set_dump_requests(req.dump_requests)
+    if req.dump_to_file is not None:
+        set_dump_to_file(req.dump_to_file)
+    if req.dump_dir is not None:
+        set_dump_dir(req.dump_dir)
 
-    update_configured_logging_settings(level=req.level, dump_requests=req.dump_requests)
+    update_configured_logging_settings(
+        level=req.level,
+        dump_requests=req.dump_requests,
+        dump_to_file=req.dump_to_file,
+        dump_dir=req.dump_dir,
+    )
     logger.info(
-        "日志配置已更新: 级别=%s, 请求转储=%s",
+        "日志配置已更新: 级别=%s, 请求转储=%s, 文件转储=%s, 目录=%s",
         req.level,
         req.dump_requests,
+        req.dump_to_file,
+        req.dump_dir,
     )
 
     return {
@@ -278,6 +304,8 @@ async def update_logging_config(req: LoggingConfigRequest) -> dict[str, object]:
         "log_level": get_log_level(),
         "dump_requests": is_dump_requests_enabled(),
         "debug_env_active": is_debug_env_active(),
+        "dump_to_file": is_dump_to_file_enabled(),
+        "dump_dir": str(get_dump_dir()),
     }
 
 

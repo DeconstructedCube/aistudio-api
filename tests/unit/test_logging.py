@@ -242,3 +242,68 @@ async def test_middleware_request_dump_and_access_log():
             assert data["status"] == "ok"
     finally:
         set_dump_requests(False)
+
+
+def test_dump_request_to_file_by_req_id(tmp_path):
+    """验证按照请求 ID 转储为独立 JSON 文件并携带所有必要完整信息。"""
+    from aistudio_api.infrastructure.utils.logger import (
+        get_dump_dir,
+        is_dump_to_file_enabled,
+        set_dump_dir,
+        set_dump_to_file,
+    )
+
+    dump_test_dir = tmp_path / "test_dumps"
+    set_dump_dir(dump_test_dir)
+    set_dump_to_file(True)
+
+    try:
+        assert is_dump_to_file_enabled() is True
+        assert get_dump_dir() == dump_test_dir
+
+        test_req_id = "req_f96e327d"
+        dump_request_exchange(
+            req_id=test_req_id,
+            method="POST",
+            url="/v1beta/models/gemini-2.5-flash:generateContent",
+            client="127.0.0.1:45678",
+            headers={
+                "content-type": "application/json",
+                "x-goog-api-key": "secret_key",
+            },
+            query_params={"alt": "sse"},
+            body_text='{"contents": [{"role": "user", "parts": [{"text": "测试抗截断"}]}], "tools": [{"functionDeclarations": [{"name": "reply_fn"}]}]}',
+            status_code=200,
+            elapsed_ms=88.5,
+            response_headers={"content-type": "application/json"},
+            response_text='{"candidates": [{"content": {"parts": [{"text": "成功"}]}}]}',
+            is_stream=False,
+        )
+
+        target_dump_file = dump_test_dir / f"{test_req_id}.json"
+        latest_dump_file = dump_test_dir / "latest_request.json"
+
+        assert target_dump_file.exists()
+        assert latest_dump_file.exists()
+
+        import json
+
+        data = json.loads(target_dump_file.read_text(encoding="utf-8"))
+        assert data["req_id"] == test_req_id
+        assert data["method"] == "POST"
+        assert data["url"] == "/v1beta/models/gemini-2.5-flash:generateContent"
+        assert data["client"] == "127.0.0.1:45678"
+        assert data["headers"]["content-type"] == "application/json"
+        assert data["query_params"]["alt"] == "sse"
+        assert data["status_code"] == 200
+        assert data["elapsed_ms"] == 88.5
+        assert data["is_stream"] is False
+        assert data["body"]["tools"][0]["functionDeclarations"][0]["name"] == "reply_fn"
+        assert "测试抗截断" in data["raw_body"]
+        assert (
+            data["response_body"]["candidates"][0]["content"]["parts"][0]["text"]
+            == "成功"
+        )
+    finally:
+        set_dump_to_file(None)
+        set_dump_dir(None)
