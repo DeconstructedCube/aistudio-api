@@ -45,10 +45,16 @@ _SAFE_ACCOUNT_ID_RE = re.compile(r"^[a-zA-Z0-9_\-\.@]+$")
 
 def _safe_account_dir(accounts_dir: Path, account_id: str) -> Path:
     """验证并返回安全的账号子目录路径，防止路径遍历攻击。"""
-    if not account_id or not _SAFE_ACCOUNT_ID_RE.match(account_id) or ".." in account_id:
+    safe_name = Path(str(account_id or "").strip()).name
+    if (
+        not safe_name
+        or safe_name != account_id
+        or not _SAFE_ACCOUNT_ID_RE.match(safe_name)
+        or ".." in safe_name
+    ):
         raise ValueError(f"Invalid or unsafe account_id: {account_id!r}")
     base = accounts_dir.resolve()
-    target = (base / account_id).resolve()
+    target = (base / safe_name).resolve()
     if not target.is_relative_to(base) or target == base:
         raise ValueError(f"Account path escapes base directory: {account_id!r}")
     return target
