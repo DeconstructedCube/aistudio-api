@@ -38,13 +38,13 @@ jobs:
           uv pip install -e ".[dev]"
 
       - name: Run Ruff Lint
-        run: uv run ruff check .
+        run: uv run --no-sync ruff check .
 
       - name: Run Pyright Type Check
-        run: uv run pyright
+        run: uv run --no-sync pyright
 
       - name: Run Pytest Suite
-        run: uv run pytest
+        run: uv run --no-sync pytest
 
   frontend-check:
     name: Frontend Quality & Build
