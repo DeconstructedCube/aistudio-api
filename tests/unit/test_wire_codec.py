@@ -413,13 +413,27 @@ def test_wire_codec_retains_schema_with_tools():
     assert decoded.generation_config.response_schema == [6]
 
 
-def test_modify_body_sets_tool_config_at_index_7():
+def test_modify_body_handles_tool_config_semantically_and_preserves_evergreen_uri():
     original = '["models/gemini-3.7-flash",[[[[null,"hi"]],"user"]],null,[null,null,null,65536,1,0.95,64],"!snap",null,null,null,null,null,1]'
     rewritten = modify_body(
         original,
         model="models/gemini-3.7-flash",
+        tools=[[None, [["get_weather", "desc", None], ["other_fn", "desc", None]]]],
         tool_config=[None, [2, ["get_weather"]]],
     )
     body = json.loads(rewritten)
-    assert len(body) > 7
-    assert body[7] == [None, [2, ["get_weather"]]]
+    # Index 7 is evergreen_model_uri (null or string), never corrupted with a list!
+    assert body[7] is None
+    # Tools are filtered to allowed_function_names
+    assert body[6] == [[None, [["get_weather", "desc", None]]]]
+
+    # Mode NONE suppresses tools completely
+    rewritten_none = modify_body(
+        original,
+        model="models/gemini-3.7-flash",
+        tools=[[None, [["get_weather", "desc", None]]]],
+        tool_config=[None, [3]],
+    )
+    body_none = json.loads(rewritten_none)
+    assert body_none[6] is None
+    assert body_none[7] is None

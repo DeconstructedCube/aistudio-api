@@ -132,7 +132,7 @@ class AistudioWireCodec:
     SNAPSHOT_INDEX = 4
     SYSTEM_INSTRUCTION_INDEX = 5
     TOOLS_INDEX = 6
-    TOOL_CONFIG_INDEX = 7
+    EVERGREEN_MODEL_URI_INDEX = 7
     REQUEST_FLAG_INDEX = 10
     CACHED_CONTENT_INDEX = 11
     TIMEZONE_INDEX = 13
@@ -155,8 +155,9 @@ class AistudioWireCodec:
                 else None
             ),
             tools=body[self.TOOLS_INDEX] if len(body) > self.TOOLS_INDEX else None,
-            tool_config=body[self.TOOL_CONFIG_INDEX]
-            if len(body) > self.TOOL_CONFIG_INDEX
+            evergreen_model_uri=body[self.EVERGREEN_MODEL_URI_INDEX]
+            if len(body) > self.EVERGREEN_MODEL_URI_INDEX
+            and isinstance(body[self.EVERGREEN_MODEL_URI_INDEX], str)
             else None,
             request_flag=body[self.REQUEST_FLAG_INDEX]
             if len(body) > self.REQUEST_FLAG_INDEX
@@ -186,7 +187,7 @@ class AistudioWireCodec:
             request.system_instruction.to_wire() if request.system_instruction else None
         )
         body[self.TOOLS_INDEX] = request.tools
-        body[self.TOOL_CONFIG_INDEX] = request.tool_config
+        body[self.EVERGREEN_MODEL_URI_INDEX] = request.evergreen_model_uri
         body[self.REQUEST_FLAG_INDEX] = (
             request.request_flag if request.request_flag is not None else 1
         )
@@ -294,6 +295,7 @@ class AistudioWireCodec:
         request.tools = tools if tools else None
         if tool_config is not None:
             is_none_mode = False
+            allowed_names: list[str] | None = None
             if (
                 isinstance(tool_config, list)
                 and len(tool_config) > 1
@@ -301,17 +303,41 @@ class AistudioWireCodec:
             ):
                 if tool_config[1] and tool_config[1][0] == 3:
                     is_none_mode = True
+                elif (
+                    tool_config[1]
+                    and len(tool_config[1]) > 1
+                    and isinstance(tool_config[1][1], list)
+                ):
+                    allowed_names = [str(x) for x in tool_config[1][1]]
             elif isinstance(tool_config, dict):
                 fcc = tool_config.get("functionCallingConfig") or tool_config.get(
                     "function_calling_config"
                 )
-                if isinstance(fcc, dict) and fcc.get("mode") in (3, "NONE", "none"):
-                    is_none_mode = True
+                if isinstance(fcc, dict):
+                    if fcc.get("mode") in (3, "NONE", "none"):
+                        is_none_mode = True
+                    raw_allowed = fcc.get("allowedFunctionNames") or fcc.get(
+                        "allowed_function_names"
+                    )
+                    if isinstance(raw_allowed, list):
+                        allowed_names = [str(x) for x in raw_allowed]
             if is_none_mode:
                 request.tools = None
-                request.tool_config = None
-            else:
-                request.tool_config = tool_config
+            elif allowed_names is not None and request.tools:
+                filtered_tools: list[list[object]] = []
+                allowed_set = set(allowed_names)
+                for t in request.tools:
+                    if isinstance(t, list) and len(t) > 1 and isinstance(t[1], list):
+                        filtered_decls = [
+                            d
+                            for d in t[1]
+                            if isinstance(d, list) and d and d[0] in allowed_set
+                        ]
+                        if filtered_decls:
+                            filtered_tools.append([t[0], filtered_decls])
+                    else:
+                        filtered_tools.append(t)
+                request.tools = filtered_tools or None
         return self.encode(request)
 
     def _build_user_content(

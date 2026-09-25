@@ -332,6 +332,7 @@ class AistudioRequest:
     snapshot: str | None
     system_instruction: AistudioContent | None
     tools: list[list] | None
+    evergreen_model_uri: str | None = None
     tool_config: list | None = None
     request_flag: int | None = None
     cached_content: str | None = None
