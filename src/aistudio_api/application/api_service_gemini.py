@@ -67,6 +67,7 @@ def to_gemini_finish_reason(wire_code: int | None) -> str:
         return "STOP"
     return WIRE_TO_GEMINI_FINISH_REASON.get(wire_code, "STOP")
 
+
 def clean_upstream_error_message(raw_msg: str) -> str:
     """Extract a clean, readable error message from Google/JSPB upstream error strings."""
     if not raw_msg:
@@ -110,7 +111,9 @@ def clean_upstream_error_message(raw_msg: str) -> str:
         except Exception:
             return match.group(1)
 
-    match2 = re.search(r'\[\s*null\s*,\s*\[\s*\d+\s*,\s*"([^"\\]*(?:\\.[^"\\]*)*)"', inner)
+    match2 = re.search(
+        r'\[\s*null\s*,\s*\[\s*\d+\s*,\s*"([^"\\]*(?:\\.[^"\\]*)*)"', inner
+    )
     if match2:
         try:
             return json.loads(f'"{match2.group(1)}"')
@@ -118,7 +121,6 @@ def clean_upstream_error_message(raw_msg: str) -> str:
             return match2.group(1)
 
     return text
-
 
 
 def classify_gemini_error_payload(exc: Exception) -> tuple[int, str, str]:
@@ -203,7 +205,7 @@ async def handle_attempt_exception(
 
     if isinstance(exc, SessionExpiredError):
         logger.warning("账号会话重定向至登录页: %s", exc)
-        client.clear_snapshot_cache()
+        client.clear_templates()
         if not has_yielded_data and await try_switch_account(
             model=target_model, failed_account_id=failed_id, is_auth_error=False
         ):
@@ -219,7 +221,7 @@ async def handle_attempt_exception(
 
     if isinstance(exc, AuthError):
         logger.warning("账号 403 权限拒绝: %s", exc)
-        client.clear_snapshot_cache()
+        client.clear_templates()
         record_rotator_event("auth_error", model=target_model)
         if not has_yielded_data and await try_switch_account(
             model=target_model, failed_account_id=failed_id, is_auth_error=True
@@ -258,8 +260,8 @@ async def handle_attempt_exception(
         and attempt == 0
         and not has_yielded_data
     ):
-        logger.warning("Gemini 收到 204，清理 snapshot 缓存后重试一次")
-        client.clear_snapshot_cache()
+        logger.warning("Gemini 收到 204，清理模板缓存后重试一次")
+        client.clear_templates()
         return True
 
     if isinstance(exc, (RuntimeError, TimeoutError)):
@@ -278,7 +280,7 @@ async def handle_attempt_exception(
                 MAX_RETRIES,
                 exc,
             )
-            client.clear_snapshot_cache()
+            client.clear_templates()
             if not has_yielded_data and await try_switch_account(
                 model=target_model, failed_account_id=failed_id, is_auth_error=False
             ):

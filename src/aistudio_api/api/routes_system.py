@@ -156,8 +156,6 @@ async def force_next_account(
     result = await account_service.activate_account(
         next_account.id,
         client._session,
-        runtime_state.snapshot_cache,
-        keep_snapshot_cache=False,
     )
 
     if result is None:

@@ -10,7 +10,6 @@ if TYPE_CHECKING:
         AccountMeta,
         AccountStore,
     )
-    from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
     from aistudio_api.infrastructure.gateway.session import BrowserSession
 from aistudio_api.infrastructure.utils.logger import get_logger
 
@@ -46,7 +45,7 @@ class AccountService:
         self,
         account_id: str,
         browser_session: BrowserSession,
-        snapshot_cache: SnapshotCache | None,
+        _unused_snapshot_cache: object = None,
         _unused_lock: object = None,
         keep_snapshot_cache: bool = False,
     ) -> AccountMeta | None:
@@ -65,13 +64,11 @@ class AccountService:
 
             self._store.set_active_account(account_id)
             if not keep_snapshot_cache:
-                if snapshot_cache is not None:
-                    snapshot_cache.clear()
                 from aistudio_api.api.state import runtime_state
 
                 if runtime_state.client is not None:
-                    runtime_state.client.clear_snapshot_cache()
-                logger.info("已清除 snapshot 与模板缓存")
+                    runtime_state.client.clear_templates()
+                logger.info("已清除模板缓存")
 
             await browser_session.switch_auth(str(auth_path))
             await browser_session.ensure_botguard_service()

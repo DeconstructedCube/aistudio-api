@@ -55,10 +55,6 @@ async def lifespan(app: FastAPI):
         port=runtime_state.browser_port,
     )
     runtime_state.client = client
-    # 注入 snapshot 缓存引用，切号时需要清除
-    from aistudio_api.infrastructure.gateway.client import _snapshot_cache
-
-    runtime_state.snapshot_cache = _snapshot_cache
 
     # 初始化账号管理服务
     account_store = AccountStore()
@@ -285,6 +281,7 @@ async def auth_check():
 
     return {"auth_enabled": settings.auth_enabled}
 
+
 @app.middleware("http")
 async def spa_navigation_middleware(request: Request, call_next):
     """统一处理前端 SPA 单页应用导航：浏览器页面直达/刷新响应 index.html，API 请求直通 JSON。"""
@@ -319,6 +316,7 @@ async def root_index():
     if index_html_path.is_file():
         return FileResponse(index_html_path)
     return JSONResponse({"message": "AI Studio API Web UI"})
+
 
 def main():
     from aistudio_api.config import settings

@@ -18,7 +18,6 @@ from aistudio_api.application.account_rotator import (
     get_seconds_until_pacific_midnight,
 )
 from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
-from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
 from aistudio_api.infrastructure.gateway.capture import (
     CapturedRequest,
     RequestCaptureService,
@@ -28,7 +27,7 @@ from aistudio_api.infrastructure.gateway.session import BrowserSession
 
 @pytest.mark.asyncio
 async def test_capture_service_concurrency_and_caching():
-    """并发请求抓取模板时，模板捕获只执行 1 次，其余直接命中缓存。"""
+    """并发请求抓取模板时，模板捕获只执行 1 次，快照签名每次实时生成（不复用缓存）。"""
     mock_session = MagicMock(spec=BrowserSession)
     mock_session.generate_snapshot = AsyncMock(return_value="mock_snap")
 
@@ -45,8 +44,7 @@ async def test_capture_service_concurrency_and_caching():
         }
 
     mock_session.capture_template = AsyncMock(side_effect=fake_capture_template)
-    cache = SnapshotCache(ttl=3600, max_size=100)
-    service = RequestCaptureService(session=mock_session, snapshot_cache=cache)
+    service = RequestCaptureService(session=mock_session)
 
     # 5 个并发请求同时请求同一个 model
     tasks = [
@@ -54,17 +52,55 @@ async def test_capture_service_concurrency_and_caching():
     ]
     results = await asyncio.gather(*tasks)
 
-    # capture_template 应当只被执行 1 次
+    # capture_template 应当只被执行 1 次（模板复用）
     assert call_count == 1
     assert len(results) == 5
+    # 快照签名是每次实时生成的，共调用 5 次
+    assert mock_session.generate_snapshot.call_count == 5
     for res in results:
         assert isinstance(res, CapturedRequest)
         assert res.url == "https://example.com/generate"
 
-    # 再次请求，直接命中缓存，不会增加调用次数
+    # 再次请求，模板直接命中，快照签名生成第 6 次
     res6 = await service.capture(prompt="hi again", model="gemini-2.5-flash")
     assert call_count == 1
+    assert mock_session.generate_snapshot.call_count == 6
     assert res6 is not None
+
+
+@pytest.mark.asyncio
+async def test_capture_service_ephemeral_signature_identical_prompts():
+    """相同 Prompt 并发请求时，每次都生成全新快照签名，绝不复用。"""
+    mock_session = MagicMock(spec=BrowserSession)
+    snap_counter = 0
+
+    async def fake_snapshot(contents):
+        nonlocal snap_counter
+        snap_counter += 1
+        return f"!snap_token_{snap_counter}"
+
+    mock_session.generate_snapshot = AsyncMock(side_effect=fake_snapshot)
+    mock_session.capture_template = AsyncMock(
+        return_value={
+            "url": "https://example.com/generate",
+            "headers": {"content-type": "application/json"},
+            "body": '["models/gemini-2.5-flash",[[[[null,"old"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"orig"]',
+        }
+    )
+    service = RequestCaptureService(session=mock_session)
+
+    # 3 个完全相同的并发 Prompt
+    tasks = [
+        service.capture(prompt="same question", model="gemini-2.5-flash")
+        for _ in range(3)
+    ]
+    results = await asyncio.gather(*tasks)
+
+    assert len(results) == 3
+    # 签名各不相同，杜绝 403 重放
+    snapshots = [r.snapshot for r in results if r]
+    assert snapshots == ["!snap_token_1", "!snap_token_2", "!snap_token_3"]
+    assert len(set(snapshots)) == 3
 
 
 @pytest.mark.asyncio
@@ -351,8 +387,7 @@ async def test_capture_model_preservation_when_template_differs():
             "body": '["models/gemini-3.7-flash",[[[[null,"template prompt"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"old_snap"]',
         }
     )
-    cache = SnapshotCache()
-    service = RequestCaptureService(session=mock_session, snapshot_cache=cache)
+    service = RequestCaptureService(session=mock_session)
 
     captured = await service.capture(
         prompt="Hello",
@@ -426,8 +461,12 @@ async def test_browser_session_send_streaming_batch_events():
 async def test_rotator_prioritizes_least_used_account():
     """测试轮询机制优先使用使用次数少的账号，同时在当前号健康时保持黏性（减少切换）。"""
     store = MagicMock(spec=AccountStore)
-    acc1 = AccountMeta(id="acc_1", name="Account 1", email="acc1@test.com", created_at="2026-01-01")
-    acc2 = AccountMeta(id="acc_2", name="Account 2", email="acc2@test.com", created_at="2026-01-01")
+    acc1 = AccountMeta(
+        id="acc_1", name="Account 1", email="acc1@test.com", created_at="2026-01-01"
+    )
+    acc2 = AccountMeta(
+        id="acc_2", name="Account 2", email="acc2@test.com", created_at="2026-01-01"
+    )
     store.list_accounts.return_value = [acc1, acc2]
 
     rotator = AccountRotator(account_store=store)

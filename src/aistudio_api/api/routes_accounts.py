@@ -79,10 +79,15 @@ async def list_accounts(
             last_used=a.last_used,
             auth_user=getattr(a, "auth_user", "0") or "0",
             cookie_id=getattr(a, "cookie_id", None)
-            or (f"cookie_{a.created_at[:16]}" if getattr(a, "created_at", None) else f"cookie_{a.id}"),
+            or (
+                f"cookie_{a.created_at[:16]}"
+                if getattr(a, "created_at", None)
+                else f"cookie_{a.id}"
+            ),
         )
         for a in accounts
     ]
+
 
 @router.get("/active", response_model=AccountResponse)
 async def get_active_account(
@@ -100,7 +105,11 @@ async def get_active_account(
         last_used=account.last_used,
         auth_user=getattr(account, "auth_user", "0") or "0",
         cookie_id=getattr(account, "cookie_id", None)
-        or (f"cookie_{account.created_at[:16]}" if getattr(account, "created_at", None) else f"cookie_{account.id}"),
+        or (
+            f"cookie_{account.created_at[:16]}"
+            if getattr(account, "created_at", None)
+            else f"cookie_{account.id}"
+        ),
     )
 
 
@@ -112,14 +121,11 @@ async def activate_account(
 ) -> AccountResponse:
     """切换到指定账号。"""
     browser_session = runtime_state.client._session if runtime_state.client else None
-    snapshot_cache = runtime_state.snapshot_cache
 
     if browser_session is None:
         raise HTTPException(status_code=503, detail="服务未就绪")
 
-    account = await account_service.activate_account(
-        account_id, browser_session, snapshot_cache
-    )
+    account = await account_service.activate_account(account_id, browser_session)
     if account is None:
         raise HTTPException(status_code=404, detail="账号不存在或切换失败")
     log.info("手动激活账号: %s (%s)", account.id, account.name)
@@ -131,7 +137,11 @@ async def activate_account(
         last_used=account.last_used,
         auth_user=getattr(account, "auth_user", "0") or "0",
         cookie_id=getattr(account, "cookie_id", None)
-        or (f"cookie_{account.created_at[:16]}" if getattr(account, "created_at", None) else f"cookie_{account.id}"),
+        or (
+            f"cookie_{account.created_at[:16]}"
+            if getattr(account, "created_at", None)
+            else f"cookie_{account.id}"
+        ),
     )
 
 

@@ -14,7 +14,6 @@ from aistudio_api.config import (
 )
 from aistudio_api.domain.errors import RequestError, classify_error
 from aistudio_api.domain.models import ModelOutput
-from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
 from aistudio_api.infrastructure.gateway.capture import (
     CapturedRequest,
     RequestCaptureService,
@@ -36,8 +35,6 @@ from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, Aist
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("client")
-
-_snapshot_cache = SnapshotCache()
 
 
 class AIStudioClient:
@@ -65,7 +62,7 @@ class AIStudioClient:
         self.port = port
         self._captured: CapturedRequest | None = None
         self._session = BrowserSession(port=port)
-        self._capture_service = RequestCaptureService(self._session, _snapshot_cache)
+        self._capture_service = RequestCaptureService(self._session)
         self._replay_service = RequestReplayService(session=self._session)
 
         self._streaming_gateway = StreamingGateway(session=self._session)
@@ -77,16 +74,19 @@ class AIStudioClient:
             logger.info("浏览器预热完成")
 
     async def switch_auth(self, auth_file: str | None) -> None:
-        """切换账号的 auth 文件并清空所有模板和快照缓存。"""
-        self.clear_snapshot_cache()
+        """切换账号的 auth 文件并清空模板缓存。"""
+        self.clear_templates()
         if self._session is not None:
             await self._session.switch_auth(auth_file)
 
-    def clear_snapshot_cache(self) -> None:
-        """清除 snapshot 缓存和捕获模板。"""
-        _snapshot_cache.clear()
+    def clear_templates(self) -> None:
+        """清除捕获的请求模板。"""
         if getattr(self, "_capture_service", None) is not None:
             self._capture_service.clear_templates()
+
+    def clear_snapshot_cache(self) -> None:
+        """兼容历史接口：清除模板缓存（快照签名按请求实时生成，已无快照缓存）。"""
+        self.clear_templates()
 
     async def close(self) -> None:
         """关闭浏览器后端。"""

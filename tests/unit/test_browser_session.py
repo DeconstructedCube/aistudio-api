@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from hashlib import sha256
 from unittest.mock import AsyncMock, MagicMock
@@ -11,7 +12,6 @@ import pytest
 from aistudio_api.application.account_service import AccountService
 from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
 from aistudio_api.infrastructure.browser.cdp_client import CDPPage
-from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
 from aistudio_api.infrastructure.gateway.capture import RequestCaptureService
 from aistudio_api.infrastructure.gateway.session import BrowserSession
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
@@ -257,13 +257,11 @@ async def test_account_service_activate_account_warms_up_browser():
     mock_session.switch_auth = AsyncMock()
     mock_session.ensure_botguard_service = AsyncMock()
 
-    cache = SnapshotCache()
     service = AccountService(mock_store)
 
     result = await service.activate_account(
         account_id="acc_1",
         browser_session=mock_session,
-        snapshot_cache=cache,
     )
 
     assert result is not None
@@ -285,8 +283,7 @@ async def test_capture_service_single_pass_full_payload():
     )
     mock_session.generate_snapshot = AsyncMock(return_value="!fresh_snapshot_token")
 
-    cache = SnapshotCache()
-    capture_svc = RequestCaptureService(mock_session, cache)
+    capture_svc = RequestCaptureService(mock_session)
 
     contents = [
         AistudioContent(
@@ -326,3 +323,50 @@ def test_is_login_page_url():
     assert _is_login_page_url("https://accounts.google.com/signin/v2") is True
     assert _is_login_page_url("https://accounts.google.com/ServiceLogin") is True
     assert _is_login_page_url("https://myaccount.google.com/accountchooser") is True
+
+
+@pytest.mark.asyncio
+async def test_browser_session_generate_snapshot_concurrency(mock_cdp_page):
+    """Verify concurrent generate_snapshot calls are safely serialized by _snapshot_lock."""
+    session = BrowserSession(port=9222)
+    session._page = mock_cdp_page
+    session._snap_key = "test_snapshot_fn"
+
+    concurrent_evals = 0
+    max_concurrent_evals = 0
+
+    async def fake_evaluate(expr, args=None, *a, **kwargs):
+        nonlocal concurrent_evals, max_concurrent_evals
+        if (
+            "Promise.resolve" in expr
+            or "window.__bg_snap_queue" in expr
+            or "SNAPSHOT_GENERATE" in expr
+        ):
+            concurrent_evals += 1
+            if concurrent_evals > max_concurrent_evals:
+                max_concurrent_evals = concurrent_evals
+            # Simulate async processing time
+            await asyncio.sleep(0.01)
+            token = f"!snap_for_{args}"
+            concurrent_evals -= 1
+            return token
+        if "window.__bg_hooked" in expr:
+            return "already_hooked"
+        if "!window.__bg_service" in expr:
+            return True
+        return None
+
+    mock_cdp_page.evaluate.side_effect = fake_evaluate
+
+    async def run_one(text: str):
+        return await session.generate_snapshot(
+            [AistudioContent(role="user", parts=[AistudioPart(text=text)])]
+        )
+
+    # 5 concurrent requests
+    results = await asyncio.gather(*[run_one(f"prompt_{i}") for i in range(5)])
+
+    assert len(results) == 5
+    # Because of _snapshot_lock, max_concurrent_evals must be exactly 1
+    assert max_concurrent_evals == 1
+    assert len(set(results)) == 5

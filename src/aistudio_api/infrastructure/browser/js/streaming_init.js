@@ -8,13 +8,6 @@
         try { existing.abort(); } catch (e) {}
     }
 
-    function cleanup() {
-        try {
-            if (window.__streams) delete window.__streams[rid];
-            if (window.__stream_abort) delete window.__stream_abort[rid];
-        } catch (e) {}
-    }
-
     const abortController = new AbortController();
     const state = {
         reader: null,
@@ -31,23 +24,42 @@
         }
     }
 
+    const timeoutMs = (args.timeout || 60) * 1000;
+    let timeoutId = setTimeout(() => {
+        push({type: 'error', message: 'timeout'});
+        doAbort();
+    }, timeoutMs);
+
+    function resetTimeout() {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
+            push({type: 'error', message: 'timeout'});
+            doAbort();
+        }, timeoutMs);
+    }
+
+    function cleanup() {
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+        }
+        try {
+            if (window.__streams) delete window.__streams[rid];
+            if (window.__stream_abort) delete window.__stream_abort[rid];
+        } catch (e) {}
+    }
+
     const doAbort = function() {
+        cleanup();
         if (state.reader) {
             try { state.reader.cancel(); } catch (e) {}
         }
         if (state.abortController) {
             try { state.abortController.abort(); } catch (e) {}
         }
-        cleanup();
     };
     window.__stream_abort[rid] = doAbort;
     state.abort = doAbort;
-
-    const timeoutMs = (args.timeout || 60) * 1000;
-    const timeoutId = setTimeout(() => {
-        push({type: 'error', message: 'timeout'});
-        doAbort();
-    }, timeoutMs);
 
     const headers = Object.assign({}, args.headers || {});
 
@@ -58,10 +70,10 @@
         credentials: 'include',
         signal: abortController.signal,
     }).then(response => {
+        resetTimeout();
         push({type: 'status', status: response.status || 0});
 
         if (!response.body) {
-            clearTimeout(timeoutId);
             push({type: 'done'});
             cleanup();
             return;
@@ -74,7 +86,6 @@
         function readLoop() {
             reader.read().then(({done, value}) => {
                 if (done) {
-                    clearTimeout(timeoutId);
                     try {
                         const remaining = decoder.decode();
                         if (remaining) {
@@ -86,6 +97,7 @@
                     return;
                 }
                 if (value) {
+                    resetTimeout();
                     const text = decoder.decode(value, {stream: true});
                     if (text) {
                         push({type: 'chunk', text: text});
@@ -93,7 +105,6 @@
                 }
                 readLoop();
             }).catch(err => {
-                clearTimeout(timeoutId);
                 if (err && err.name === 'AbortError') {
                     push({type: 'aborted'});
                 } else {
@@ -104,7 +115,6 @@
         }
         readLoop();
     }).catch(err => {
-        clearTimeout(timeoutId);
         if (err && err.name === 'AbortError') {
             push({type: 'aborted'});
         } else {

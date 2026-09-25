@@ -33,6 +33,7 @@ def _atomic_write_json(path: Path, data: object) -> None:
                 tmp_path.unlink()
         raise
 
+
 # 默认搜索路径（与 config.py 保持一致）
 _SEARCH_ROOTS: list[Path] = [
     Path.cwd(),
@@ -42,6 +43,7 @@ _SEARCH_ROOTS: list[Path] = [
 ]
 
 _SAFE_ACCOUNT_ID_RE = re.compile(r"^[a-zA-Z0-9_\-\.@]+$")
+
 
 def _safe_account_dir(accounts_dir: Path, account_id: str) -> Path:
     """验证并返回安全的账号子目录路径，防止路径遍历攻击。"""
@@ -244,7 +246,10 @@ class AccountStore:
     def get_active_account(self) -> AccountMeta | None:
         """获取当前活跃账号（若未设置或失效，自动兜底至首个账号）。"""
         registry = self._load_registry()
-        if registry.active_account_id and registry.active_account_id in registry.accounts:
+        if (
+            registry.active_account_id
+            and registry.active_account_id in registry.accounts
+        ):
             return registry.accounts[registry.active_account_id]
         if registry.accounts:
             first_id = next(iter(registry.accounts))
@@ -252,6 +257,7 @@ class AccountStore:
             self._save_registry(registry)
             return registry.accounts[first_id]
         return None
+
     def get_active_auth_path(self) -> Path | None:
         """获取当前活跃账号的 auth.json 路径。"""
         account = self.get_active_account()

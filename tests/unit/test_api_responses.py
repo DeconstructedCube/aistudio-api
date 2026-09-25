@@ -113,7 +113,9 @@ def test_clean_upstream_error_message():
 
     assert clean_upstream_error_message("") == ""
     assert clean_upstream_error_message("Normal plain error") == "Normal plain error"
-    assert clean_upstream_error_message("HTTP 429: rate limit") == "HTTP 429: rate limit"
+    assert (
+        clean_upstream_error_message("HTTP 429: rate limit") == "HTTP 429: rate limit"
+    )
     jspb_nested = 'HTTP 400: [,[3,"Please enable tool_config.include_server_side_tool_invocations to use Built-in tools with Function calling.",[["type.googleapis.com/details"]]]]'
     assert (
         clean_upstream_error_message(jspb_nested)

@@ -160,7 +160,7 @@ async def test_try_switch_account_single_account_recovery():
     mock_service = MagicMock(spec=AccountService)
     mock_client = MagicMock(spec=AIStudioClient)
     mock_client._session = MagicMock()
-    mock_client.clear_snapshot_cache = MagicMock()
+    mock_client.clear_templates = MagicMock()
 
     active_acc = AccountMeta(
         id="acc_1",
@@ -191,11 +191,11 @@ async def test_try_switch_account_single_account_recovery():
             is_auth_error=True,
         )
         assert recovered is True
-        mock_client.clear_snapshot_cache.assert_called_once()
+        mock_client.clear_templates.assert_called_once()
         mock_service.activate_account.assert_called_once_with(
             "acc_1",
             mock_client._session,
-            runtime_state.snapshot_cache,
+            None,
             None,
             keep_snapshot_cache=False,
         )
@@ -240,6 +240,13 @@ def test_safe_account_dir_path_traversal_rejection(tmp_path):
     assert valid_email == (base / "test.user@gmail.com").resolve()
 
     # Invalid / traversal IDs
-    for bad_id in ["../etc/passwd", "..", "user/subdir", "user\\subdir", "foo/../bar", ""]:
+    for bad_id in [
+        "../etc/passwd",
+        "..",
+        "user/subdir",
+        "user\\subdir",
+        "foo/../bar",
+        "",
+    ]:
         with pytest.raises(ValueError):
             _safe_account_dir(base, bad_id)

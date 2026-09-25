@@ -66,6 +66,7 @@ def _is_login_page_url(url: str | None) -> bool:
         or "servicelogin" in query
     )
 
+
 DEFAULT_BOOTSTRAP_TEMPLATE = {
     "url": "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent",
     "headers": {
@@ -95,6 +96,7 @@ class BrowserSession:
         self._lock = asyncio.Lock()
         self._botguard_lock = asyncio.Lock()
         self._template_lock = asyncio.Lock()
+        self._snapshot_lock = asyncio.Lock()
         self._in_flight: int = 0
         self._switching: bool = False
         self._switch_event = asyncio.Event()
@@ -261,7 +263,9 @@ class BrowserSession:
                                         "__Secure-3PSIDCC",
                                     }
                                 ]
-                                await self._page.set_cookies(cleaned_cookies or new_cookies)
+                                await self._page.set_cookies(
+                                    cleaned_cookies or new_cookies
+                                )
                         # 3. 页面导航至目标账号对应的 /u/{auth_user}/ 路径并执行 DOM GC 清理
                         await self._goto_aistudio(self._page)
                         await self._install_hooks(self._page)
@@ -307,15 +311,31 @@ class BrowserSession:
         await self._install_hooks(page)
 
         if not force_refresh and (
-            (self._hooks_installed and self._bootstrap_template is not None and self._snap_key)
-            or (await page.evaluate("() => !!window.__bg_service") and self._bootstrap_template is not None and self._snap_key)
+            (
+                self._hooks_installed
+                and self._bootstrap_template is not None
+                and self._snap_key
+            )
+            or (
+                await page.evaluate("() => !!window.__bg_service")
+                and self._bootstrap_template is not None
+                and self._snap_key
+            )
         ):
             return page
 
         async with self._botguard_lock:
             if not force_refresh and (
-                (self._hooks_installed and self._bootstrap_template is not None and self._snap_key)
-                or (await page.evaluate("() => !!window.__bg_service") and self._bootstrap_template is not None and self._snap_key)
+                (
+                    self._hooks_installed
+                    and self._bootstrap_template is not None
+                    and self._snap_key
+                )
+                or (
+                    await page.evaluate("() => !!window.__bg_service")
+                    and self._bootstrap_template is not None
+                    and self._snap_key
+                )
             ):
                 return page
 
@@ -454,6 +474,7 @@ class BrowserSession:
                 unsub()
                 with suppress(Exception):
                     await page.fill("textarea", original_text)
+
     async def import_cookies(
         self, cookie_string: str, auth_file: str | None = None
     ) -> int:
@@ -619,42 +640,48 @@ class BrowserSession:
           - file_id / file_data part -> part.file_id (or "" if None)
           - other parts (function_call, function_response, etc.) -> ""
         All extracted parts are joined by a single space (" ") and hashed via SHA-256 hex digest.
+
+        The BotGuardService (ticket inspector) is reused within the browser session,
+        while the generated snapshot signature (ticket) is ephemeral and single-use.
+        Concurrent requests are safely serialized through _snapshot_lock to prevent
+        BotGuard Wasm VM state collisions.
         """
-        page = await self.ensure_botguard_service()
-        if not self._snap_key:
-            raise RuntimeError("Snapshot function not detected")
+        async with self.request_scope(), self._snapshot_lock:
+            page = await self.ensure_botguard_service()
+            if not self._snap_key:
+                raise RuntimeError("Snapshot function not detected")
 
-        hash_parts: list[str] = []
-        for content in contents:
-            for part in content.parts:
-                if part.text is not None:
-                    hash_parts.append(str(part.text))
-                elif part.inline_data is not None:
-                    hash_parts.append(str(part.inline_data[1]))
-                elif part.file_id is not None:
-                    hash_parts.append(str(part.file_id))
-                else:
-                    hash_parts.append("")
-        content_hash = sha256(" ".join(hash_parts).encode("utf-8")).hexdigest()
-        # 直接使用 Promise 求值，完全隔离每个并发调用的结果，避免污染 window 全局变量
-        script = SNAPSHOT_GENERATE_JS
-        for attempt in range(3):
-            try:
-                snapshot = await page.evaluate(
-                    script, args=content_hash, timeout_s=10.0
-                )
-                if snapshot and isinstance(snapshot, str) and len(snapshot) > 0:
-                    return snapshot
-            except Exception as e:
-                log.debug("异步计算快照第 %d 次尝试失败: %s", attempt + 1, e)
-                if attempt < 2:
-                    await page.wait_for_timeout(300)
-                    with suppress(Exception):
-                        await self.ensure_botguard_service()
+            hash_parts: list[str] = []
+            for content in contents:
+                for part in content.parts:
+                    if part.text is not None:
+                        hash_parts.append(str(part.text))
+                    elif part.inline_data is not None:
+                        hash_parts.append(str(part.inline_data[1]))
+                    elif part.file_id is not None:
+                        hash_parts.append(str(part.file_id))
+                    else:
+                        hash_parts.append("")
+            content_hash = sha256(" ".join(hash_parts).encode("utf-8")).hexdigest()
+            script = SNAPSHOT_GENERATE_JS
+            for attempt in range(3):
+                try:
+                    snapshot = await page.evaluate(
+                        script, args=content_hash, timeout_s=10.0
+                    )
+                    if snapshot and isinstance(snapshot, str) and len(snapshot) > 0:
+                        return snapshot
+                except Exception as e:
+                    log.debug("异步计算快照第 %d 次尝试失败: %s", attempt + 1, e)
+                    if attempt < 2:
+                        await page.wait_for_timeout(200)
+                        if not self._hooks_installed:
+                            with suppress(Exception):
+                                await self._install_hooks(page)
 
-        raise RuntimeError(
-            f"Snapshot generation failed for content hash {content_hash[:8]}"
-        )
+            raise RuntimeError(
+                f"Snapshot generation failed for content hash {content_hash[:8]}"
+            )
 
     async def send_hooked_request(
         self,
@@ -805,7 +832,11 @@ class BrowserSession:
                         }
                     ]
                     await self._page.set_cookies(cleaned_cached or cached)
-                    log.info("已从 %s 载入 %d 个 Cookie", self._auth_file, len(cleaned_cached or cached))
+                    log.info(
+                        "已从 %s 载入 %d 个 Cookie",
+                        self._auth_file,
+                        len(cleaned_cached or cached),
+                    )
             except Exception as e:
                 log.debug("从 %s 载入 Cookie 失败: %s", self._auth_file, e)
         await self._goto_aistudio(self._page)

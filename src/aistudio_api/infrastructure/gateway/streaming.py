@@ -142,6 +142,10 @@ class StreamingGateway:
                         yield ("body", candidate.text)
                     if candidate.thought_signature:
                         yield ("thought_signature", candidate.thought_signature)
+                    if latest_finish_reason is not None:
+                        break
+                if latest_finish_reason is not None:
+                    break
         raw_response = "".join(raw_parts)
         _dump_stream_exchange(
             model=model,

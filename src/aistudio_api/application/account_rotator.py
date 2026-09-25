@@ -60,6 +60,7 @@ def normalize_model_key(model: str | None) -> str | None:
         return None
     return model.removeprefix("models/").lower()
 
+
 @dataclass
 class AccountStats:
     """单账号的运行与配额统计。"""
@@ -232,6 +233,7 @@ class AccountStats:
             if cd > now:
                 return max(0.0, cd - now)
         return get_seconds_until_pacific_midnight()
+
     def record_success(self, model: str | None = None) -> None:
         now = time.time()
         self.requests += 1
@@ -249,6 +251,7 @@ class AccountStats:
             self.model_rate_limited_dates.pop(model, None)
             if not self.model_drip_mode.get(model):
                 self.model_rate_limited.pop(model, None)
+
     def record_rate_limited(self, model: str | None = None) -> None:
         now = time.time()
         self.requests += 1
@@ -324,6 +327,8 @@ class AccountStats:
             self.model_drip_mode.clear()
             self.model_requests.clear()
             self.model_requests_dates.clear()
+
+
 class AccountRotator:
     """黏性账号调度管理器。
 

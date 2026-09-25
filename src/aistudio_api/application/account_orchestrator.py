@@ -63,7 +63,7 @@ async def try_switch_account(
             result = await account_service.activate_account(
                 next_account.id,
                 client._session,
-                runtime_state.snapshot_cache,
+                None,
                 None,
                 keep_snapshot_cache=False,
             )
@@ -75,11 +75,11 @@ async def try_switch_account(
                 "无其他可用备用账号，重新刷新当前账号会话与 BotGuard: %s",
                 current_id,
             )
-            client.clear_snapshot_cache()
+            client.clear_templates()
             result = await account_service.activate_account(
                 current_id,
                 client._session,
-                runtime_state.snapshot_cache,
+                None,
                 None,
                 keep_snapshot_cache=False,
             )
