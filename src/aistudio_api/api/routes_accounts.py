@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Body, Depends, HTTPException, Path as FastApiPath
+from pydantic import BaseModel, Field
 
 from aistudio_api.api.dependencies import (
     get_account_service,
@@ -41,7 +41,7 @@ class ImportCookiesRequest(BaseModel):
     cookies: str
     name: str | None = None
     email: str | None = None
-    account_id: str | None = None
+    account_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_\-\.@]+$")
     auth_user: str = "0"
 
 
@@ -106,7 +106,7 @@ async def get_active_account(
 
 @router.post("/{account_id}/activate", response_model=AccountResponse)
 async def activate_account(
-    account_id: str,
+    account_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@]+$"),
     account_service: AccountService = Depends(get_account_service),
     runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> AccountResponse:
@@ -137,7 +137,7 @@ async def activate_account(
 
 @router.delete("/{account_id}")
 async def delete_account(
-    account_id: str,
+    account_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@]+$"),
     account_service: AccountService = Depends(get_account_service),
     runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> dict[str, bool]:
@@ -172,7 +172,7 @@ async def delete_account(
 
 @router.delete("/group/{cookie_id}")
 async def delete_cookie_group(
-    cookie_id: str,
+    cookie_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@]+$"),
     account_service: AccountService = Depends(get_account_service),
 ) -> dict[str, int]:
     """按 Cookie 组批量删除该 Cookie 下的所有子账号。"""
@@ -188,8 +188,8 @@ async def delete_cookie_group(
 
 @router.put("/{account_id}", response_model=AccountResponse)
 async def update_account(
-    account_id: str,
-    req: UpdateAccountRequest,
+    account_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@]+$"),
+    req: UpdateAccountRequest = Body(...),
     account_service: AccountService = Depends(get_account_service),
 ) -> AccountResponse:
     """更新账号名称。"""
