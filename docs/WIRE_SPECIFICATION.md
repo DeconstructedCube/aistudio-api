@@ -176,23 +176,37 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 - **下标 `1` (Field 2)**：`description` (`string | null`)，函数功能说明；
 - **下标 `2` (Field 3)**：`parameters` (`list | null`)，参数 Schema 定义（遵循下文 6.3 节 Schema 编码规范）。
 
-### 6.3 结构化 Schema 编码与类型字典
+### 6.3 结构化 Schema 完整逆向编码表
 
-针对自定义函数声明（Function Declarations）与结构化输出（Response Schema），字段类型码映射如下：
+针对自定义函数声明（Function Declarations）与结构化输出（Response Schema），根据 AI Studio 前端 JS 核心反编译（`_.nm` 与 `dwa`）提取的完整 Protobuf-over-JSON 字段索引如下：
 
-| 数据类型 (Type) | 类型码 (Type Code) | 结构展开规则 |
-|---|---|---|
-| `string` | `1` | `[1]` |
-| `number` / `float` | `2` | `[2]` |
-| `integer` / `int` | `3` | `[3]` |
-| `boolean` / `bool` | `4` | `[4]` |
-| `array` | `5` | `[5, null, null, null, null, items_schema]` (下标 `5` 为元素 Schema) |
-| `object` | `6` | `[6, null, null, null, null, null, properties_list, required_list, ..., property_ordering]` |
-
-- **对象属性列表 (Index 6)**：`[[prop_name, prop_schema], ...]`
-- **必填属性列表 (Index 7)**：`["field1", "field2"]`
-- **属性声明顺序 (Index 22)**：`["field1", "field2"]`
-
+| 数组索引 | Proto 字段号 | 字段名 (Property) | 类型 | 说明与编码规范 |
+|---|---|---|---|---|
+| **`0`** | Field 1 | `type` | `int` | `1`=string, `2`=number, `3`=integer, `4`=boolean, `5`=array, `6`=object, `7`=null |
+| **`1`** | Field 2 | `format` | `string` | 格式修饰符（如 `"date-time"`, `"int64"`） |
+| **`2`** | Field 3 | `description` | `string` | **字段语义描述**（向模型传达业务逻辑的关键元数据） |
+| **`3`** | Field 4 | `nullable` | `bool` | 是否允许为 null |
+| **`4`** | Field 5 | `enum` | `list[str]` | **枚举合法取值数组**（防止模型生成非法入参的核心约束） |
+| **`5`** | Field 6 | `items` | `list` | 数组元素 Schema 递归定义（针对 array 类型） |
+| **`6`** | Field 7 | `properties` | `list` | 对象属性键值对列表：`[[prop_name, prop_schema], ...]` |
+| **`7`** | Field 8 | `required` | `list[str]` | 必填属性名称数组 |
+| **`8`** | Field 9 | `minProperties` | `int` | 最小属性数量约束 |
+| **`9`** | Field 10 | `maxProperties` | `int` | 最大属性数量约束 |
+| **`10`** | Field 11 | `minimum` | `float/int` | 数值下界 |
+| **`11`** | Field 12 | `maximum` | `float/int` | 数值上界 |
+| **`12`** | Field 13 | `minLength` | `int` | 字符串最小长度 |
+| **`13`** | Field 14 | `maxLength` | `int` | 字符串最大长度 |
+| **`14`** | Field 15 | `pattern` | `string` | 正则表达式匹配规则 |
+| **`15`** | Field 16 | `example` | `list` | 示例值（google.protobuf.Value 编码） |
+| **`16`** | Field 17 | `oneOf` | `list` | 独占联合类型定义数组 |
+| **`17`** | Field 18 | `anyOf` | `list` | 多态联合类型定义数组 |
+| **`18`** | Field 19 | `allOf` | `list` | 交叉继承类型定义数组 |
+| **`19`** | Field 20 | `not` | `list` | 取反类型定义 |
+| **`20`** | Field 21 | `maxItems` | `int` | 数组最大元素数 |
+| **`21`** | Field 22 | `minItems` | `int` | 数组最小元素数 |
+| **`22`** | Field 23 | `propertyOrdering` | `list[str]` | 属性在 UI / Prompt 中呈现的确定性声明顺序 |
+| **`23`** | Field 24 | `title` | `string` | Schema 标题 / 类名标识 |
+| **`24`** | Field 25 | `default` | `list` | 字段默认值（google.protobuf.Value 编码） |
 ### 6.4 工具控制模式 (ToolConfig)
 
 MakerSuite 协议无独立顶层工具控制字段，Gemini API 的 `toolConfig` 在网关层按语义映射：
@@ -244,6 +258,20 @@ Google AI Studio 响应为 Protobuf JSON 数组，每个流式分块或单次响
 - `candidate[3]`：FinishMessage 说明；
 - `candidate[4]`：安全评估结果数组（SafetyRatings）；
 - `chunk[7]`：响应唯一标识（Response ID）。
+
+### 7.2.1 函数调用参数 JSPB 映射规范
+
+当候选 Part 为函数调用 (`FunctionCall`) 时，位于 Part 下标 `3` (Field 4) 或下标 `10` (Field 11)。其内部三元组格式为 `[name, args_struct, call_id]`。
+
+`args_struct` 遵循 `google.protobuf.Struct` 映射：
+1. **外层容器**：键值对二维列表 `[[key, value_wire], ...]`。当被上游多层容器包裹时（例如 `[[ [...pairs] ]]`），需解包外层单元素容器，但**绝不可破坏键值对本身**；
+2. **多态值节点 (`google.protobuf.Value`)**：
+   - **NullValue (Field 1, 下标 0)**：`[0]` 解码为 `None`；
+   - **NumberValue (Field 2, 下标 1)**：`[null, number]` 解码为浮点数或整数；
+   - **StringValue (Field 3, 下标 2)**：`[null, null, "text"]` 解码为字符串；
+   - **BoolValue (Field 4, 下标 3)**：`[null, null, null, bool]`，JSPB 常压缩为 `0` (`False`) 与 `1` (`True`)，必须解码为标准布尔值；
+   - **StructValue (Field 5, 下标 4)**：`[null, null, null, null, [struct_fields]]` 递归解码为字典；
+   - **ListValue (Field 6, 下标 5)**：`[null, null, null, null, null, [items]]` 必须解码为列表。空列表 `[]` 必须严格保持为 `[]`，不可误转为字典；单元素列表必须完整保留单个元素，不可解包其内部字段导致被 null 填充。
 
 ### 7.3 Token 使用量 (UsageMetadata)
 
@@ -310,3 +338,13 @@ AI Studio Web 核心过滤数组：
    - `fillerWords`：允许自然停顿与语气词（"hmm", "ahh"）。
 5. **视频帧流式抽取服务 (`StreamExtractVideoFrames`)**：
    RPC 服务 `/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/StreamExtractVideoFrames`，用于在后端按时间戳或指定采样率无损切片视频流并回传图片帧。
+
+### 8.6 前端 JS (JSPB) 工具调用参数压缩机制与解包原则
+
+根据对 AI Studio 前端生产包动态逆向分析，Google 前端在处理 `FunctionCall.args` 与 JSON Schema 时存在特定的 JSPB 优化机制：
+1. **布尔压缩 (Boolean 0/1 Compression)**：
+   在 `dwa` 反序列化器中，`BoolValue` 字段（Field 4）常以整数 `0` 和 `1` 传递以减少传输体积，Python 网关端必须通过 `value[3] in (0, 1)` 强制还原为 `bool`。
+2. **Repeated 容器单层扁平化边界**：
+   在 `_decode_wire_list` 中，Repeated 字段只允许剥离一层外层数组包装（`len == 1 and not _is_wire_value`），一旦内层为 `_is_wire_value`（以 `None` 或 `0` 开头的 JSPB 数组），必须停止拆包，否则单元素列表（如包含一个问题对象的 `ask` 工具）会被错误展开成 5 元素数组，导致首部填充 4 个 `None`。
+3. **Schema 元数据无损注入**：
+   下发给 MakerSuite 的 `tools` 必须完整保留字段的 `description` (下标 2) 与 `enum` (下标 4)，否则模型在生成调用参数时失去参数语义与合法枚举选项，极易造成格式错误或参数幻觉。

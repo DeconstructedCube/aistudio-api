@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from aistudio_api.infrastructure.gateway.model_defaults import invalidate_config_cache
-
 _TEST_DEFAULT_CONFIG = """
 api_keys: []
 model_defaults:
@@ -55,21 +53,32 @@ model_defaults:
 """
 
 
-@pytest.fixture(autouse=True)
-def isolate_test_config(monkeypatch, tmp_path):
-    """Isolate all test runs from repository-level config.yaml modifications and runtime state files."""
-    test_config_path = tmp_path / "test_isolated_config.yaml"
-    test_config_path.write_text(_TEST_DEFAULT_CONFIG, encoding="utf-8")
-    test_data_dir = tmp_path / "data"
-    test_data_dir.mkdir(parents=True, exist_ok=True)
+@pytest.fixture(scope="session")
+def _shared_test_env(tmp_path_factory):
+    base_dir = tmp_path_factory.mktemp("test_env")
+    config_file = base_dir / "test_isolated_config.yaml"
+    config_file.write_text(_TEST_DEFAULT_CONFIG, encoding="utf-8")
+    data_dir = base_dir / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "accounts").mkdir(exist_ok=True)
+    return config_file, data_dir
 
-    monkeypatch.setenv("AISTUDIO_CONFIG_FILE", str(test_config_path))
-    monkeypatch.setenv("AISTUDIO_DATA_DIR", str(test_data_dir))
-    monkeypatch.setenv("AISTUDIO_ACCOUNTS_DIR", str(test_data_dir / "accounts"))
-    monkeypatch.setenv("AISTUDIO_STATS_FILE", str(test_data_dir / "stats.json"))
-    monkeypatch.setenv(
-        "AISTUDIO_ROTATOR_STATE_FILE", str(test_data_dir / "rotator_state.json")
-    )
-    invalidate_config_cache()
+
+@pytest.fixture(autouse=True)
+def isolate_test_config(monkeypatch, _shared_test_env):
+    """Isolate all test runs from repository-level config.yaml modifications and runtime state files."""
+    config_file, data_dir = _shared_test_env
+    stats_file = data_dir / "stats.json"
+    rotator_file = data_dir / "rotator_state.json"
+    accounts_dir = data_dir / "accounts"
+
+    monkeypatch.setenv("AISTUDIO_CONFIG_FILE", str(config_file))
+    monkeypatch.setenv("AISTUDIO_DATA_DIR", str(data_dir))
+    monkeypatch.setenv("AISTUDIO_ACCOUNTS_DIR", str(accounts_dir))
+    monkeypatch.setenv("AISTUDIO_STATS_FILE", str(stats_file))
+    monkeypatch.setenv("AISTUDIO_ROTATOR_STATE_FILE", str(rotator_file))
     yield
-    invalidate_config_cache()
+    if stats_file.exists():
+        stats_file.unlink()
+    if rotator_file.exists():
+        rotator_file.unlink()

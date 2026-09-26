@@ -494,6 +494,115 @@ def test_normalize_gemini_request_supports_snake_case_function_declarations():
     schema_wire = decl_entry[2]
     assert isinstance(schema_wire, list)
     assert schema_wire[0] == 6  # OBJECT
-    assert schema_wire[6] == [["content", [1]]]
+    assert schema_wire[6] == [
+        ["content", [1, None, "The complete final reply shown to the user."]]
+    ]
     assert schema_wire[7] == ["content"]
     assert schema_wire[22] == ["content"]
+
+
+def test_encode_schema_to_wire_lossless_metadata():
+    """Verify encode_schema_to_wire preserves description, enum, format, nullable, anyOf, default, constraints."""
+    from aistudio_api.application.chat_service import encode_schema_to_wire
+
+    schema = {
+        "type": "object",
+        "title": "TaskPayload",
+        "description": "Schema for task operations",
+        "format": "custom-format",
+        "nullable": False,
+        "minProperties": 1,
+        "maxProperties": 10,
+        "properties": {
+            "op": {
+                "type": "string",
+                "description": "Operation type",
+                "enum": ["init", "start", "done", "rm"],
+            },
+            "count": {
+                "type": "integer",
+                "description": "Number of items",
+                "minimum": 1,
+                "maximum": 100,
+                "default": 1,
+            },
+            "items": {
+                "type": "array",
+                "description": "List of task strings",
+                "minItems": 1,
+                "maxItems": 50,
+                "items": {"type": "string", "maxLength": 128},
+            },
+            "options": {
+                "anyOf": [
+                    {"type": "string", "description": "String option"},
+                    {"type": "boolean", "description": "Bool option"},
+                ]
+            },
+        },
+        "required": ["op"],
+        "propertyOrdering": ["op", "count", "items", "options"],
+    }
+
+    wire = encode_schema_to_wire(schema)
+
+    # Wire array checks
+    assert wire[0] == 6  # OBJECT
+    assert wire[1] == "custom-format"  # Field 2: format
+    assert wire[2] == "Schema for task operations"  # Field 3: description
+    assert wire[3] is False  # Field 4: nullable
+    assert wire[7] == ["op"]  # Field 8: required
+    assert wire[8] == 1  # Field 9: minProperties
+    assert wire[9] == 10  # Field 10: maxProperties
+    assert wire[22] == ["op", "count", "items", "options"]  # Field 23: propertyOrdering
+    assert wire[23] == "TaskPayload"  # Field 24: title
+
+    # Properties checks
+    assert isinstance(wire[6], list)
+    props: dict[str, object] = {
+        str(item[0]): item[1]
+        for item in wire[6]
+        if isinstance(item, list) and len(item) >= 2
+    }
+    # op property
+    op_wire = props["op"]
+    assert isinstance(op_wire, list)
+    assert op_wire[0] == 1  # STRING
+    assert op_wire[2] == "Operation type"  # Field 3: description
+    assert op_wire[4] == ["init", "start", "done", "rm"]  # Field 5: enum
+
+    # count property
+    count_wire = props["count"]
+    assert isinstance(count_wire, list)
+    assert count_wire[0] == 3  # INTEGER
+    assert count_wire[2] == "Number of items"
+    assert count_wire[10] == 1  # minimum
+    assert count_wire[11] == 100  # maximum
+    assert count_wire[24] == [None, 1]  # default Value node for integer 1
+
+    # items property
+    items_wire = props["items"]
+    assert isinstance(items_wire, list)
+    assert items_wire[0] == 5  # ARRAY
+    assert items_wire[2] == "List of task strings"
+    items_sub_wire = items_wire[5]
+    assert isinstance(items_sub_wire, list)
+    assert items_sub_wire[0] == 1  # items schema string
+    assert items_sub_wire[13] == 128  # items schema maxLength
+    assert items_wire[20] == 50  # maxItems
+    assert items_wire[21] == 1  # minItems
+
+    # options property (anyOf)
+    options_wire = props["options"]
+    assert isinstance(options_wire, list)
+    any_of_list = options_wire[17]
+    assert isinstance(any_of_list, list)
+    assert len(any_of_list) == 2
+    first_sub = any_of_list[0]
+    assert isinstance(first_sub, list)
+    assert first_sub[0] == 1  # string
+    assert first_sub[2] == "String option"
+    second_sub = any_of_list[1]
+    assert isinstance(second_sub, list)
+    assert second_sub[0] == 4  # boolean
+    assert second_sub[2] == "Bool option"

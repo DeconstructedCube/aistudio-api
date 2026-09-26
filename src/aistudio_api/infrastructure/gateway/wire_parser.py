@@ -153,7 +153,7 @@ def _coerce_wire_payload(
             if isinstance(second, dict):
                 list_payload["args"] = second
             elif isinstance(second, list):
-                list_payload["args"] = _decode_wire_argument_pairs(second)
+                list_payload["args"] = _decode_wire_struct(second)
             elif isinstance(second, str):
                 stripped = second.strip()
                 if stripped.startswith(("{", "[")):
@@ -171,45 +171,83 @@ def _coerce_wire_payload(
     return {"type": payload_type, "raw": raw_value}
 
 
-def _decode_wire_argument_pairs(raw_args: object) -> object:
-    if not isinstance(raw_args, list):
-        return raw_args
+def _is_wire_value(val: object) -> bool:
+    if isinstance(val, list) and len(val) > 0:
+        return val[0] is None or (val[0] == 0 and len(val) == 1)
+    return False
 
-    if all(
-        isinstance(item, list) and len(item) >= 2 and isinstance(item[0], str)
-        for item in raw_args
+
+def _decode_wire_struct(raw_struct: object) -> dict[str, object]:
+    if isinstance(raw_struct, dict):
+        return raw_struct
+    if not isinstance(raw_struct, list) or not raw_struct:
+        return {}
+
+    entries: object = raw_struct
+    while (
+        isinstance(entries, list)
+        and len(entries) == 1
+        and isinstance(entries[0], list)
+        and not (len(entries[0]) >= 2 and isinstance(entries[0][0], str))
     ):
-        result = {}
-        for item in raw_args:
+        entries = entries[0]
+
+    if not isinstance(entries, list):
+        return {}
+
+    result: dict[str, object] = {}
+    for item in entries:
+        if isinstance(item, list) and len(item) >= 2 and isinstance(item[0], str):
             result[item[0]] = _decode_wire_value(item[1])
-        return result
+    return result
 
-    if len(raw_args) == 1 and isinstance(raw_args[0], list):
-        return _decode_wire_argument_pairs(raw_args[0])
 
-    return [_decode_wire_value(item) for item in raw_args]
+def _decode_wire_list(raw_list: object) -> list[object]:
+    if not isinstance(raw_list, list) or not raw_list:
+        return []
+
+    if (
+        len(raw_list) == 1
+        and isinstance(raw_list[0], list)
+        and not _is_wire_value(raw_list[0])
+    ):
+        items = raw_list[0]
+    else:
+        items = raw_list
+
+    return [_decode_wire_value(item) for item in items]
 
 
 def _decode_wire_value(value: object) -> object:
-    if isinstance(value, list):
-        if len(value) == 1 and value[0] == 0:
-            return None
-        if len(value) >= 2 and isinstance(value[1], (int, float)):
-            return value[1]
-        if len(value) >= 3 and isinstance(value[2], str):
-            return value[2]
-        if len(value) >= 4 and isinstance(value[3], bool):
+    if not isinstance(value, list):
+        return value
+    if len(value) == 0:
+        return []
+    if len(value) == 1 and value[0] == 0:
+        return None
+    if (
+        len(value) >= 2
+        and isinstance(value[1], (int, float))
+        and not isinstance(value[1], bool)
+    ):
+        return value[1]
+    if len(value) >= 3 and isinstance(value[2], str):
+        return value[2]
+    if len(value) >= 4 and value[3] is not None:
+        if isinstance(value[3], bool):
             return value[3]
-        if len(value) >= 5 and isinstance(value[4], list):
-            return _decode_wire_argument_pairs(value[4])
-        if len(value) >= 6 and isinstance(value[5], list):
-            return _decode_wire_argument_pairs(value[5])
-        if len(value) >= 3 and value[2] is not None:
-            return value[2]
-        decoded = _decode_wire_argument_pairs(value)
-        if decoded != value:
-            return decoded
-    return value
+        if value[3] in (0, 1):
+            return bool(value[3])
+    if len(value) >= 5 and value[4] is not None:
+        return _decode_wire_struct(value[4])
+    if len(value) >= 6 and value[5] is not None:
+        return _decode_wire_list(value[5])
+    if len(value) >= 3 and value[2] is not None:
+        return value[2]
+    return [_decode_wire_value(item) for item in value]
+
+
+_decode_wire_argument_pairs = _decode_wire_struct
 
 
 def parse_usage_metadata(raw_usage: object) -> dict[str, object]:

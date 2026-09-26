@@ -183,3 +183,186 @@ def test_decode_wire_argument_pairs_with_three_element_array():
     raw = [["city", "San Francisco", "extra_field"]]
     decoded = _decode_wire_argument_pairs(raw)
     assert decoded == {"city": "San Francisco"}
+
+
+def test_decode_wire_value_booleans_and_numbers():
+    # Value booleans (JSPB boolean compression 0/1 and explicit bool)
+    assert _decode_wire_value([None, None, None, 0]) is False
+    assert _decode_wire_value([None, None, None, 1]) is True
+    assert _decode_wire_value([None, None, None, False]) is False
+    assert _decode_wire_value([None, None, None, True]) is True
+
+    # Value numbers
+    assert _decode_wire_value([None, 0]) == 0
+    assert _decode_wire_value([None, 42]) == 42
+    assert _decode_wire_value([None, 3.14]) == 3.14
+
+    # Null value
+    assert _decode_wire_value([0]) is None
+
+    # Strings
+    assert _decode_wire_value([None, None, "hello"]) == "hello"
+
+    # Plain non-list
+    assert _decode_wire_value("raw_str") == "raw_str"
+    assert _decode_wire_value(123) == 123
+    assert _decode_wire_value(True) is True
+
+
+def test_decode_wire_list_single_string_preserves_array():
+    from aistudio_api.infrastructure.gateway.wire_parser import (
+        _decode_wire_struct,
+    )
+
+    # Value node containing a single string item inside repeated ListValue
+    raw = [
+        [
+            "items",
+            [
+                None,
+                None,
+                None,
+                None,
+                None,
+                [[None, None, "task1"]],
+            ],
+        ]
+    ]
+    decoded = _decode_wire_struct(raw)
+    assert decoded == {"items": ["task1"]}
+
+
+def test_decode_wire_list_single_struct_preserves_array():
+    from aistudio_api.infrastructure.gateway.wire_parser import (
+        _decode_wire_struct,
+    )
+
+    # Simulating ask tool: single question struct inside repeated ListValue
+    raw = [
+        [
+            "questions",
+            [
+                None,
+                None,
+                None,
+                None,
+                None,
+                [
+                    [
+                        [
+                            None,
+                            None,
+                            None,
+                            None,
+                            [
+                                ["id", [None, None, "storage"]],
+                                ["question", [None, None, "Database?"]],
+                                ["multi", [None, None, None, 0]],
+                            ],
+                        ]
+                    ]
+                ],
+            ],
+        ]
+    ]
+    decoded = _decode_wire_struct(raw)
+    assert decoded == {
+        "questions": [
+            {
+                "id": "storage",
+                "question": "Database?",
+                "multi": False,
+            }
+        ]
+    }
+
+
+def test_decode_wire_list_empty_list_returns_list_not_dict():
+    from aistudio_api.infrastructure.gateway.wire_parser import (
+        _decode_wire_struct,
+    )
+
+    raw = [
+        [
+            "empty_list",
+            [
+                None,
+                None,
+                None,
+                None,
+                None,
+                [],
+            ],
+        ]
+    ]
+    decoded = _decode_wire_struct(raw)
+    assert decoded == {"empty_list": []}
+    assert isinstance(decoded["empty_list"], list)
+
+
+def test_parse_response_chunk_with_ask_tool_payload():
+    # Full chunk containing ask tool call with single question dict
+    chunk: list[object] = [
+        [
+            [
+                [
+                    [
+                        [
+                            None,
+                        None,
+                        None,
+                        [
+                            "ask",
+                            [
+                                [
+                                    "questions",
+                                    [
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        [
+                                            [
+                                                [
+                                                    None,
+                                                    None,
+                                                    None,
+                                                    None,
+                                                    [
+                                                        ["id", [None, None, "storage"]],
+                                                        ["multi", [None, None, None, 0]],
+                                                        ["recommended", [None, 0]],
+                                                    ],
+                                                ]
+                                            ]
+                                        ],
+                                    ],
+                                ]
+                            ],
+                            "call_ask_123",
+                        ],
+                        ]
+                    ]
+                ],
+                "model",
+            ],
+            1,
+        ]
+    ]
+    candidate = parse_response_chunk(chunk)
+    assert len(candidate.function_calls) == 1
+    fc = candidate.function_calls[0]
+    assert fc["name"] == "ask"
+    assert fc["call_id"] == "call_ask_123"
+    args = fc["args"]
+    assert isinstance(args, dict)
+    assert args == {
+        "questions": [
+            {
+                "id": "storage",
+                "multi": False,
+                "recommended": 0,
+            }
+        ]
+    }

@@ -3,17 +3,36 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-from google import genai
-from google.genai import errors, types
 
 from aistudio_api.api.app import app
 from aistudio_api.api.dependencies import get_client
 from aistudio_api.domain.errors import UsageLimitExceeded
 from aistudio_api.domain.models import Candidate, ModelOutput
+
+
+class _LazyModule:
+    def __init__(self, loader: Any):
+        self._loader = loader
+        self._module = None
+
+    def __getattr__(self, item: str) -> Any:
+        if self._module is None:
+            self._module = self._loader()
+        return getattr(self._module, item)
+
+
+genai: Any = _LazyModule(lambda: __import__("google.genai", fromlist=["genai"]))
+types: Any = _LazyModule(
+    lambda: __import__("google.genai", fromlist=["types"]).types
+)
+errors: Any = _LazyModule(
+    lambda: __import__("google.genai", fromlist=["errors"]).errors
+)
 
 
 @pytest.fixture
