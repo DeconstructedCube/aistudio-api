@@ -134,7 +134,7 @@ uv run python3 main.py server --port 8080
 | **Python 代码风格与 Lint** | `uv run ruff check .` | 0 errors |
 | **Python 代码格式化** | `uv run ruff format --check .` | 71 files already formatted |
 | **Python 类型检查** | `bun x pyright src tests` | 0 errors |
-| **Python 单元测试** | `uv run pytest` | 全部通过 (177 passed) |
+| **Python 单元测试** | `uv run pytest` | 全部通过 (182 passed) |
 | **浏览器 JS 语法校验** | `for f in src/aistudio_api/infrastructure/browser/js/*.js; do bun build "$f" --no-bundle >/dev/null; done` | 0 errors |
 | **前端代码规范** | `cd web && bun run lint` | 0 errors, 0 warnings |
 | **前端类型检查** | `cd web && bun run type-check` | 0 errors |
@@ -211,7 +211,7 @@ aistudio-api/
 └── tests/                        # 单元测试套件 (模块化轻量架构，全量通过 <5s)
 │   ├── conftest.py               # 气密性隔离配置 (monkeypatch AISTUDIO_* 数据目录)
 │   ├── fixtures/                 # 真实 Protobuf JSON 请求与响应报文
-│   └── unit/                     # 21 个按职责严格划分的单元测试模块
+│       └── unit/                     # 22 个按职责严格划分的单元测试模块
 │       ├── test_account_*        # 账号调度、并发轮换防雪崩与凭据导入
 │       ├── test_api_*            # API 鉴权、响应序列化与模型/系统路由
 │       ├── test_browser_*        # Chromium 进程看门狗、CDP 会话与页面生命周期

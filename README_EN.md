@@ -44,7 +44,7 @@
 
 | Feature | Description |
 |---|---|
-| **Native Gemini API** | Full compatibility with the official `/v1beta/...` specification, supporting Thinking process, Multimodal inputs, Function Calling, and Image Generation |
+| **Native Gemini API** | Full compatibility with the official `/v1beta/...` specification, supporting Thinking process, Multimodal inputs, bidirectional lossless Function Calling, and Image Generation |
 | **Dynamic Model Discovery** | Automatically synchronizes and discovers available models from upstream Google AI Studio |
 | **Sticky Account Dispatch** | Maintains account state per model, tracks 429 rate-limit quotas & 403 authorization isolation independently, and resets cooldowns at midnight Pacific Time |
 | **Full Runtime Persistence** | Model usage statistics (`stats.json`) and account 429 cooldown & quota status (`rotator_state.json`) are automatically persisted to disk across restarts |

@@ -96,7 +96,7 @@ flowchart TD
 
 | 文件 | 核心职责 |
 |---|---|
-| `chat_service.py` | 将客户端提交的 Gemini 标准请求转换为内部通用结构，内存处理 Base64 媒体、系统提示与工具参数 |
+| `chat_service.py` | 将客户端提交的 Gemini 标准请求转换为内部通用结构，内存处理 Base64 媒体、系统提示与具备 description/enum 全元数据的无损工具声明 |
 | `account_rotator.py` | 负责多账号的 Sticky 黏性调度，按模型维护 429 限流与 403 鉴权异常隔离状态，每日美西午夜重置 |
 | `account_orchestrator.py` | 提供全局防雪崩互斥锁（`_switch_lock`），在并发 429 与 403 异常时实现安全有序故障转移切号与单账号在位自愈 |
 | `account_service.py` | 账号领域用例（Cookie 保存、批量探活导入、凭据激活）封装，杜绝路由层穿透访问存储私有属性 |
@@ -120,7 +120,7 @@ flowchart TD
   - `client.py`：`AIStudioClient` 网关统一门面，组装会话、模板捕获、快照缓存与流式生成。
   - `transport.py`：纯 CDP 原生 Binding (`__aistudio_stream_push__`) 实时事件驱动流式管道，消除冗余轮询与时间竞争，辅以有界异步队列反压控制与 Python 端 SAPISIDHASH 鉴权注入。
   - `wire_codec.py`：负责 Google 内部 Protobuf-over-JSON 数组结构构造与请求重写。
-  - `wire_parser.py`：从领域模型剥离出的纯粹 Protobuf-over-JSON 响应解析器，防范 JSPB `[parts, role]` 结构混淆，将上游分块与使用量转换为领域对象。
+  - `wire_parser.py`：从领域模型剥离出的纯粹 Protobuf-over-JSON 响应解析器，防范 JSPB `[parts, role]` 结构混淆，精准解包 Struct 字典与 ListValue 数组并还原布尔压缩值，将上游分块与使用量无损转换为领域对象。
   - `capture.py`：集中统一的请求模板单例缓存管理（Single Source of Truth）。
   - `streaming.py`：流式生成编排与异常转换网关。
   - `model_defaults.py`：模型规则解析、工具默认注入及基于文件 mtime 的内存缓存。

@@ -44,7 +44,7 @@
 
 | 功能模块 | 说明 |
 |---|---|
-| **原生 Gemini 协议** | 完整兼容 `/v1beta/...` 接口规范，支持 Thinking 思维链、Multimodal 多模态、Function Calling 工具调用及图片生成 |
+| **原生 Gemini 协议** | 完整兼容 `/v1beta/...` 接口规范，支持 Thinking 思维链、Multimodal 多模态、双向无损 Function Calling 工具调用及图片生成 |
 | **动态模型发现** | 自动向上游同步可用模型列表，支持 `gemini-3.7-flash`、`gemini-3.8-flash` 等最新模型 |
 | **多账号黏性调度** | 维护账号状态，支持按模型独立记录 429 配额与 403 鉴权异常隔离并在故障时自动切换，每日美西午夜自动重置配额 |
 | **运行信息全面持久化** | 模型调用量、Token 消耗统计 (`stats.json`) 以及账号 429 限额与冷却状态 (`rotator_state.json`) 自动落盘，容器/服务重启不丢失状态 |
