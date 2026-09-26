@@ -59,7 +59,7 @@ fun ProfileCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = profile.email ?: "未绑定邮箱（登录后自动提取）",
+                        text = profile.email ?: "未登录",
                         style = MaterialTheme.typography.bodySmall,
                         color = if (profile.email != null) MaterialTheme.colorScheme.onSurfaceVariant else Color.Gray,
                         maxLines = 1,
@@ -96,35 +96,6 @@ fun ProfileCard(
                 }
             }
 
-            // 凭据详情预览（若已登录展示哈希摘要，若未登录提示进入登录）
-            if (profile.isLoggedIn) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = "AUTH_USER: u/${profile.authUser}",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 10.sp,
-                        )
-                        Text(
-                            text = "已提取 Google 鉴权凭据",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 10.sp,
-                        )
-                    }
-                }
-            }
-
             // 底部操作按钮栏
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -145,7 +116,7 @@ fun ProfileCard(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (profile.isLoggedIn) "重新登录/更新" else "进入登录",
+                        text = if (profile.isLoggedIn) "更新凭据" else "登录",
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                     )

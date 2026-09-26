@@ -78,10 +78,10 @@ fun LoginScreen(
             }
 
         if (!combinedCookies.contains("SAPISID") && !combinedCookies.contains("SID")) {
-            Toast.makeText(context, "尚未检测到有效登录凭据，已退出并保留原样", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "未检测到有效登录凭据", Toast.LENGTH_SHORT).show()
         } else {
             profileManager.saveCookies(profile.id, combinedCookies)
-            Toast.makeText(context, "✅ 成功提取并保存「${profile.name}」的凭据！", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "已保存「${profile.name}」凭据", Toast.LENGTH_SHORT).show()
         }
 
         teardownWebView()
@@ -109,7 +109,7 @@ fun LoginScreen(
                             maxLines = 1,
                         )
                         Text(
-                            text = if (isLoading) "正在加载页面..." else (pageTitle.ifBlank { "Google AI Studio 登录" }),
+                            text = if (isLoading) "正在加载..." else pageTitle,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
@@ -118,7 +118,7 @@ fun LoginScreen(
                 },
                 navigationIcon = {
                     IconButton(onClick = { handleCancel() }) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "取消返回")
+                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
                     }
                 },
                 actions = {
@@ -133,7 +133,7 @@ fun LoginScreen(
                     ) {
                         Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("保存并退出", fontWeight = FontWeight.Bold)
+                        Text("保存", fontWeight = FontWeight.Bold)
                     }
                 },
                 colors =

@@ -52,18 +52,11 @@ fun MainScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(
-                            text = "AIStudio 凭据提取器",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            text = "多资料物理隔离 · Bitwarden 自动填充",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    Text(
+                        text = "账号",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
                 },
                 actions = {
                     IconButton(
@@ -87,7 +80,7 @@ fun MainScreen(
             ExtendedFloatingActionButton(
                 onClick = { isCreateDialogOpen = true },
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("新建资料", fontWeight = FontWeight.Bold) },
+                text = { Text("添加账号", fontWeight = FontWeight.Bold) },
                 shape = RoundedCornerShape(16.dp),
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
@@ -125,36 +118,6 @@ fun MainScreen(
                         focusedContainerColor = MaterialTheme.colorScheme.surface,
                     ),
             )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // 统计胶囊卡片
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "资料总数: ${profiles.size} 个",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = "有效凭据: $loggedInCount / ${profiles.size}",
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = if (loggedInCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-                    )
-                }
-            }
 
             Spacer(modifier = Modifier.height(12.dp))
 

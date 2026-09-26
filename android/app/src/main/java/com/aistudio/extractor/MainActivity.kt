@@ -39,9 +39,9 @@ class MainActivity : ComponentActivity() {
                     contentResolver.openOutputStream(uri)?.use { os ->
                         os.write(pendingExportJson.toByteArray(Charsets.UTF_8))
                     }
-                    Toast.makeText(this, "✅ 凭据文件已成功保存！", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "凭据文件已保存", Toast.LENGTH_SHORT).show()
                 } catch (e: Exception) {
-                    Toast.makeText(this, "保存文件失败: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -59,12 +59,12 @@ class MainActivity : ComponentActivity() {
                         } ?: ""
                     val count = profileManager.importBundleJson(jsonStr)
                     if (count > 0) {
-                        Toast.makeText(this, "✅ 成功导入 $count 个账号资料！", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this, "已导入 $count 个账号", Toast.LENGTH_SHORT).show()
                     } else {
-                        Toast.makeText(this, "未在文件中识别到有效账号凭据", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "文件中未发现有效凭据", Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
-                    Toast.makeText(this, "读取备份文件失败: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "读取文件失败: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -102,7 +102,7 @@ class MainActivity : ComponentActivity() {
                                 onClearCookies = { target ->
                                     profileManager.clearCookies(target.id)
                                     refreshProfiles()
-                                    Toast.makeText(this@MainActivity, "已清空「${target.name}」的凭据", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(this@MainActivity, "已清空「${target.name}」凭据", Toast.LENGTH_SHORT).show()
                                 },
                                 onDeleteProfile = { target ->
                                     profileManager.deleteProfile(target.id)
