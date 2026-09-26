@@ -6,11 +6,14 @@ import type { SystemConfig } from '@/types/system.ts'
 import Button from '@/components/ui/Button.vue'
 import ConfigSelect from '@/components/config/ConfigSelect.vue'
 import ConfigSwitch from '@/components/config/ConfigSwitch.vue'
+import ConfigInput from '@/components/config/ConfigInput.vue'
 import {
   Activity,
   Save,
   Bug,
   Info,
+  HardDrive,
+  Folder,
 } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -25,14 +28,17 @@ const toast = useToastStore()
 
 const logLevel = ref(props.initialConfig.log_level || 'INFO')
 const dumpRequests = ref(Boolean(props.initialConfig.dump_requests))
+const dumpToFile = ref(Boolean(props.initialConfig.dump_to_file))
+const dumpDir = ref(props.initialConfig.dump_dir || 'dumps')
 const debugEnvActive = ref(Boolean(props.initialConfig.debug_env_active))
 const saving = ref(false)
-
 watch(
   () => props.initialConfig,
   (cfg) => {
     logLevel.value = cfg.log_level || 'INFO'
     dumpRequests.value = Boolean(cfg.dump_requests)
+    dumpToFile.value = Boolean(cfg.dump_to_file)
+    dumpDir.value = cfg.dump_dir || 'dumps'
     debugEnvActive.value = Boolean(cfg.debug_env_active)
   },
   { deep: true },
@@ -51,11 +57,14 @@ async function handleSave() {
     const res = await systemApi.updateLoggingConfig({
       level: logLevel.value,
       dump_requests: dumpRequests.value,
+      dump_to_file: dumpToFile.value,
+      dump_dir: dumpDir.value,
     })
     logLevel.value = res.log_level
     dumpRequests.value = res.dump_requests
+    dumpToFile.value = res.dump_to_file
+    dumpDir.value = res.dump_dir
     debugEnvActive.value = res.debug_env_active
-    toast.success('日志与调试配置已即时更新并持久化至 config.yaml')
     emit('saved')
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : '保存配置失败'
@@ -114,9 +123,9 @@ async function handleSave() {
       </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <!-- Log Level Configuration -->
-      <div class="space-y-1.5">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- 1. Log Level Configuration -->
+      <div class="p-4 bg-gray-50/60 border border-gray-200/70 rounded-2xl space-y-2">
         <ConfigSelect
           :model-value="logLevel"
           label="日志输出级别 (Log Level)"
@@ -125,23 +134,58 @@ async function handleSave() {
           @update:model-value="logLevel = String($event || 'INFO')"
         />
         <p class="text-[11px] text-gray-400">
-          修改后无需重启服务，后端各模块即时生效。
+          控制控制台终端的最低输出详细程度，修改后无需重启服务即时生效。
         </p>
       </div>
 
-      <!-- Request Dump Toggle -->
-      <div class="space-y-1.5">
+      <!-- 2. Request Dump Toggle -->
+      <div class="p-4 bg-gray-50/60 border border-gray-200/70 rounded-2xl space-y-2">
         <div class="block text-xs font-semibold text-gray-700">
-          请求转储 (Dump Requests)
+          控制台请求转储 (Dump Requests)
         </div>
         <ConfigSwitch
           :model-value="dumpRequests"
-          label="转储每次请求与响应详情"
-          description="完整打印每次 API 请求的 Headers、Query、Body 及响应状态与耗时"
+          label="终端打印每次请求与响应详情"
+          description="在标准输出中转储完整的 Headers、Query、Body 文本与状态"
           @update:model-value="dumpRequests = $event"
         />
         <p class="text-[11px] text-gray-400">
-          亦可通过启动环境变量 <code>DEBUG=true</code> 快速开启。
+          适用于联调抓包，亦可通过启动环境变量 <code>DEBUG=true</code> 激活。
+        </p>
+      </div>
+
+      <!-- 3. Dump To File Switch -->
+      <div class="p-4 bg-gray-50/60 border border-gray-200/70 rounded-2xl space-y-2">
+        <div class="flex items-center gap-1.5 text-xs font-semibold text-gray-700">
+          <HardDrive class="w-3.5 h-3.5 text-brand-600" />
+          <span>报文持久化落盘 (Dump to File)</span>
+        </div>
+        <ConfigSwitch
+          :model-value="dumpToFile"
+          label="转储报文为独立文件落盘"
+          description="将每次请求/响应报文自动存为独立文件，便于事后复现与排查"
+          @update:model-value="dumpToFile = $event"
+        />
+        <p class="text-[11px] text-gray-400">
+          对应环境变量 <code>AISTUDIO_DUMP_FILE=true</code>。
+        </p>
+      </div>
+
+      <!-- 4. Dump Directory Input -->
+      <div class="p-4 bg-gray-50/60 border border-gray-200/70 rounded-2xl space-y-2">
+        <div class="flex items-center gap-1.5 text-xs font-semibold text-gray-700">
+          <Folder class="w-3.5 h-3.5 text-brand-600" />
+          <span>转储文件存储目录 (Dump Directory)</span>
+        </div>
+        <ConfigInput
+          :model-value="dumpDir"
+          label="保存路径"
+          description="相对或绝对路径"
+          placeholder="dumps"
+          @update:model-value="dumpDir = String($event || 'dumps')"
+        />
+        <p class="text-[11px] text-gray-400 font-mono">
+          默认落盘目录为项目根目录下的 dumps/
         </p>
       </div>
     </div>

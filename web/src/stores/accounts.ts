@@ -8,6 +8,7 @@ import type {
   AccountRotationStats,
   ImportCookiesRequest,
   ProbeAndImportRequest,
+  ImportBundleRequest,
 } from '@/types'
 import { useToastStore } from './toast.ts'
 
@@ -148,6 +149,23 @@ export const useAccountsStore = defineStore('accounts', () => {
     }
   }
 
+  async function importBundle(payload: ImportBundleRequest) {
+    const toast = useToastStore()
+    importing.value = true
+    try {
+      const res = await accountsApi.importBundle(payload)
+      toast.success(`批量导入成功: 已入库 ${res.imported_count} 个账号`)
+      await fetchAll()
+      return true
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '批量导入失败'
+      toast.error(msg)
+      return false
+    } finally {
+      importing.value = false
+    }
+  }
+
   return {
     accounts,
     activeAccount,
@@ -164,5 +182,6 @@ export const useAccountsStore = defineStore('accounts', () => {
     updateAccountName,
     importCookies,
     probeAndImport,
+    importBundle,
   }
 })

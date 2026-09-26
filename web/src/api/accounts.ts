@@ -5,6 +5,8 @@ import type {
   ImportCookiesResponse,
   ProbeAndImportRequest,
   ProbeAndImportResponse,
+  ImportBundleRequest,
+  ImportBundleResponse,
 } from '@/types'
 
 export const accountsApi = {
@@ -51,6 +53,12 @@ export const accountsApi = {
   deleteCookieGroup(cookieId: string): Promise<{ deleted: number }> {
     return request<{ deleted: number }>(`/accounts/group/${encodeURIComponent(cookieId)}`, {
       method: 'DELETE',
+    })
+  },
+  importBundle(req: ImportBundleRequest): Promise<ImportBundleResponse> {
+    return request<ImportBundleResponse>('/accounts/import-bundle', {
+      method: 'POST',
+      body: JSON.stringify(req),
     })
   },
 }

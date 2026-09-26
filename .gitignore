@@ -41,3 +41,14 @@ web/dist/
 repomix-output.*
 repomix.config.*
 
+# Android / Gradle
+.gradle/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/**/.idea/
+android/**/*.iml
+*.apk
+*.aab
+

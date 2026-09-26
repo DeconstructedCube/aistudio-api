@@ -7,6 +7,8 @@ import type {
   ApiKeyItem,
   CreateApiKeyRequest,
   UpdateApiKeyRequest,
+  UpdateLoggingConfigRequest,
+  UpdateLoggingConfigResponse,
   HealthCheckResponse,
 } from '@/types'
 
@@ -48,13 +50,8 @@ export const systemApi = {
     })
   },
 
-  updateLoggingConfig(req: { level?: string; dump_requests?: boolean }): Promise<{
-    ok: boolean
-    log_level: string
-    dump_requests: boolean
-    debug_env_active: boolean
-  }> {
-    return request('/config/logging', {
+  updateLoggingConfig(req: UpdateLoggingConfigRequest): Promise<UpdateLoggingConfigResponse> {
+    return request<UpdateLoggingConfigResponse>('/config/logging', {
       method: 'PUT',
       body: JSON.stringify(req),
     })

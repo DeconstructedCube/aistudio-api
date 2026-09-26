@@ -157,3 +157,48 @@ def test_domain_overrides_scopes_osid_strictly_to_aistudio():
     assert _DOMAIN_OVERRIDES["__Secure-OSID"] == ["aistudio.google.com"]
     assert ".google.com" not in _DOMAIN_OVERRIDES["OSID"]
     assert ".google.com" not in _DOMAIN_OVERRIDES["__Secure-OSID"]
+
+
+@pytest.mark.asyncio
+async def test_import_bundle_flow(tmp_path):
+    from aistudio_api.api.routes_accounts import ImportBundleRequest, import_bundle
+    from aistudio_api.api.state import RuntimeState
+    from aistudio_api.application.account_service import AccountService
+    from aistudio_api.infrastructure.account.account_store import AccountStore
+
+    store = AccountStore(accounts_dir=tmp_path / "accounts")
+    svc = AccountService(store)
+    state = RuntimeState()
+
+    bundle_content = """{
+      "version": 1,
+      "accounts": [
+        {
+          "name": "Work Profile",
+          "email": "work@example.com",
+          "cookies": "SID=work_sid; SAPISID=work_sapisid",
+          "auth_user": "0"
+        },
+        {
+          "name": "Personal Profile",
+          "email": "personal@example.com",
+          "cookies": "SID=pers_sid; SAPISID=pers_sapisid",
+          "auth_user": "1"
+        }
+      ]
+    }"""
+
+    req = ImportBundleRequest(content=bundle_content)
+    res = await import_bundle(req, account_service=svc, runtime_state=state)
+
+    assert res.imported_count == 2
+    assert len(res.accounts) == 2
+    assert res.accounts[0].name == "Work Profile"
+    assert res.accounts[0].email == "work@example.com"
+    assert res.accounts[1].name == "Personal Profile"
+    assert res.accounts[1].auth_user == "1"
+
+    # 验证磁盘持久化有效
+    persisted = svc.list_accounts()
+    assert len(persisted) == 2
+    assert svc.get_active_account() is not None

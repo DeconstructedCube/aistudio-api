@@ -52,7 +52,8 @@
 | **批量子账号探活** | 导入单个包含多个 Google 身份的 Cookie 后，自动递归探活子账号（`u/0`, `u/1`...）并分别建档 |
 | **内置搜索与工具** | 支持 Google Search 联网搜索、Google Maps、代码执行沙箱等官方扩展能力 |
 | **轻量 CDP 驱动** | 基于纯 Python 异步 WebSocket 直连 Chrome DevTools Protocol，无需 Node.js、Playwright 或 Selenium |
-| **Web 管理面板** | 提供现代化的管理控制台，支持账号管理、调用量监控、在线编辑与热重载 `config.yaml` |
+| **Web 管理面板** | 提供现代化的管理控制台，支持账号管理（支持文本与 JSON 文件批量导入）、调用量监控、在线编辑与热重载 `config.yaml` |
+| **Android 伴侣端** | 配套 Android 原生应用（`android/`），采用 Jetpack Compose 构建，支持多 Profile 隔离登录、Bitwarden 自动填充与一键导出凭据包 |
 > [!NOTE]
 > **内存占用参考**：纯 Python 后端服务常驻内存约 35 - 45 MB；拉起单实例受控 Chromium 后总物理内存 (PSS) 约 350 - 450 MB（宿主 Linux 下约 250 - 350 MB）。Android Termux 环境建议空闲 RAM ≥ 1 GB。
 
@@ -325,7 +326,7 @@ if response.function_calls:
 系统内置静态打包的 Web 前端管理控制台（访问 `http://localhost:8080`）：
 
 - **仪表盘 (Dashboard)**：实时展示服务健康状况、各模型请求量、成功率及 429 冷却指标。
-- **账号管理 (Accounts)**：支持单行或 JSON 格式 Cookie 导入、自动识别并探活多账号、手动切换当前活跃账号或重置冷却。
+- **账号管理 (Accounts)**：支持单行/JSON Cookie 文本导入、JSON 凭据包文件批量导入（支持文件上传或填入服务端本地绝对路径）、自动递归探活多账号、手动切换当前活跃账号或重置冷却。
 - **系统设置 (Settings)**：在线编辑 `config.yaml`（支持配置 profiles 与 models 默认规则），保存后服务端即时热重载。
 - **访问鉴权**：设置环境变量 `AISTUDIO_WEB_PASSWORD` 后自动开启登录鉴权守卫。
 
@@ -355,6 +356,13 @@ bun x pyright
 
 # 执行单元测试套件
 uv run pytest
+```
+
+Android 伴侣端代码质量检查：
+
+```bash
+# 执行 Kotlin 代码规范检查 (已配置于 ~/.zshrc)
+ktlint "android/app/src/main/java/**/*.kt"
 ```
 
 ---

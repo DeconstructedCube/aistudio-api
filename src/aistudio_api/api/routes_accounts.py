@@ -63,6 +63,24 @@ class ProbeAndImportResponse(BaseModel):
     accounts: list[AccountResponse]
 
 
+class BundleAccountItem(BaseModel):
+    id: str | None = None
+    name: str | None = None
+    email: str | None = None
+    cookies: str
+    auth_user: str = "0"
+
+
+class ImportBundleRequest(BaseModel):
+    file_path: str | None = None
+    content: str | None = None
+    accounts: list[BundleAccountItem] | None = None
+
+
+class ImportBundleResponse(BaseModel):
+    imported_count: int
+    accounts: list[AccountResponse]
+
 @router.get("", response_model=list[AccountResponse])
 @router.get("/", response_model=list[AccountResponse])
 async def list_accounts(
@@ -318,6 +336,115 @@ async def probe_and_import(
 
     log.info("探活与导入完成: 成功导入 %d 个账号", len(imported_accounts))
     return ProbeAndImportResponse(
+        imported_count=len(imported_accounts),
+        accounts=imported_accounts,
+    )
+
+
+@router.post("/import-bundle", response_model=ImportBundleResponse)
+async def import_bundle(
+    req: ImportBundleRequest,
+    account_service: AccountService = Depends(get_account_service),
+    runtime_state: RuntimeState = Depends(get_runtime_state),
+) -> ImportBundleResponse:
+    """批量导入多个账号的凭据 Bundle（支持传入 JSON 文本、直接解析列表或服务器本地文件路径）。"""
+    import json
+    import secrets
+    from pathlib import Path
+
+    from aistudio_api.infrastructure.account.cookie_parser import parse_cookie_string
+
+    items_to_import: list[dict[str, object]] = []
+
+    if req.accounts:
+        for a in req.accounts:
+            items_to_import.append(
+                {
+                    "name": a.name or "Google Account",
+                    "email": a.email,
+                    "cookies": a.cookies,
+                    "auth_user": a.auth_user or "0",
+                }
+            )
+    elif req.content:
+        try:
+            raw_data = json.loads(req.content)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"JSON 内容解析失败: {e}") from e
+        if isinstance(raw_data, list):
+            raw_list = raw_data
+        elif isinstance(raw_data, dict):
+            raw_list = raw_data.get("accounts") or raw_data.get("profiles") or []
+        else:
+            raw_list = []
+        for item in raw_list:
+            if isinstance(item, dict) and item.get("cookies"):
+                items_to_import.append(item)
+    elif req.file_path:
+        fpath = Path(req.file_path).expanduser().resolve()
+        if not fpath.is_file():
+            raise HTTPException(status_code=404, detail=f"文件不存在: {fpath}")
+        try:
+            raw_text = fpath.read_text(encoding="utf-8")
+            raw_data = json.loads(raw_text)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"读取或解析文件失败: {e}") from e
+        if isinstance(raw_data, list):
+            raw_list = raw_data
+        elif isinstance(raw_data, dict):
+            raw_list = raw_data.get("accounts") or raw_data.get("profiles") or []
+        else:
+            raw_list = []
+        for item in raw_list:
+            if isinstance(item, dict) and item.get("cookies"):
+                items_to_import.append(item)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="请提供 accounts 列表、content JSON 文本或 file_path 本地文件路径",
+        )
+
+    if not items_to_import:
+        raise HTTPException(status_code=400, detail="未解析到任何包含有效 cookies 的账号条目")
+
+    imported_accounts: list[AccountResponse] = []
+    for idx, item in enumerate(items_to_import):
+        raw_cookie_str = str(item.get("cookies") or "")
+        if not raw_cookie_str:
+            continue
+        storage_state = parse_cookie_string(raw_cookie_str)
+        if not storage_state.get("cookies"):
+            continue
+
+        acc_name = str(item.get("name") or f"Account {idx + 1}")
+        acc_email = str(item["email"]) if item.get("email") else None
+        acc_auth_user = str(item.get("auth_user") or "0")
+        cid = f"cookie_{secrets.token_hex(4)}"
+
+        account = account_service.save_account_from_cookies(
+            name=acc_name,
+            email=acc_email,
+            storage_state=storage_state,
+            auth_user=acc_auth_user,
+            cookie_id=cid,
+        )
+        imported_accounts.append(
+            AccountResponse(
+                id=account.id,
+                name=account.name,
+                email=account.email,
+                created_at=account.created_at,
+                last_used=account.last_used,
+                auth_user=account.auth_user,
+                cookie_id=account.cookie_id or cid,
+            )
+        )
+
+    if not account_service.get_active_account() and imported_accounts:
+        account_service.set_active_account(imported_accounts[0].id)
+
+    log.info("批量文件导入完成: 成功入库 %d 个账号", len(imported_accounts))
+    return ImportBundleResponse(
         imported_count=len(imported_accounts),
         accounts=imported_accounts,
     )

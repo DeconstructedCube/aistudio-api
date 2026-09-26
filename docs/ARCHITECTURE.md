@@ -88,7 +88,7 @@ flowchart TD
 |---|---|
 | `routes_gemini.py` | 对外暴露 `/v1beta/models/{model}:generateContent` 和 `:streamGenerateContent` 端点 |
 | `routes_models.py` | 动态向上游拉取并缓存可用模型列表（如 `gemini-3.7-flash`、`gemini-3.8-flash` 等） |
-| `routes_accounts.py` | 提供 Cookie 导入、多账号递归探活（`u/0`, `u/1`...）、手动激活与删除接口 |
+| `routes_accounts.py` | 提供 Cookie 单条/Bundle文件导入、多账号递归探活（`u/0`, `u/1`...）、手动激活与删除接口 |
 | `routes_system.py` | 监控指标查询、在线编辑与热重载 `config.yaml` 规则 |
 | `dependencies.py` | 统一 API Key 鉴权拦截（支持 Query 参数 `?key=`、Header `x-goog-api-key`、`x-api-key` 或 `Bearer`） |
 

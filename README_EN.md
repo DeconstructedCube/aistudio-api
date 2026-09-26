@@ -52,7 +52,8 @@
 | **Multi-Account Probing** | Extracts and verifies sub-accounts (`u/0`, `u/1`...) automatically when importing a multi-session Cookie |
 | **Built-in Tools** | Supports official tools such as Google Search, Google Maps, and Code Execution sandbox |
 | **Pure Python CDP** | Direct Chrome DevTools Protocol communication over asynchronous WebSockets without Node.js, Playwright, or Selenium |
-| **Web Management Console** | Built-in web dashboard for account management, live request metrics, and runtime `config.yaml` hot reloading |
+| **Web Management Console** | Built-in web dashboard for account management (supporting text and JSON bundle file imports), live request metrics, and runtime `config.yaml` hot reloading |
+| **Android Companion App** | Native Android app (`android/`) built with Jetpack Compose, featuring isolated multi-profile management, on-demand WebView, Bitwarden autofill, and one-click bundle export |
 > [!NOTE]
 > **Memory Footprint**: The standalone Python backend consumes ~35 - 45 MB RAM. With a single controlled Chromium instance, total actual system memory (PSS) is ~350 - 450 MB on Termux proot (~250 - 350 MB on native Linux). On Android Termux, ≥ 1 GB free RAM is recommended.
 
@@ -326,7 +327,7 @@ if response.function_calls:
 The service includes a built-in static Web Console served at `http://localhost:8080`:
 
 - **Dashboard**: Real-time view of service health, per-model request stats, success rates, and rate-limit cooldown status.
-- **Accounts**: Import Cookie credentials (single-line or JSON), auto-probe multiple sub-accounts, switch active account, or manually reset cooldown.
+- **Accounts**: Import Cookie credentials (single-line, JSON text, or uploaded bundle file / local file path), auto-probe multiple sub-accounts, switch active account, or manually reset cooldown.
 - **Settings**: Online editor for `config.yaml` with instant hot-reloading on save.
 - **Access Control**: Enable authentication by setting `AISTUDIO_WEB_PASSWORD`.
 
@@ -355,6 +356,13 @@ bun x pyright
 
 # Run test suite
 uv run pytest
+```
+
+Android companion app code style checks:
+
+```bash
+# Run Kotlin code style check (configured via ~/.zshrc)
+ktlint "android/app/src/main/java/**/*.kt"
 ```
 
 ---

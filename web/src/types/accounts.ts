@@ -39,3 +39,22 @@ export interface ProbeAndImportResponse {
   imported_count: number
   accounts: Account[]
 }
+
+export interface BundleAccountItem {
+  id?: string
+  name?: string
+  email?: string
+  cookies: string
+  auth_user?: string
+}
+
+export interface ImportBundleRequest {
+  file_path?: string
+  content?: string
+  accounts?: BundleAccountItem[]
+}
+
+export interface ImportBundleResponse {
+  imported_count: number
+  accounts: Account[]
+}

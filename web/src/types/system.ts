@@ -9,20 +9,23 @@ export interface SystemConfig {
   log_level?: string
   dump_requests?: boolean
   debug_env_active?: boolean
+  dump_to_file?: boolean
+  dump_dir?: string
 }
-
 export interface UpdateLoggingConfigRequest {
   level?: string
   dump_requests?: boolean
+  dump_to_file?: boolean
+  dump_dir?: string
 }
-
 export interface UpdateLoggingConfigResponse {
   ok: boolean
   log_level: string
   dump_requests: boolean
   debug_env_active: boolean
+  dump_to_file: boolean
+  dump_dir: string
 }
-
 
 export interface HealthCheckResponse {
   status: string

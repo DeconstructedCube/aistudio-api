@@ -52,7 +52,14 @@ uv run python3 main.py server --port 8080
 - 依赖管理与构建使用 `bun`（`bun run dev`、`bun run build`、`bun run lint`、`bun run type-check`）。
 - 生产构建产物直接输出至 `src/aistudio_api/static/`，由 FastAPI 静态托管。
 
-### 2.3 常见排错
+### 2.3 Android 伴侣端 (android/)
+
+- 源码位于 `android/` 目录，基于 Jetpack Compose + Material 3 构建，用于移动端多账号 Cookie 提取。
+- 包含多 Profile 隔离、按需启动 WebView（不常驻内存）以及 Bitwarden 自动填充适配。
+- 代码规范检查使用 `ktlint`，规则配置于 `android/.editorconfig`。
+- 检查命令：`ktlint "android/app/src/main/java/**/*.kt"`。
+
+### 2.4 常见排错
 
 | 现象 | 原因 | 处理方案 |
 |---|---|---|
@@ -127,11 +134,12 @@ uv run python3 main.py server --port 8080
 | **Python 代码风格与 Lint** | `uv run ruff check .` | 0 errors |
 | **Python 代码格式化** | `uv run ruff format --check .` | 71 files already formatted |
 | **Python 类型检查** | `bun x pyright src tests` | 0 errors |
-| **Python 单元测试** | `uv run pytest` | 全部通过 (161 passed) |
+| **Python 单元测试** | `uv run pytest` | 全部通过 (177 passed) |
 | **浏览器 JS 语法校验** | `for f in src/aistudio_api/infrastructure/browser/js/*.js; do bun build "$f" --no-bundle >/dev/null; done` | 0 errors |
 | **前端代码规范** | `cd web && bun run lint` | 0 errors, 0 warnings |
 | **前端类型检查** | `cd web && bun run type-check` | 0 errors |
 | **前端生产构建** | `cd web && bun run build` | 构建成功并更新 static 产物 |
+| **Android 静态检查 (Lint & 代码规范)** | `cd android && ./gradlew :app:lintDebug :app:ktlintCheck` 或 `ktlint "android/app/src/main/java/**/*.kt"` | 0 errors |
 > [!NOTE]
 > **跨平台原生二进制依赖与开发工具**：
 > - `pydantic-core` 等生产核心依赖通过 `uv.lock` 显式注入 TUR 的 prebuilt Android wheel，配合 `setup-env.sh` 生成的项目级本地 `uv.toml`，实现全平台统一通过 `uv sync` 秒级安装且不触发源码构建。
@@ -165,6 +173,15 @@ aistudio-api/
 │   │   ├── views/                 # 页面路由视图 (Dashboard, Accounts, Settings, Login)
 │   │   └── router/                # Vue Router 路由与守卫
 │   └── vite.config.ts             # 构建配置 (输出至 src/aistudio_api/static)
+├── android/                       # Android 伴侣端：多资料凭据提取器 (Jetpack Compose + Material 3)
+│   ├── app/src/main/
+│   │   ├── AndroidManifest.xml    # 声明 BROWSABLE / http / https 意图，适配 Bitwarden
+│   │   └── java/com/aistudio/extractor/
+│   │       ├── MainActivity.kt    # 单 Activity、SAF 导出/备份导入
+│   │       ├── data/              # ProfileItem / AccountBundle / ProfileManager
+│   │       └── ui/                # Material 3 主题、MainScreen、按需挂载的 LoginScreen
+│   ├── build.gradle.kts           # 根构建脚本
+│   └── .editorconfig              # ktlint 代码规范配置
 ├── src/aistudio_api/
 │   ├── api/                       # HTTP 接口层 (FastAPI)
 │   │   ├── app.py                 # 应用生命周期与静态托管
