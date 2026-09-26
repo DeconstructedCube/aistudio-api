@@ -10,11 +10,26 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aistudio_api.application.account_service import AccountService
+from aistudio_api.domain.errors import SessionExpiredError
 from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
 from aistudio_api.infrastructure.browser.cdp_client import CDPPage
 from aistudio_api.infrastructure.gateway.capture import RequestCaptureService
 from aistudio_api.infrastructure.gateway.session import BrowserSession
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
+
+
+@pytest.mark.asyncio
+async def test_hook_install_rejects_google_login_page_before_evaluation(mock_cdp_page):
+    session = BrowserSession(port=9222)
+    mock_cdp_page.url = (
+        "https://accounts.google.com/v3/signin/identifier?"
+        "continue=https://aistudio.google.com/u/5/prompts/new_chat"
+    )
+
+    with pytest.raises(SessionExpiredError):
+        await session._install_hooks(mock_cdp_page)
+
+    mock_cdp_page.evaluate.assert_not_awaited()
 
 
 @pytest.fixture
