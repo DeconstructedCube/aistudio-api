@@ -20,6 +20,7 @@ SNAPSHOT_GENERATE_JS = _load_js("snapshot_generate.js")
 CHECK_IDENTITY_JS = _load_js("check_identity.js")
 STOP_GENERATION_JS = _load_js("stop_generation.js")
 DOM_GC_CLEANUP_JS = _load_js("dom_gc_cleanup.js")
+EXTRACT_EMAIL_JS = _load_js("extract_email.js")
 
 
 def build_streaming_init_args(

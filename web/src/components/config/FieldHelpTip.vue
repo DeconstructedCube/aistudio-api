@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { HelpCircle, Sparkles } from 'lucide-vue-next'
+import { HelpCircle, CheckCircle2 } from 'lucide-vue-next'
 import { CONFIG_SCHEMA } from './schema.ts'
 
 const props = defineProps<{
@@ -73,7 +73,7 @@ const displayRecommended = props.recommended !== undefined ? props.recommended :
           v-if="displayRecommended !== undefined"
           class="flex items-center gap-1.5 text-[11px] text-emerald-400 font-semibold bg-emerald-950/60 px-2 py-1 rounded-lg border border-emerald-800/60"
         >
-          <Sparkles class="w-3.5 h-3.5 shrink-0 text-emerald-400" />
+          <CheckCircle2 class="w-3.5 h-3.5 shrink-0 text-emerald-400" />
           <span>推荐配置: {{ String(displayRecommended) }}</span>
         </div>
 

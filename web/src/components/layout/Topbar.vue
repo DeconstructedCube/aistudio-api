@@ -54,7 +54,7 @@ const authStore = useAuthStore()
         type="button"
         :disabled="refreshing"
         class="p-2 text-gray-500 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-all cursor-pointer disabled:opacity-50"
-        title="静默刷新数据"
+        title="刷新数据"
         @click="emit('refresh')"
       >
         <RefreshCw

@@ -1,9 +1,9 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth.ts'
-import DashboardView from '@/views/DashboardView.vue'
-import AccountsView from '@/views/AccountsView.vue'
-import SettingsView from '@/views/SettingsView.vue'
-import LoginView from '@/views/LoginView.vue'
+const LoginView = () => import('@/views/LoginView.vue')
+const DashboardView = () => import('@/views/DashboardView.vue')
+const AccountsView = () => import('@/views/AccountsView.vue')
+const SettingsView = () => import('@/views/SettingsView.vue')
 
 const routes: RouteRecordRaw[] = [
   {

@@ -36,7 +36,6 @@ async function loadData() {
   await Promise.all([
     accountsStore.fetchAll(),
     systemStore.fetchStats(),
-    systemStore.fetchRotation(),
   ])
 }
 

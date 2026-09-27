@@ -138,11 +138,8 @@ async function handleDeleteKey(item: ApiKeyItem) {
         <Key class="w-4 h-4 text-brand-600" />
         <div>
           <h3 class="font-semibold text-gray-900 text-sm">
-            客户端 API 鉴权密钥 (API Keys)
+            客户端 API 密钥 (API Keys)
           </h3>
-          <p class="text-xs text-gray-400 mt-0.5">
-            用于客户端调用鉴权，支持按应用设置独立备注
-          </p>
         </div>
       </div>
 
@@ -293,7 +290,7 @@ async function handleDeleteKey(item: ApiKeyItem) {
 
         <div class="space-y-1.5">
           <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider">
-            自定义密钥 <span class="text-gray-400 font-normal">(留空将自动生成高强度 sk- 密钥)</span>
+            自定义密钥 <span class="text-gray-400 font-normal">(留空将自动生成)</span>
           </label>
           <input
             v-model="customKeyValue"

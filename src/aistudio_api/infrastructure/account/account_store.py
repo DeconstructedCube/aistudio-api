@@ -352,6 +352,22 @@ class AccountStore:
         self._save_registry(registry)
         return registry.accounts[account_id]
 
+    def update_account_email(self, account_id: str, email: str) -> bool:
+        """更新账号的登录邮箱，并持久化 meta.json 与 registry.json。"""
+        registry = self._load_registry()
+        if account_id not in registry.accounts:
+            return False
+        acc = registry.accounts[account_id]
+        if acc.email == email:
+            return False
+        acc.email = email
+        account_dir = _safe_account_dir(self._accounts_dir, account_id)
+        meta_path = account_dir / "meta.json"
+        if meta_path.exists():
+            _atomic_write_json(meta_path, acc.to_dict())
+        self._save_registry(registry)
+        return True
+
     def get_auth_path(self, account_id: str) -> Path | None:
         """获取指定账号的 auth.json 路径。"""
         return self.get_auth_path_optional(account_id, require_exists=True)

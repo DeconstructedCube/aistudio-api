@@ -112,3 +112,16 @@ def test_dependencies_timing_safe_auth(monkeypatch):
     req_empty_pass.query_params = {}
     with pytest.raises(HTTPException):
         require_api_key(req_empty_pass)
+
+
+def test_require_web_auth_rejects_html_accept_spoofing(monkeypatch):
+    """验证客户端伪造 Accept: text/html 无法绕过管理控制台密码校验。"""
+    monkeypatch.setattr(settings, "web_password", "super_secret_admin_pass")
+
+    req_spoof = MagicMock(spec=Request)
+    req_spoof.method = "GET"
+    req_spoof.headers = {"accept": "text/html,application/xhtml+xml"}
+    req_spoof.query_params = {}
+    with pytest.raises(HTTPException) as exc_info:
+        require_web_auth(req_spoof)
+    assert exc_info.value.status_code == 401

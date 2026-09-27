@@ -1,0 +1,1 @@
+import{a as s}from"./index.js";import{r as c}from"./vendor-vue.js";let o;function m(){const r=s(),t=c(null);async function a(u,e,i="已复制到剪贴板"){try{await navigator.clipboard.writeText(u)}catch{r.error("复制失败，浏览器可能拒绝了剪贴板权限");return}t.value=e,r.success(i),clearTimeout(o),o=setTimeout(()=>{t.value===e&&(t.value=null)},2e3)}return{copied:t,copy:a}}export{m as u};

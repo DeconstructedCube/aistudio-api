@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { AccountWithStats } from '@/types/accounts.ts'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
@@ -11,12 +11,15 @@ import {
   Edit2,
   Layers,
   RotateCcw,
+  AlertCircle,
+  RefreshCw,
 } from 'lucide-vue-next'
 
-defineProps<{
+const props = defineProps<{
   account: AccountWithStats
   active: boolean
   activating?: boolean
+  forceExpanded?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -28,15 +31,32 @@ const emit = defineEmits<{
 }>()
 
 const modelsExpanded = ref(false)
+
+watch(
+  () => props.forceExpanded,
+  (val) => {
+    if (val !== undefined) {
+      modelsExpanded.value = val
+    }
+  },
+  { immediate: true },
+)
+
+const todayRequests = computed(() => {
+  const reqs = props.account.model_requests || {}
+  return Object.values(reqs).reduce((sum, count) => sum + (Number(count) || 0), 0)
+})
 </script>
 
 <template>
   <div
     class="relative bg-white border rounded-xl p-3 shadow-2xs transition-all hover:shadow-xs"
     :class="[
-      active
-        ? 'border-brand-300 bg-brand-50/20 ring-1 ring-brand-400/20'
-        : 'border-gray-200/80 hover:border-gray-300',
+      account.session_expired
+        ? 'border-rose-300 bg-rose-50/20'
+        : active
+          ? 'border-brand-300 bg-brand-50/20 ring-1 ring-brand-400/20'
+          : 'border-gray-200/80 hover:border-gray-300',
     ]"
   >
     <!-- Sub-Account Header Bar -->
@@ -46,9 +66,11 @@ const modelsExpanded = ref(false)
         <span
           class="px-2 py-0.5 rounded-full text-xs font-mono font-bold shrink-0"
           :class="[
-            active
-              ? 'bg-brand-500 text-white'
-              : 'bg-blue-50 text-blue-700 border border-blue-200/60',
+            account.session_expired
+              ? 'bg-rose-100 text-rose-800 border border-rose-200'
+              : active
+                ? 'bg-brand-500 text-white'
+                : 'bg-blue-50 text-blue-700 border border-blue-200/60',
           ]"
         >
           u/{{ account.auth_user }}
@@ -82,7 +104,8 @@ const modelsExpanded = ref(false)
       <!-- Sub-Account Stats & Controls -->
       <div class="flex items-center gap-2 sm:gap-3 shrink-0 flex-wrap">
         <div class="flex items-center gap-2 text-xs font-mono">
-          <span class="text-gray-600">总计: <strong>{{ account.requests || 0 }}</strong></span>
+          <span class="text-gray-700">今日: <strong>{{ todayRequests }}</strong></span>
+          <span class="text-gray-400">· 累计: <strong>{{ account.requests || 0 }}</strong></span>
           <Badge
             variant="green"
             size="sm"
@@ -99,15 +122,30 @@ const modelsExpanded = ref(false)
 
         <!-- Status Pill -->
         <div
-          v-if="active"
+          v-if="account.session_expired"
+          class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200"
+          title="该账号登录态已失效，已被系统禁用。更新 Cookie 凭据后可点击恢复。"
+        >
+          <AlertCircle class="w-3 h-3 text-rose-600" />
+          <span>登录态失效</span>
+        </div>
+        <div
+          v-else-if="active"
           class="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200"
         >
           <CheckCircle2 class="w-3 h-3" />
-          <span>激活</span>
+          <span>当前激活</span>
+        </div>
+        <div
+          v-else-if="account.auth_cooldown && account.auth_cooldown > 0"
+          class="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200"
+        >
+          <Clock class="w-3 h-3" />
+          <span>鉴权冷却中</span>
         </div>
         <div
           v-else-if="account.is_available === false"
-          class="inline-flex items-center gap-1 text-[11px] font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200"
+          class="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200"
         >
           <Clock class="w-3 h-3" />
           <span>配额耗尽</span>
@@ -121,8 +159,20 @@ const modelsExpanded = ref(false)
 
         <!-- Action Buttons -->
         <div class="flex items-center gap-1.5 ml-1">
+          <!-- 登录态失效状态下的快捷恢复按钮 -->
+          <button
+            v-if="account.session_expired"
+            type="button"
+            class="px-2 py-0.5 text-[11px] font-medium text-rose-700 bg-rose-100 hover:bg-rose-200 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
+            title="解除登录态失效禁用状态并重新测试"
+            @click="emit('clearCooldown')"
+          >
+            <RefreshCw class="w-3 h-3" />
+            <span>恢复</span>
+          </button>
+
           <Button
-            v-if="!active"
+            v-if="!active && !account.session_expired"
             variant="secondary"
             size="sm"
             :loading="activating"
@@ -132,7 +182,7 @@ const modelsExpanded = ref(false)
           </Button>
 
           <button
-            v-if="(account.rate_limited || 0) > 0"
+            v-if="(account.rate_limited || 0) > 0 && !account.session_expired"
             type="button"
             class="p-1 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
             title="清除该账号锁定"
@@ -145,7 +195,7 @@ const modelsExpanded = ref(false)
             type="button"
             class="p-1 text-gray-400 hover:text-brand-600 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
             :class="{ 'text-brand-600 bg-brand-50': modelsExpanded }"
-            title="展开/收起模型独立配额详情"
+            title="展开/收起模型今日配额明细"
             @click="modelsExpanded = !modelsExpanded"
           >
             <Layers class="w-3.5 h-3.5" />

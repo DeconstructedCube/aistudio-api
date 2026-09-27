@@ -5,6 +5,8 @@ export interface PollingOptions {
   key?: string
   /** 是否在挂载或恢复可见时立即执行一次（默认 true） */
   immediate?: boolean
+  /** 最大错误退避间隔（毫秒，默认 60000ms） */
+  maxBackoffMs?: number
 }
 
 export interface PollingHandle {
@@ -19,9 +21,11 @@ export interface PollingHandle {
 interface ActiveTask {
   fn: () => void | Promise<void>
   intervalMs: number
+  maxBackoffMs: number
   timer?: number
   paused: boolean
   running: boolean
+  failureCount: number
 }
 
 const activeTasks = new Map<string, ActiveTask>()
@@ -34,16 +38,14 @@ function setupGlobalVisibilityListener() {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       for (const task of activeTasks.values()) {
-        if (task.timer) {
-          clearInterval(task.timer)
-          task.timer = undefined
-        }
+        stopTaskTimer(task)
       }
     } else {
       for (const task of activeTasks.values()) {
         if (!task.paused) {
+          task.failureCount = 0
           void runTask(task)
-          startTaskTimer(task)
+          scheduleNext(task)
         }
       }
     }
@@ -55,23 +57,34 @@ async function runTask(task: ActiveTask) {
   task.running = true
   try {
     await task.fn()
+    task.failureCount = 0
   } catch (err) {
-    console.debug('[usePolling] task execution error:', err)
+    task.failureCount++
+    console.debug('[usePolling] task execution error (consecutive failures: %d):', task.failureCount, err)
   } finally {
     task.running = false
   }
 }
 
-function startTaskTimer(task: ActiveTask) {
+function scheduleNext(task: ActiveTask) {
   if (task.timer || task.paused || (typeof document !== 'undefined' && document.hidden)) return
-  task.timer = window.setInterval(() => {
-    void runTask(task)
-  }, task.intervalMs)
+
+  let delay = task.intervalMs
+  if (task.failureCount > 1) {
+    delay = Math.min(task.intervalMs * Math.pow(1.5, task.failureCount - 1), task.maxBackoffMs)
+  }
+
+  task.timer = window.setTimeout(() => {
+    task.timer = undefined
+    void runTask(task).then(() => {
+      scheduleNext(task)
+    })
+  }, delay)
 }
 
 function stopTaskTimer(task: ActiveTask) {
   if (task.timer) {
-    clearInterval(task.timer)
+    clearTimeout(task.timer)
     task.timer = undefined
   }
 }
@@ -80,7 +93,7 @@ let autoKeyCounter = 0
 
 /**
  * 页面可见时周期性调度的统一轮询管理。
- * 支持页面隐藏自动冻结、销毁自动释放与全局并发去重。
+ * 支持页面隐藏自动冻结、失败指数退避与销毁自动释放。
  */
 export function usePolling(
   fn: () => void | Promise<void>,
@@ -91,21 +104,27 @@ export function usePolling(
 
   const taskId = options.key || `poll_${++autoKeyCounter}`
   const immediate = options.immediate !== false
+  const maxBackoffMs = options.maxBackoffMs || 60000
 
   const task: ActiveTask = {
     fn,
     intervalMs,
+    maxBackoffMs,
     paused: false,
     running: false,
+    failureCount: 0,
   }
   activeTasks.set(taskId, task)
 
   if (typeof window !== 'undefined' && window.location.protocol.startsWith('http')) {
     if (!document.hidden) {
       if (immediate) {
-        void runTask(task)
+        void runTask(task).then(() => {
+          scheduleNext(task)
+        })
+      } else {
+        scheduleNext(task)
       }
-      startTaskTimer(task)
     }
   }
 
@@ -119,7 +138,8 @@ export function usePolling(
     },
     resume: () => {
       task.paused = false
-      startTaskTimer(task)
+      task.failureCount = 0
+      scheduleNext(task)
     },
   }
 

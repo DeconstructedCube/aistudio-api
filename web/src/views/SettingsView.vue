@@ -44,9 +44,6 @@ onMounted(() => {
       <h2 class="text-xl font-bold text-gray-900 tracking-tight">
         系统与模型规则配置
       </h2>
-      <p class="text-xs text-gray-500 mt-0.5">
-        查看服务端运行时环境参数，以及管理模型默认工具和安全过滤规则 (config.yaml)
-      </p>
     </div>
 
     <!-- Server Runtime Status Cards -->
@@ -123,24 +120,17 @@ onMounted(() => {
         </div>
       </div>
     </div>
-
-    <!-- Auth Warning Banner if Auth is disabled -->
+    <!-- Restrained Auth Reminder if Auth is disabled -->
     <div
       v-if="config && !config.auth_enabled"
-      class="p-4 bg-amber-50/80 border border-amber-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900"
+      class="px-4 py-3 bg-amber-50/70 border border-amber-200/80 rounded-xl flex items-center justify-between gap-3 text-xs text-amber-900"
     >
-      <div class="flex items-start gap-2.5">
-        <AlertCircle class="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-        <div>
-          <div class="font-bold text-amber-900">
-            当前控制台处于免密开放模式
-          </div>
-          <div class="text-amber-700/90 mt-0.5 leading-relaxed">
-            如需在局域网或公网环境下防止未授权访问与修改，可在系统环境变量或 <code>.env</code> 文件中添加 <code>AISTUDIO_WEB_PASSWORD=你的安全密码</code> 并重启服务。
-          </div>
-        </div>
+      <div class="flex items-center gap-2">
+        <AlertCircle class="w-4 h-4 text-amber-600 shrink-0" />
+        <span>控制台当前处于免密访问模式。公网部署建议配置环境变量 <code>AISTUDIO_WEB_PASSWORD</code> 启用鉴权。</span>
       </div>
     </div>
+
 
 
     <!-- Logging & Debug Config Card -->

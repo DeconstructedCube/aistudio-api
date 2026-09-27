@@ -204,12 +204,17 @@ async def handle_attempt_exception(
         ) from exc
 
     if isinstance(exc, SessionExpiredError):
-        logger.warning("账号会话重定向至登录页: %s", exc)
+        logger.warning("账号会话失效，已被重定向到登录页: %s", exc)
         client.clear_templates()
         if not has_yielded_data and await try_switch_account(
-            model=target_model, failed_account_id=failed_id, is_auth_error=False
+            model=target_model,
+            failed_account_id=failed_id,
+            is_auth_error=True,
+            is_session_expired=True,
         ):
-            logger.info("切换至可用账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
+            logger.info(
+                "已切换至其他可用健康账号重试 (%d/%d)", attempt + 1, MAX_RETRIES
+            )
             return True
         raise HTTPException(
             401,

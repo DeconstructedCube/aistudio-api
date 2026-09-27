@@ -102,11 +102,8 @@ function updateModelThinkingConfig(modelKey: string, level: string | null) {
       <div>
         <h4 class="text-xs font-bold text-gray-900 flex items-center gap-2">
           <Layers class="w-4 h-4 text-brand-600" />
-          <span>单模型精确覆盖规则 (Exact Model Overrides)</span>
+          <span>单模型覆盖规则 (Model Overrides)</span>
         </h4>
-        <p class="text-[11px] text-gray-400 mt-0.5">
-          针对特定具体模型（如 gemini-3.7-flash）精确覆盖规则，优先级高于 Profiles 分组规则
-        </p>
       </div>
 
       <!-- Add Input -->
@@ -206,7 +203,7 @@ function updateModelThinkingConfig(modelKey: string, level: string | null) {
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2 text-xs font-bold text-gray-800">
                 <Cpu class="w-4 h-4 text-brand-600" />
-                <span>生成参数覆盖 (Generation Config Defaults)</span>
+                <span>生成参数覆盖</span>
               </div>
               <FieldHelpTip schema-key="generation.defaults" />
             </div>
@@ -216,7 +213,7 @@ function updateModelThinkingConfig(modelKey: string, level: string | null) {
                 <div class="flex-1">
                   <ConfigSelect
                     :model-value="override.generation_config_defaults?.image_output_mode"
-                    label="图片输出模式 (image_output_mode)"
+                    label="图片输出模式"
                     :options="IMAGE_MODE_OPTIONS"
                     @update:model-value="updateModelGenField(String(modelKey), 'image_output_mode', $event)"
                   />
@@ -231,7 +228,7 @@ function updateModelThinkingConfig(modelKey: string, level: string | null) {
                 <div class="flex-1">
                   <ConfigSelect
                     :model-value="override.generation_config_defaults?.thinking_config?.level"
-                    label="思考强度等级 (thinking_level)"
+                    label="思考强度等级"
                     :options="THINKING_LEVEL_OPTIONS"
                     @update:model-value="updateModelThinkingConfig(String(modelKey), $event as string | null)"
                   />
@@ -246,7 +243,7 @@ function updateModelThinkingConfig(modelKey: string, level: string | null) {
                 <div class="flex-1">
                   <ConfigSelect
                     :model-value="override.generation_config_defaults?.media_resolution"
-                    label="多模态输入分辨率 (media_resolution)"
+                    label="多模态输入分辨率"
                     :options="MEDIA_RESOLUTION_OPTIONS"
                     @update:model-value="updateModelGenField(String(modelKey), 'media_resolution', $event)"
                   />
@@ -263,7 +260,7 @@ function updateModelThinkingConfig(modelKey: string, level: string | null) {
                 <div class="flex-1">
                   <ConfigSwitch
                     :model-value="Boolean(override.drop_unsupported_params)"
-                    label="自动丢弃不支持参数 (drop_unsupported_params)"
+                    label="自动过滤不支持的参数"
                     description="自动过滤未知安全类别与不兼容工具"
                     @update:model-value="updateModelField(String(modelKey), 'drop_unsupported_params', $event)"
                   />
@@ -278,7 +275,7 @@ function updateModelThinkingConfig(modelKey: string, level: string | null) {
                 <div class="flex-1">
                   <ConfigSwitch
                     :model-value="Boolean(override.disable_safety_settings)"
-                    label="完全不下发安全规则 (disable_safety_settings)"
+                    label="完全关闭安全规则"
                     description="生图模型通常开启此项以避免被安全机制误拦截"
                     @update:model-value="updateModelField(String(modelKey), 'disable_safety_settings', $event)"
                   />
@@ -295,7 +292,7 @@ function updateModelThinkingConfig(modelKey: string, level: string | null) {
               <div class="flex-1">
                 <ConfigTagList
                   :model-value="override.clear_generation_config_indexes || []"
-                  label="清空 generation_config 特殊下标 (clear_indexes)"
+                  label="清空特定字段下标"
                   description="针对该模型发送前清除的 wire 数组索引 (如 7, 13, 17)"
                   :is-number="true"
                   placeholder="输入数字下标按回车"
@@ -314,7 +311,7 @@ function updateModelThinkingConfig(modelKey: string, level: string | null) {
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2 text-xs font-bold text-gray-800">
                 <Wrench class="w-4 h-4 text-brand-600" />
-                <span>指定该模型专用工具 (default_tools)</span>
+                <span>模型专用工具</span>
               </div>
               <FieldHelpTip schema-key="profile.default_tools" />
             </div>

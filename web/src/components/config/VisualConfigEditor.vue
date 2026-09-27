@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import YAML from 'yaml'
 import type { ParsedConfigYaml, ModelProfileItem, ModelOverrideMap } from './types.ts'
 import ProfileCard from './ProfileCard.vue'
@@ -16,7 +17,7 @@ import {
   Save,
   Plus,
   RotateCcw,
-  Sparkles,
+  Layers,
   AlertCircle,
   BookOpen,
   Search,
@@ -289,6 +290,36 @@ async function handleSave() {
     saving.value = false
   }
 }
+function handleYamlKeydown(e: KeyboardEvent) {
+  if (e.key === 'Tab') {
+    e.preventDefault()
+    const target = e.target as HTMLTextAreaElement
+    const start = target.selectionStart
+    const end = target.selectionEnd
+    const val = rawYaml.value
+    rawYaml.value = val.substring(0, start) + '  ' + val.substring(end)
+    requestAnimationFrame(() => {
+      target.selectionStart = target.selectionEnd = start + 2
+    })
+  }
+}
+
+const hasUnsavedChanges = computed(() => {
+  const current = activeTab.value === 'visual' ? syncStateToYaml() : rawYaml.value
+  return Boolean(props.initialYaml && current.trim() !== props.initialYaml.trim())
+})
+
+onBeforeRouteLeave((_to, _from, next) => {
+  if (hasUnsavedChanges.value) {
+    if (confirm('当前配置有未保存的修改，离开本页将丢失修改，确定离开吗？')) {
+      next()
+    } else {
+      next(false)
+    }
+  } else {
+    next()
+  }
+})
 </script>
 
 <template>
@@ -299,12 +330,9 @@ async function handleSave() {
         <div class="flex items-center gap-2">
           <SlidersHorizontal class="w-4 h-4 text-brand-600" />
           <h3 class="font-bold text-gray-900 text-sm">
-            模型规则与安全策略可视化配置 (config.yaml)
+            模型规则与安全策略 (config.yaml)
           </h3>
         </div>
-        <p class="text-xs text-gray-400 mt-1">
-          管理生图模型默认输出、Gemini/Gemma 内置搜索与安全拦截等级，支持可视化表单与 YAML 源码双向同步
-        </p>
       </div>
 
       <!-- Controls & Actions -->
@@ -424,12 +452,9 @@ async function handleSave() {
         <div class="flex items-center justify-between border-b border-gray-100 pb-3">
           <div>
             <h4 class="text-xs font-bold text-gray-900 flex items-center gap-2">
-              <Sparkles class="w-4 h-4 text-brand-600" />
+              <Layers class="w-4 h-4 text-brand-600" />
               <span>模型分组规则 (Model Profiles)</span>
             </h4>
-            <p class="text-[11px] text-gray-400 mt-0.5">
-              按模型名称前缀或关键词自动匹配，整组批量应用工具与生成参数
-            </p>
           </div>
 
           <Button
@@ -491,6 +516,7 @@ async function handleSave() {
         spellcheck="false"
         placeholder="正在加载 config.yaml..."
         class="w-full p-4 font-mono text-xs bg-gray-900 text-gray-100 rounded-xl outline-none focus:ring-2 focus:ring-brand-500 leading-relaxed shadow-inner border border-gray-800"
+        @keydown="handleYamlKeydown"
       />
     </div>
 

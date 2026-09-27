@@ -27,9 +27,7 @@ class _LazyModule:
 
 
 genai: Any = _LazyModule(lambda: __import__("google.genai", fromlist=["genai"]))
-types: Any = _LazyModule(
-    lambda: __import__("google.genai", fromlist=["types"]).types
-)
+types: Any = _LazyModule(lambda: __import__("google.genai", fromlist=["types"]).types)
 errors: Any = _LazyModule(
     lambda: __import__("google.genai", fromlist=["errors"]).errors
 )

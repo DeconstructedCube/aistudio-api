@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { accountsApi } from '@/api/accounts.ts'
-import { systemApi } from '@/api/system.ts'
+import { useSystemStore } from './system.ts'
 import type {
   Account,
   AccountWithStats,
@@ -15,7 +15,10 @@ import { useToastStore } from './toast.ts'
 export const useAccountsStore = defineStore('accounts', () => {
   const accounts = ref<Account[]>([])
   const activeAccount = ref<Account | null>(null)
-  const rotationAccounts = ref<Record<string, AccountRotationStats>>({})
+  const systemStore = useSystemStore()
+  const rotationAccounts = computed<Record<string, AccountRotationStats>>(() => {
+    return systemStore.rotation?.accounts || {}
+  })
   const loading = ref(false)
   const activatingId = ref<string | null>(null)
   const importing = ref(false)
@@ -35,10 +38,10 @@ export const useAccountsStore = defineStore('accounts', () => {
   async function fetchAll() {
     loading.value = true
     try {
-      const [accsRes, activeRes, rotStatsRes] = await Promise.allSettled([
+      const [accsRes, activeRes] = await Promise.allSettled([
         accountsApi.list(),
         accountsApi.getActive(),
-        systemApi.getRotation(),
+        systemStore.fetchRotation(),
       ])
 
       if (accsRes.status === 'fulfilled') {
@@ -53,9 +56,6 @@ export const useAccountsStore = defineStore('accounts', () => {
         activeAccount.value = accounts.value[0]
       } else if (accounts.value.length === 0) {
         activeAccount.value = null
-      }
-      if (rotStatsRes.status === 'fulfilled' && rotStatsRes.value?.accounts) {
-        rotationAccounts.value = rotStatsRes.value.accounts
       }
     } finally {
       loading.value = false

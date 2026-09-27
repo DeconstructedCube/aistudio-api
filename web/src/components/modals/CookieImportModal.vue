@@ -107,7 +107,7 @@ async function handleSubmit() {
   <Modal
     :model-value="modelValue"
     max-width="lg"
-    title="导入 Google 账号 Cookies"
+    title="导入 Google 账号凭据"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <div class="space-y-4">
@@ -203,9 +203,8 @@ async function handleSubmit() {
           <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider flex items-center justify-between">
             <span class="flex items-center gap-1">
               <FolderOpen class="w-3.5 h-3.5 text-gray-500" />
-              <span>或直接填入本地文件绝对路径</span>
+              <span>直接填入本地文件绝对路径</span>
             </span>
-            <span class="text-[11px] text-gray-400 font-normal">免去手机上传</span>
           </label>
           <input
             v-model="localFilePath"
@@ -213,6 +212,23 @@ async function handleSubmit() {
             placeholder="/sdcard/Download/aistudio_accounts.json"
             class="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs font-mono outline-none focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all"
           >
+          <div class="flex items-center gap-1.5 flex-wrap pt-0.5 text-[11px] font-mono">
+            <span class="text-gray-400 font-sans">快捷路径:</span>
+            <button
+              type="button"
+              class="px-2 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors cursor-pointer"
+              @click="localFilePath = '/sdcard/Download/aistudio_accounts.json'"
+            >
+              /sdcard/Download/aistudio_accounts.json
+            </button>
+            <button
+              type="button"
+              class="px-2 py-0.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md transition-colors cursor-pointer"
+              @click="localFilePath = 'data/aistudio_accounts.json'"
+            >
+              data/aistudio_accounts.json
+            </button>
+          </div>
         </div>
       </div>
 

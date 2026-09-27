@@ -137,9 +137,8 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
           <div class="flex items-center gap-1.5">
             <div class="flex-1">
               <ConfigInput
-                :model-value="profile.name"
-                label="规则分组名称 (Profile Name)"
-                description="唯一标识该规则组"
+                label="规则分组名称"
+                description="唯一标识"
                 placeholder="例如: image_models"
                 @update:model-value="updateField('name', String($event || ''))"
               />
@@ -152,8 +151,8 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
           <div class="flex-1">
             <ConfigSwitch
               :model-value="Boolean(profile.is_image_model)"
-              label="作为生图模型 (is_image_model)"
-              description="开启后自动采用生图请求管线与多模态图片编码"
+              label="作为生图模型"
+              description="启用多模态图片编码与生图处理管线"
               @update:model-value="updateField('is_image_model', $event)"
             />
           </div>
@@ -166,14 +165,14 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2 text-xs font-bold text-gray-800">
             <Layers class="w-4 h-4 text-brand-600" />
-            <span>模型名称匹配条件 (Match Rules)</span>
+            <span>模型匹配规则</span>
           </div>
           <FieldHelpTip schema-key="match.rules" />
         </div>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
           <ConfigTagList
             :model-value="profile.match?.contains || []"
-            label="包含关键词 (contains)"
+            label="包含关键词"
             description="如 image"
             placeholder="输入关键词并按回车"
             @update:model-value="updateField('match', { ...profile.match, contains: $event as string[] })"
@@ -181,7 +180,7 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
 
           <ConfigTagList
             :model-value="profile.match?.prefixes || []"
-            label="前缀匹配 (prefixes)"
+            label="前缀匹配"
             description="如 gemini-, gemma-"
             placeholder="输入前缀并按回车"
             @update:model-value="updateField('match', { ...profile.match, prefixes: $event as string[] })"
@@ -189,8 +188,8 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
 
           <ConfigTagList
             :model-value="profile.match?.exact || []"
-            label="精确全称匹配 (exact)"
-            description="如特定模型名"
+            label="精确匹配"
+            description="特定模型全称"
             placeholder="输入完整模型名并按回车"
             @update:model-value="updateField('match', { ...profile.match, exact: $event as string[] })"
           />
@@ -202,7 +201,7 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2 text-xs font-bold text-gray-800">
             <Wrench class="w-4 h-4 text-brand-600" />
-            <span>默认内置工具下发 (Default Tools)</span>
+            <span>默认内置工具</span>
           </div>
           <FieldHelpTip schema-key="profile.default_tools" />
         </div>
@@ -219,7 +218,7 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2 text-xs font-bold text-gray-800">
             <Cpu class="w-4 h-4 text-brand-600" />
-            <span>生成参数默认值 (Generation Config Defaults)</span>
+            <span>生成参数默认值</span>
           </div>
           <FieldHelpTip schema-key="generation.defaults" />
         </div>
@@ -228,7 +227,7 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
             <div class="flex-1">
               <ConfigSelect
                 :model-value="profile.generation_config_defaults?.image_output_mode"
-                label="图片输出模式 (image_output_mode)"
+                label="图片输出模式"
                 :options="IMAGE_MODE_OPTIONS"
                 @update:model-value="updateGenerationConfig('image_output_mode', $event as string | null)"
               />
@@ -243,7 +242,7 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
             <div class="flex-1">
               <ConfigSelect
                 :model-value="profile.generation_config_defaults?.thinking_config?.level"
-                label="思考强度等级 (thinking_level)"
+                label="思考强度等级"
                 :options="THINKING_LEVEL_OPTIONS"
                 @update:model-value="updateThinkingConfig($event as any)"
               />
@@ -258,7 +257,7 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
             <div class="flex-1">
               <ConfigSelect
                 :model-value="profile.generation_config_defaults?.media_resolution"
-                label="多模态输入分辨率 (media_resolution)"
+                label="多模态输入分辨率"
                 :options="MEDIA_RESOLUTION_OPTIONS"
                 @update:model-value="updateGenerationConfig('media_resolution', $event as string | null)"
               />
@@ -275,8 +274,8 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
             <div class="flex-1">
               <ConfigSwitch
                 :model-value="Boolean(profile.drop_unsupported_params)"
-                label="自动丢弃不支持参数 (drop_unsupported_params)"
-                description="自动过滤未知安全类别（如 CIVIC_INTEGRITY）或不兼容工具，避免 400 报错"
+                label="自动过滤不支持的参数"
+                description="自动过滤未知安全类别与不兼容工具，避免报错"
                 @update:model-value="updateField('drop_unsupported_params', $event)"
               />
             </div>
@@ -290,8 +289,8 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
             <div class="flex-1">
               <ConfigSwitch
                 :model-value="Boolean(profile.disable_safety_settings)"
-                label="完全不下发安全规则 (disable_safety_settings)"
-                description="生图模型通常开启此项以避免被安全机制误拦截"
+                label="完全关闭安全规则"
+                description="生图模型开启以避免误拦截"
                 @update:model-value="updateField('disable_safety_settings', $event)"
               />
             </div>
@@ -306,8 +305,8 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
           <div class="flex-1">
             <ConfigTagList
               :model-value="profile.clear_generation_config_indexes || []"
-              label="清空 generation_config 特殊下标 (clear_indexes)"
-              description="针对特定模型发送前清除的 wire 数组索引 (如 7, 13, 17)"
+              label="清空特定字段下标"
+              description="发送前清除的 wire 数组索引 (如 7, 13, 17)"
               :is-number="true"
               placeholder="输入数字下标按回车"
               @update:model-value="updateField('clear_generation_config_indexes', $event as number[])"

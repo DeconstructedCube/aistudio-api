@@ -23,6 +23,12 @@ export const accountsApi = {
       method: 'POST',
     })
   },
+  detectEmail(id: string): Promise<Account> {
+    return request<Account>(`/accounts/${id}/detect-email`, {
+      method: 'POST',
+    })
+  },
+
 
   delete(id: string): Promise<{ ok: boolean }> {
     return request<{ ok: boolean }>(`/accounts/${id}`, {

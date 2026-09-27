@@ -49,10 +49,6 @@ def require_web_auth(request: Request) -> None:
     if not settings.auth_enabled:
         return
 
-    # 允许浏览器直接加载 HTML 入口页面，由前端 Vue 路由守卫拦截并引导至登录页
-    if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
-        return
-
     token = _extract_request_token(request)
     if (
         token

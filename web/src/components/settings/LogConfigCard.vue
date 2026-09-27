@@ -32,6 +32,7 @@ const dumpToFile = ref(Boolean(props.initialConfig.dump_to_file))
 const dumpDir = ref(props.initialConfig.dump_dir || 'dumps')
 const debugEnvActive = ref(Boolean(props.initialConfig.debug_env_active))
 const saving = ref(false)
+
 watch(
   () => props.initialConfig,
   (cfg) => {
@@ -45,10 +46,10 @@ watch(
 )
 
 const logLevels = [
-  { value: 'DEBUG', label: 'DEBUG (详细调试输出)', description: '输出最详尽的底层网络与调度跟踪信息' },
-  { value: 'INFO', label: 'INFO (标准运行信息)', description: '推荐生产使用，输出关键请求与账号切换' },
-  { value: 'WARNING', label: 'WARNING (仅警告与错误)', description: '仅输出异常告警与故障重试' },
-  { value: 'ERROR', label: 'ERROR (仅严重错误)', description: '仅记录系统无法自动恢复的严重故障' },
+  { value: 'DEBUG', label: '调试 (DEBUG)', description: '详细底层跟踪' },
+  { value: 'INFO', label: '信息 (INFO)', description: '标准运行信息' },
+  { value: 'WARNING', label: '警告 (WARNING)', description: '仅警告与错误' },
+  { value: 'ERROR', label: '错误 (ERROR)', description: '仅严重错误' },
 ]
 
 async function handleSave() {
@@ -84,7 +85,7 @@ async function handleSave() {
         </div>
         <div>
           <h3 class="font-semibold text-gray-900 text-sm flex items-center gap-2">
-            <span>日志与调试配置</span>
+            <span>日志与调试</span>
             <span
               v-if="debugEnvActive"
               class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800"
@@ -92,9 +93,6 @@ async function handleSave() {
               <Bug class="w-3 h-3" /> DEBUG 环境变量生效中
             </span>
           </h3>
-          <p class="text-xs text-gray-400 mt-0.5">
-            控制终端日志输出过滤级别，以及开启单次请求完整报文转储 (Dump)
-          </p>
         </div>
       </div>
 
@@ -119,7 +117,7 @@ async function handleSave() {
       <Info class="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
       <div>
         <span class="font-bold">DEBUG 环境变量提示：</span>
-        系统检测到已设置 <code>DEBUG=true</code> 环境变量，服务已激活请求报文自动转储。日志级别仍遵循下方独立设置。
+        系统已设置 <code>DEBUG=true</code> 环境变量，服务已激活请求报文转储。日志级别遵循下方独立设置。
       </div>
     </div>
 
@@ -128,65 +126,48 @@ async function handleSave() {
       <div class="p-4 bg-gray-50/60 border border-gray-200/70 rounded-2xl space-y-2">
         <ConfigSelect
           :model-value="logLevel"
-          label="日志输出级别 (Log Level)"
-          description="运行时热重载"
+          label="日志输出级别"
           :options="logLevels"
           @update:model-value="logLevel = String($event || 'INFO')"
         />
-        <p class="text-[11px] text-gray-400">
-          控制控制台终端的最低输出详细程度，修改后无需重启服务即时生效。
-        </p>
       </div>
 
       <!-- 2. Request Dump Toggle -->
       <div class="p-4 bg-gray-50/60 border border-gray-200/70 rounded-2xl space-y-2">
-        <div class="block text-xs font-semibold text-gray-700">
-          控制台请求转储 (Dump Requests)
-        </div>
         <ConfigSwitch
           :model-value="dumpRequests"
-          label="终端打印每次请求与响应详情"
-          description="在标准输出中转储完整的 Headers、Query、Body 文本与状态"
+          label="请求报文转储"
+          description="在标准输出中打印完整的请求与响应详情"
           @update:model-value="dumpRequests = $event"
         />
-        <p class="text-[11px] text-gray-400">
-          适用于联调抓包，亦可通过启动环境变量 <code>DEBUG=true</code> 激活。
-        </p>
       </div>
 
       <!-- 3. Dump To File Switch -->
       <div class="p-4 bg-gray-50/60 border border-gray-200/70 rounded-2xl space-y-2">
         <div class="flex items-center gap-1.5 text-xs font-semibold text-gray-700">
           <HardDrive class="w-3.5 h-3.5 text-brand-600" />
-          <span>报文持久化落盘 (Dump to File)</span>
+          <span>报文持久化落盘</span>
         </div>
         <ConfigSwitch
           :model-value="dumpToFile"
-          label="转储报文为独立文件落盘"
-          description="将每次请求/响应报文自动存为独立文件，便于事后复现与排查"
+          label="将报文保存为文件"
+          description="将每次请求与响应报文写入磁盘独立文件"
           @update:model-value="dumpToFile = $event"
         />
-        <p class="text-[11px] text-gray-400">
-          对应环境变量 <code>AISTUDIO_DUMP_FILE=true</code>。
-        </p>
       </div>
 
       <!-- 4. Dump Directory Input -->
       <div class="p-4 bg-gray-50/60 border border-gray-200/70 rounded-2xl space-y-2">
         <div class="flex items-center gap-1.5 text-xs font-semibold text-gray-700">
           <Folder class="w-3.5 h-3.5 text-brand-600" />
-          <span>转储文件存储目录 (Dump Directory)</span>
+          <span>转储文件存储目录</span>
         </div>
         <ConfigInput
           :model-value="dumpDir"
           label="保存路径"
-          description="相对或绝对路径"
           placeholder="dumps"
           @update:model-value="dumpDir = String($event || 'dumps')"
         />
-        <p class="text-[11px] text-gray-400 font-mono">
-          默认落盘目录为项目根目录下的 dumps/
-        </p>
       </div>
     </div>
   </div>

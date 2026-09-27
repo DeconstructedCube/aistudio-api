@@ -69,7 +69,6 @@ function handleLogout() {
       </div>
       <div class="flex flex-col">
         <span class="font-bold text-sm text-gray-900 leading-none">AI Studio Proxy</span>
-        <span class="text-[11px] text-gray-400 font-mono mt-1">控制台</span>
       </div>
     </div>
 
@@ -110,17 +109,6 @@ function handleLogout() {
         </div>
         <span class="text-[10px] text-gray-400 font-mono">配置</span>
       </button>
-      <div
-        v-else
-        class="px-3 py-2 rounded-xl text-xs bg-amber-50/70 border border-amber-200/60 text-amber-800"
-      >
-        <div class="font-semibold flex items-center gap-1.5 text-[11px]">
-          <span>免密访问模式</span>
-        </div>
-        <div class="text-[10px] text-amber-700/80 mt-0.5 leading-tight">
-          如需保护控制台，请在服务端环境变量配置 AISTUDIO_WEB_PASSWORD
-        </div>
-      </div>
 
       <div class="flex items-center justify-between px-3 py-2 bg-gray-50 rounded-xl text-xs text-gray-500">
         <div class="flex items-center gap-2">

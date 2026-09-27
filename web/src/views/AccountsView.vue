@@ -18,10 +18,7 @@ const editModalOpen = ref(false)
 const editingAccount = ref<AccountWithStats | null>(null)
 
 async function loadData() {
-  await Promise.all([
-    accountsStore.fetchAll(),
-    systemStore.fetchRotation(),
-  ])
+  await accountsStore.fetchAll()
 }
 
 // 页面活跃时每 8 秒自动轮询账号状态与配额
@@ -53,9 +50,6 @@ async function handleForceNext() {
         <h2 class="text-xl font-bold text-gray-900 tracking-tight">
           账号管理
         </h2>
-        <p class="text-xs text-gray-500 mt-0.5">
-          管理 Google 账号凭据与各模型配额状态
-        </p>
       </div>
 
       <div class="flex items-center gap-2 flex-wrap">

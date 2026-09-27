@@ -6,11 +6,15 @@ export interface AccountRotationStats {
   last_used?: string | null
   last_rate_limited?: string | null
   is_available?: boolean
+  session_expired?: boolean
+  auth_cooldown?: number
+  auth_errors?: number
   cooldown_remaining?: number
   model_cooldowns?: Record<string, number>
   model_rate_limited_dates?: Record<string, string>
   model_requests?: Record<string, number>
   model_rate_limited?: Record<string, number>
+  model_drip_mode?: Record<string, boolean>
 }
 
 export interface RotationStatusResponse {

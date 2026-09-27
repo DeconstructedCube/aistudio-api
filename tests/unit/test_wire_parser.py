@@ -309,39 +309,45 @@ def test_parse_response_chunk_with_ask_tool_payload():
                     [
                         [
                             None,
-                        None,
-                        None,
-                        [
-                            "ask",
+                            None,
+                            None,
                             [
+                                "ask",
                                 [
-                                    "questions",
                                     [
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                        None,
+                                        "questions",
                                         [
+                                            None,
+                                            None,
+                                            None,
+                                            None,
+                                            None,
                                             [
                                                 [
-                                                    None,
-                                                    None,
-                                                    None,
-                                                    None,
                                                     [
-                                                        ["id", [None, None, "storage"]],
-                                                        ["multi", [None, None, None, 0]],
-                                                        ["recommended", [None, 0]],
-                                                    ],
+                                                        None,
+                                                        None,
+                                                        None,
+                                                        None,
+                                                        [
+                                                            [
+                                                                "id",
+                                                                [None, None, "storage"],
+                                                            ],
+                                                            [
+                                                                "multi",
+                                                                [None, None, None, 0],
+                                                            ],
+                                                            ["recommended", [None, 0]],
+                                                        ],
+                                                    ]
                                                 ]
-                                            ]
+                                            ],
                                         ],
-                                    ],
-                                ]
+                                    ]
+                                ],
+                                "call_ask_123",
                             ],
-                            "call_ask_123",
-                        ],
                         ]
                     ]
                 ],

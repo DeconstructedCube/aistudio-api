@@ -74,7 +74,7 @@ async function handleLogin() {
           AI Studio Proxy
         </h1>
         <p class="text-xs text-gray-400 mt-1.5">
-          请输入服务端配置的控制台密码 (AISTUDIO_WEB_PASSWORD)
+          请输入控制台管理密码
         </p>
       </div>
 
@@ -94,7 +94,7 @@ async function handleLogin() {
       >
         <div class="space-y-1.5">
           <label class="block text-xs font-semibold text-gray-700 uppercase tracking-wider">
-            控制台访问密码 (Web Password)
+            访问密码
           </label>
           <div class="relative">
             <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400">
@@ -103,7 +103,7 @@ async function handleLogin() {
             <input
               v-model="inputToken"
               :type="showPassword ? 'text' : 'password'"
-              placeholder="输入 AISTUDIO_WEB_PASSWORD"
+              placeholder="输入访问密码"
               autocomplete="current-password"
               autofocus
               class="w-full pl-10 pr-10 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm outline-none focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all font-mono"
@@ -134,14 +134,9 @@ async function handleLogin() {
           :disabled="!inputToken.trim()"
         >
           <ShieldCheck class="w-4 h-4" />
-          <span>验证并登录控制台</span>
+          <span>登录</span>
         </Button>
       </form>
-
-      <!-- Footer Info -->
-      <div class="mt-8 text-center text-xs text-gray-400 border-t border-gray-100 pt-6">
-        <p>控制台访问密码由服务端环境变量 AISTUDIO_WEB_PASSWORD 设置</p>
-      </div>
     </div>
   </div>
 </template>

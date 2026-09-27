@@ -304,7 +304,8 @@ async def spa_navigation_middleware(request: Request, call_next):
             "/api-keys",
         )
     )
-    if is_html_nav and not is_api and index_html_path.is_file():
+    is_accounts_spa = request.url.path in ("/accounts", "/accounts/")
+    if is_html_nav and (is_accounts_spa or not is_api) and index_html_path.is_file():
         return FileResponse(index_html_path)
 
     return await call_next(request)

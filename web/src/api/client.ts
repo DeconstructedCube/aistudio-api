@@ -28,6 +28,13 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY)
 }
 
+type UnauthorizedHandler = () => void
+let onUnauthorizedHandler: UnauthorizedHandler | null = null
+
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  onUnauthorizedHandler = handler
+}
+
 export async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers || {})
   const token = getToken()
@@ -50,6 +57,16 @@ export async function request<T>(url: string, options: RequestInit = {}): Promis
   })
 
   if (!response.ok) {
+    if (response.status === 401) {
+      clearToken()
+      if (onUnauthorizedHandler) {
+        onUnauthorizedHandler()
+      } else if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+        const redirect = encodeURIComponent(window.location.pathname + window.location.search)
+        window.location.href = `/login?redirect=${redirect}`
+      }
+    }
+
     let errorDetail = `请求失败 (${response.status})`
     try {
       const errJson = await response.json()
@@ -71,4 +88,3 @@ export async function request<T>(url: string, options: RequestInit = {}): Promis
 
   return response.json()
 }
-

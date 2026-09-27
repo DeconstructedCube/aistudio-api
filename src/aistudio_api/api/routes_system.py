@@ -122,6 +122,24 @@ async def clear_cooldown(
     return {"ok": True, "accounts": rotator.get_all_stats()}
 
 
+@protected_router.post("/rotation/cleanup-ghosts")
+async def cleanup_ghosts(
+    runtime_state: RuntimeState = Depends(get_runtime_state),
+) -> dict[str, object]:
+    """主动对齐并彻底清除已删除账号在调度器中残留的幽灵状态。"""
+    rotator = runtime_state.rotator
+    if rotator is None:
+        raise HTTPException(503, detail="调度器未初始化")
+
+    cleaned_ids = rotator.cleanup_ghost_accounts()
+    return {
+        "ok": True,
+        "cleaned_count": len(cleaned_ids),
+        "cleaned_ids": cleaned_ids,
+        "accounts": rotator.get_all_stats(),
+    }
+
+
 @protected_router.get("/rotation/accounts")
 async def get_rotation_accounts(
     runtime_state: RuntimeState = Depends(get_runtime_state),

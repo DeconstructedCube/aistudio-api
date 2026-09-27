@@ -18,18 +18,18 @@ const emit = defineEmits<{
 }>()
 
 const categories = [
-  { key: 'Harassment', label: '骚扰内容 (Harassment)', desc: '负面或恶意言语攻击' },
-  { key: 'Hate', label: '仇恨言论 (Hate Speech)', desc: '针对特定群体的仇恨偏见' },
-  { key: 'Sexually Explicit', label: '色情内容 (Sexually Explicit)', desc: '性暗示或露骨色情' },
-  { key: 'Dangerous Content', label: '危险内容 (Dangerous Content)', desc: '促进危险行为或暴力' },
+  { key: 'Harassment', label: '骚扰内容', desc: '负面或恶意言语攻击' },
+  { key: 'Hate', label: '仇恨言论', desc: '针对特定群体的仇恨偏见' },
+  { key: 'Sexually Explicit', label: '色情内容', desc: '性暗示或露骨色情' },
+  { key: 'Dangerous Content', label: '危险内容', desc: '促进危险行为或暴力' },
 ]
 
 const levels = [
-  { val: 1, label: '1 - 严苛', desc: 'BLOCK_LOW_AND_ABOVE (极易误伤)', color: 'border-rose-300 text-rose-700 bg-rose-50' },
-  { val: 2, label: '2 - 较严', desc: 'BLOCK_MEDIUM_AND_ABOVE', color: 'border-amber-300 text-amber-700 bg-amber-50' },
-  { val: 3, label: '3 - 中等', desc: 'BLOCK_ONLY_HIGH', color: 'border-blue-300 text-blue-700 bg-blue-50' },
-  { val: 4, label: '4 - 宽松', desc: 'BLOCK_FEW (宽松过滤)', color: 'border-emerald-300 text-emerald-700 bg-emerald-50' },
-  { val: 5, label: '5 - 关闭', desc: 'BLOCK_NONE (完全不拦截，推荐代理使用)', color: 'border-gray-400 text-gray-800 bg-gray-100 font-bold' },
+  { val: 1, label: '1 - 严苛', desc: '最强过滤强度', color: 'border-rose-300 text-rose-700 bg-rose-50' },
+  { val: 2, label: '2 - 较严', desc: '较高过滤强度', color: 'border-amber-300 text-amber-700 bg-amber-50' },
+  { val: 3, label: '3 - 中等', desc: '标准中等强度', color: 'border-blue-300 text-blue-700 bg-blue-50' },
+  { val: 4, label: '4 - 宽松', desc: '宽松低强度', color: 'border-emerald-300 text-emerald-700 bg-emerald-50' },
+  { val: 5, label: '5 - 关闭', desc: '完全不拦截', color: 'border-gray-400 text-gray-800 bg-gray-100 font-bold' },
 ]
 
 function getLevel(catKey: string): number {
@@ -60,11 +60,8 @@ function setAll(val: number) {
         <Shield class="w-4 h-4 text-brand-600" />
         <div>
           <h4 class="text-xs font-bold text-gray-900">
-            安全拦截等级过滤 (Safety Settings)
+            安全拦截等级
           </h4>
-          <p class="text-[11px] text-gray-400">
-            控制 Google 对各敏感类别的过滤强度（5 = 完全关闭拦截，避免正常生成被截断）
-          </p>
         </div>
       </div>
 

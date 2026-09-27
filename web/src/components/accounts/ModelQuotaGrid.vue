@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { AccountWithStats } from '@/types/accounts.ts'
 import { formatDate } from '@/utils/format.ts'
-import { Flame } from 'lucide-vue-next'
+import { Flame, RotateCcw } from 'lucide-vue-next'
 
 defineProps<{
   account: AccountWithStats
@@ -13,13 +13,13 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="mt-3 pt-3 border-t border-gray-100 space-y-2 bg-gray-50/60 p-3 rounded-lg">
+  <div class="mt-3 pt-3 border-t border-gray-100 space-y-2 bg-gray-50/70 p-3 rounded-xl">
     <div class="flex items-center justify-between text-[11px] font-semibold text-gray-600">
       <span class="flex items-center gap-1.5">
         <Flame class="w-3.5 h-3.5 text-amber-500" />
-        <span>模型配额状态 (每日 00:00 PST 重置)</span>
+        <span>各模型今日调用与配额</span>
       </span>
-      <span class="text-gray-400 font-normal">
+      <span class="text-gray-400 font-normal font-mono">
         最后调用: {{ formatDate(account.last_used) }}
       </span>
     </div>
@@ -31,41 +31,52 @@ const emit = defineEmits<{
       <div
         v-for="(reqCount, modelKey) in account.model_requests"
         :key="String(modelKey)"
-        class="p-2 bg-white rounded-md border border-gray-200/70 flex items-center justify-between text-xs"
+        class="p-2.5 bg-white rounded-lg border border-gray-200/80 flex items-center justify-between text-xs shadow-2xs"
       >
         <div class="truncate mr-2 font-mono">
           <div
-            class="font-medium text-gray-800 truncate"
+            class="font-semibold text-gray-900 truncate"
             :title="String(modelKey)"
           >
             {{ String(modelKey).replace(/^models\//, '') }}
           </div>
-          <div class="text-[10px] text-gray-400">
-            调用: {{ reqCount }} 次
+          <div class="text-[10px] text-gray-500 mt-0.5 space-x-1">
+            <span>今日: <strong>{{ reqCount }}</strong></span>
+            <span>·</span>
+            <span :class="(account.model_rate_limited?.[String(modelKey)] || 0) > 0 ? 'text-rose-600 font-bold' : 'text-gray-400'">
+              429: {{ account.model_rate_limited?.[String(modelKey)] || 0 }}
+            </span>
           </div>
         </div>
 
-        <div>
+        <div class="shrink-0 flex items-center gap-1.5">
           <button
             v-if="account.model_cooldowns && account.model_cooldowns[String(modelKey)]"
             type="button"
-            class="px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 cursor-pointer"
-            title="点击解除此模型锁定"
+            class="px-2 py-0.5 rounded text-[10px] font-medium bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 cursor-pointer flex items-center gap-1"
+            title="点击重置该模型锁定"
             @click="emit('clearModel', String(modelKey))"
           >
-            配额耗尽 (点击重置)
+            <RotateCcw class="w-2.5 h-2.5" />
+            <span>配额耗尽 ({{ account.model_cooldowns[String(modelKey)] }}s)</span>
           </button>
           <span
-            v-else-if="account.model_rate_limited && account.model_rate_limited[String(modelKey)]"
-            class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700"
+            v-else-if="account.model_drip_mode && account.model_drip_mode[String(modelKey)]"
+            class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200"
           >
-            限流: {{ account.model_rate_limited[String(modelKey)] }}
+            滴灌重试中
+          </span>
+          <span
+            v-else-if="account.model_rate_limited && account.model_rate_limited[String(modelKey)]"
+            class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200"
+          >
+            429: {{ account.model_rate_limited[String(modelKey)] }}
           </span>
           <span
             v-else
-            class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700"
+            class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200"
           >
-            正常
+            就绪
           </span>
         </div>
       </div>
@@ -74,7 +85,7 @@ const emit = defineEmits<{
       v-else
       class="text-[11px] text-gray-400 italic py-1"
     >
-      无调用记录
+      今日暂无模型调用记录
     </div>
   </div>
 </template>

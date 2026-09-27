@@ -27,12 +27,14 @@ from aistudio_api.infrastructure.browser.scripts import (
     CHECK_IDENTITY_JS,
     DIALOG_CLEANUP_JS,
     DOM_GC_CLEANUP_JS,
+    EXTRACT_EMAIL_JS,
     INSTALL_HOOKS_JS,
     SNAPSHOT_GENERATE_JS,
     STOP_GENERATION_JS,
 )
 from aistudio_api.infrastructure.gateway.transport import XHRStreamTransport
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
+from aistudio_api.infrastructure.utils.common import mask_email
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 log = get_logger("session")
@@ -1072,6 +1074,19 @@ class BrowserSession:
             return
         raise RuntimeError("page never became idle")
 
+    async def extract_account_email(self, page: CDPPage | None = None) -> str | None:
+        """从 AI Studio 页面自动提取当前登录账号的真实 Google 邮箱。"""
+        target_page = page or self._page
+        if target_page is None:
+            return None
+        try:
+            raw_email = await target_page.evaluate(EXTRACT_EMAIL_JS)
+            if raw_email and isinstance(raw_email, str) and "@" in raw_email:
+                return raw_email.strip()
+        except Exception as e:
+            log.debug("从页面提取账号邮箱失败: %s", e)
+        return None
+
     async def _verify_account_identity(self, page: CDPPage) -> bool:
         auth_file = self._auth_file
         if not auth_file:
@@ -1083,6 +1098,20 @@ class BrowserSession:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
             return True
+        account_id = meta.get("id", "unknown")
+
+        # 尝试从页面自动识别当前登录账号的真实 Google 邮箱并脱敏回填
+        discovered_email = await self.extract_account_email(page)
+        if discovered_email:
+            account_store = AccountStore()
+            if account_store.update_account_email(account_id, discovered_email):
+                log.info(
+                    "已自动识别并更新账号 %s 登录邮箱: %s",
+                    account_id,
+                    mask_email(discovered_email),
+                )
+            meta["email"] = discovered_email
+
         expected_email = meta.get("email") or ""
         if not expected_email:
             return True

@@ -68,3 +68,12 @@ def decode_base64_images(images: list[dict[str, object]]) -> list[dict[str, obje
         except Exception:
             pass
     return decoded
+
+
+def mask_email(email: str | None) -> str:
+    """对邮箱进行脱敏（如 user123@gmail.com -> u***3@gmail.com）。"""
+    if not email or "@" not in email:
+        return str(email or "")
+    name, _, domain = email.partition("@")
+    masked_name = name[0] + "***" if len(name) <= 2 else name[0] + "***" + name[-1]
+    return f"{masked_name}@{domain}"

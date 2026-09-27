@@ -32,6 +32,12 @@ export const systemApi = {
       body: JSON.stringify(req),
     })
   },
+  cleanupGhosts(): Promise<{ ok: boolean; cleaned_count: number; cleaned_ids: string[]; accounts: Record<string, unknown> }> {
+    return request('/rotation/cleanup-ghosts', {
+      method: 'POST',
+    })
+  },
+
 
   forceNextAccount(): Promise<{ ok: boolean; account: { id: string; name: string; email: string | null } }> {
     return request('/rotation/next', {

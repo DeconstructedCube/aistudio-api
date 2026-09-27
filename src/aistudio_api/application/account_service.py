@@ -85,6 +85,10 @@ class AccountService:
         """更新账号名称。"""
         return self._store.update_account(account_id, name)
 
+    def update_account_email(self, account_id: str, email: str) -> bool:
+        """更新账号的登录邮箱。"""
+        return self._store.update_account_email(account_id, email)
+
     def save_account_from_cookies(
         self,
         *,

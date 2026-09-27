@@ -11,7 +11,9 @@ from aistudio_api.api.dependencies import (
     get_account_service,
     get_runtime_state,
 )
+from aistudio_api.infrastructure.account.account_store import AccountMeta
 from aistudio_api.infrastructure.account.cookie_parser import parse_cookie_string
+from aistudio_api.infrastructure.utils.common import mask_email
 
 if TYPE_CHECKING:
     from aistudio_api.api.state import RuntimeState
@@ -31,6 +33,23 @@ class AccountResponse(BaseModel):
     last_used: str | None
     auth_user: str = "0"
     cookie_id: str | None = None
+
+
+def to_account_response(account: AccountMeta) -> AccountResponse:
+    cid = getattr(account, "cookie_id", None) or (
+        f"cookie_{account.created_at[:16]}"
+        if getattr(account, "created_at", None)
+        else f"cookie_{account.id}"
+    )
+    return AccountResponse(
+        id=account.id,
+        name=account.name,
+        email=account.email,
+        created_at=account.created_at or "",
+        last_used=account.last_used,
+        auth_user=getattr(account, "auth_user", "0") or "0",
+        cookie_id=cid,
+    )
 
 
 class UpdateAccountRequest(BaseModel):
@@ -81,6 +100,7 @@ class ImportBundleResponse(BaseModel):
     imported_count: int
     accounts: list[AccountResponse]
 
+
 @router.get("", response_model=list[AccountResponse])
 @router.get("/", response_model=list[AccountResponse])
 async def list_accounts(
@@ -88,23 +108,7 @@ async def list_accounts(
 ) -> list[AccountResponse]:
     """列出所有账号。"""
     accounts = account_service.list_accounts()
-    return [
-        AccountResponse(
-            id=a.id,
-            name=a.name,
-            email=a.email,
-            created_at=a.created_at or "",
-            last_used=a.last_used,
-            auth_user=getattr(a, "auth_user", "0") or "0",
-            cookie_id=getattr(a, "cookie_id", None)
-            or (
-                f"cookie_{a.created_at[:16]}"
-                if getattr(a, "created_at", None)
-                else f"cookie_{a.id}"
-            ),
-        )
-        for a in accounts
-    ]
+    return [to_account_response(a) for a in accounts]
 
 
 @router.get("/active", response_model=AccountResponse)
@@ -115,20 +119,7 @@ async def get_active_account(
     account = account_service.get_active_account()
     if account is None:
         raise HTTPException(status_code=404, detail="没有活跃账号")
-    return AccountResponse(
-        id=account.id,
-        name=account.name,
-        email=account.email,
-        created_at=account.created_at or "",
-        last_used=account.last_used,
-        auth_user=getattr(account, "auth_user", "0") or "0",
-        cookie_id=getattr(account, "cookie_id", None)
-        or (
-            f"cookie_{account.created_at[:16]}"
-            if getattr(account, "created_at", None)
-            else f"cookie_{account.id}"
-        ),
-    )
+    return to_account_response(account)
 
 
 @router.post("/{account_id}/activate", response_model=AccountResponse)
@@ -147,20 +138,29 @@ async def activate_account(
     if account is None:
         raise HTTPException(status_code=404, detail="账号不存在或切换失败")
     log.info("手动激活账号: %s (%s)", account.id, account.name)
-    return AccountResponse(
-        id=account.id,
-        name=account.name,
-        email=account.email,
-        created_at=account.created_at or "",
-        last_used=account.last_used,
-        auth_user=getattr(account, "auth_user", "0") or "0",
-        cookie_id=getattr(account, "cookie_id", None)
-        or (
-            f"cookie_{account.created_at[:16]}"
-            if getattr(account, "created_at", None)
-            else f"cookie_{account.id}"
-        ),
-    )
+    return to_account_response(account)
+
+
+@router.post("/{account_id}/detect-email", response_model=AccountResponse)
+async def detect_account_email(
+    account_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@]+$"),
+    account_service: AccountService = Depends(get_account_service),
+    runtime_state: RuntimeState = Depends(get_runtime_state),
+) -> AccountResponse:
+    """从受控浏览器页面自动提取并更新指定账号的真实邮箱。"""
+    browser_session = runtime_state.client._session if runtime_state.client else None
+    if browser_session is None or browser_session._page is None:
+        raise HTTPException(status_code=503, detail="受控浏览器未就绪")
+
+    email = await browser_session.extract_account_email()
+    if email:
+        account_service.update_account_email(account_id, email)
+        log.info("已自动识别并更新账号 %s 邮箱: %s", account_id, mask_email(email))
+
+    acc = account_service.get_account(account_id)
+    if not acc:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    return to_account_response(acc)
 
 
 @router.delete("/{account_id}")
@@ -177,6 +177,8 @@ async def delete_account(
     if not success:
         raise HTTPException(status_code=404, detail="账号不存在")
 
+    if runtime_state.rotator:
+        runtime_state.rotator.remove_account(account_id)
     if is_active:
         remaining_accounts = account_service.list_accounts()
         new_active = remaining_accounts[0] if remaining_accounts else None
@@ -202,14 +204,18 @@ async def delete_account(
 async def delete_cookie_group(
     cookie_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@]+$"),
     account_service: AccountService = Depends(get_account_service),
+    runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> dict[str, int]:
     """按 Cookie 组批量删除该 Cookie 下的所有子账号。"""
     accounts = account_service.list_accounts()
     deleted_count = 0
+    rotator = runtime_state.rotator
     for a in accounts:
         acc_cid = getattr(a, "cookie_id", None) or f"cookie_{a.created_at[:16]}"
         if acc_cid == cookie_id and account_service.delete_account(a.id):
             deleted_count += 1
+            if rotator:
+                rotator.remove_account(a.id)
             log.info("已删除组 %s 下的子账号 %s", cookie_id, a.id)
     return {"deleted": deleted_count}
 
@@ -225,14 +231,7 @@ async def update_account(
     if account is None:
         raise HTTPException(status_code=404, detail="账号不存在")
     log.info("账号已更新: %s -> %s", account.id, req.name)
-    return AccountResponse(
-        id=account.id,
-        name=account.name,
-        email=account.email,
-        created_at=account.created_at,
-        last_used=account.last_used,
-        auth_user=getattr(account, "auth_user", "0"),
-    )
+    return to_account_response(account)
 
 
 @router.post("/import-cookies", response_model=ImportCookiesResponse)
@@ -321,18 +320,7 @@ async def probe_and_import(
         prefix=prefix,
         cookie_id=cid,
     )
-    imported_accounts = [
-        AccountResponse(
-            id=account.id,
-            name=account.name,
-            email=account.email,
-            created_at=account.created_at,
-            last_used=account.last_used,
-            auth_user=account.auth_user,
-            cookie_id=account.cookie_id or cid,
-        )
-        for account in metas
-    ]
+    imported_accounts = [to_account_response(account) for account in metas]
 
     log.info("探活与导入完成: 成功导入 %d 个账号", len(imported_accounts))
     return ProbeAndImportResponse(
@@ -370,7 +358,9 @@ async def import_bundle(
         try:
             raw_data = json.loads(req.content)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"JSON 内容解析失败: {e}") from e
+            raise HTTPException(
+                status_code=400, detail=f"JSON 内容解析失败: {e}"
+            ) from e
         if isinstance(raw_data, list):
             raw_list = raw_data
         elif isinstance(raw_data, dict):
@@ -388,7 +378,9 @@ async def import_bundle(
             raw_text = fpath.read_text(encoding="utf-8")
             raw_data = json.loads(raw_text)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"读取或解析文件失败: {e}") from e
+            raise HTTPException(
+                status_code=400, detail=f"读取或解析文件失败: {e}"
+            ) from e
         if isinstance(raw_data, list):
             raw_list = raw_data
         elif isinstance(raw_data, dict):
@@ -405,7 +397,9 @@ async def import_bundle(
         )
 
     if not items_to_import:
-        raise HTTPException(status_code=400, detail="未解析到任何包含有效 cookies 的账号条目")
+        raise HTTPException(
+            status_code=400, detail="未解析到任何包含有效 cookies 的账号条目"
+        )
 
     imported_accounts: list[AccountResponse] = []
     for idx, item in enumerate(items_to_import):
@@ -428,17 +422,7 @@ async def import_bundle(
             auth_user=acc_auth_user,
             cookie_id=cid,
         )
-        imported_accounts.append(
-            AccountResponse(
-                id=account.id,
-                name=account.name,
-                email=account.email,
-                created_at=account.created_at,
-                last_used=account.last_used,
-                auth_user=account.auth_user,
-                cookie_id=account.cookie_id or cid,
-            )
-        )
+        imported_accounts.append(to_account_response(account))
 
     if not account_service.get_active_account() and imported_accounts:
         account_service.set_active_account(imported_accounts[0].id)

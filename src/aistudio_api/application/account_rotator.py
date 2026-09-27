@@ -75,6 +75,8 @@ class AccountStats:
     last_rate_limited: float = 0.0
     last_auth_error: float = 0.0
     auth_cooldown: float = 0.0
+    session_expired: bool = False
+    last_session_expired: float = 0.0
     rate_limited_date_la: str | None = None
     model_cooldowns: dict[str, float] = field(default_factory=dict)
     model_rate_limited_dates: dict[str, str] = field(default_factory=dict)
@@ -95,6 +97,8 @@ class AccountStats:
             "last_rate_limited": self.last_rate_limited,
             "last_auth_error": self.last_auth_error,
             "auth_cooldown": self.auth_cooldown,
+            "session_expired": self.session_expired,
+            "last_session_expired": self.last_session_expired,
             "rate_limited_date_la": self.rate_limited_date_la,
             "model_cooldowns": dict(self.model_cooldowns),
             "model_rate_limited_dates": dict(self.model_rate_limited_dates),
@@ -168,6 +172,8 @@ class AccountStats:
             last_rate_limited=_as_float(data.get("last_rate_limited")),
             last_auth_error=_as_float(data.get("last_auth_error")),
             auth_cooldown=_as_float(data.get("auth_cooldown")),
+            session_expired=bool(data.get("session_expired")),
+            last_session_expired=_as_float(data.get("last_session_expired")),
             rate_limited_date_la=str(data["rate_limited_date_la"])
             if data.get("rate_limited_date_la")
             else None,
@@ -203,9 +209,10 @@ class AccountStats:
     ) -> bool:
         """检查账号在指定模型下是否可用（美西 0 点自动刷新）。"""
         now = time.time()
+        if self.session_expired:
+            return False
         if not ignore_auth_cooldown and self.auth_cooldown > now:
             return False
-
         model = normalize_model_key(model)
         current_la = get_pacific_date_key(now)
         self._check_date_reset(model, current_la)
@@ -307,10 +314,28 @@ class AccountStats:
         if model:
             self.model_requests[model] = self.model_requests.get(model, 0) + 1
 
+    def record_session_expired(self, model: str | None = None) -> None:
+        """记录账号登录态失效（被重定向到登录页），将该账号隔离并在未更新前禁止使用。"""
+        now = time.time()
+        self.requests += 1
+        self.errors += 1
+        self.auth_errors += 1
+        self.session_expired = True
+        self.last_session_expired = now
+        self.last_auth_error = now
+        self.last_used = now
+        # 隔离 24 小时或直至用户重新导入/手动重置
+        self.auth_cooldown = now + 86400.0
+        model = normalize_model_key(model)
+        if model:
+            self.model_requests[model] = self.model_requests.get(model, 0) + 1
+
     def clear_cooldown(self, model: str | None = None) -> None:
-        """手动清除冷却与 429/403 锁定。"""
+        """手动清除冷却与 429/403/失效锁定。"""
         self.auth_cooldown = 0.0
         self.auth_errors = 0
+        self.session_expired = False
+        self.last_session_expired = 0.0
         model = normalize_model_key(model)
         if model:
             self.model_cooldowns.pop(model, None)
@@ -343,6 +368,7 @@ class AccountRotator:
         self._last_saved_time: float = 0.0
         self._save_task: asyncio.Task | None = None
         self.load_state()
+        self.cleanup_ghost_accounts()
         for account in self._store.list_accounts():
             if account.id not in self._stats:
                 self._stats[account.id] = AccountStats(account_id=account.id)
@@ -428,6 +454,11 @@ class AccountRotator:
                     else None
                 ),
                 "is_available": stats.is_available(),
+                "session_expired": stats.session_expired,
+                "auth_cooldown": max(0, int(stats.auth_cooldown - time.time()))
+                if stats.auth_cooldown > time.time()
+                else 0,
+                "auth_errors": stats.auth_errors,
                 "cooldown_remaining": int(stats.get_cooldown_remaining()),
                 "model_cooldowns": {
                     m: int(stats.get_cooldown_remaining(m))
@@ -466,6 +497,8 @@ class AccountRotator:
         model: str | None = None,
         current_account_id: str | None = None,
         failed_account_id: str | None = None,
+        *,
+        is_session_expired: bool = False,
     ) -> AccountMeta | None:
         """获取下一个可用账号（排除失败账号，优先平滑故障转移至健康账号）。"""
         async with self._lock:
@@ -509,6 +542,8 @@ class AccountRotator:
                 if current_account_id and account.id != current_account_id:
                     logger.info("账号故障转移切换: %s (model=%s)", account.name, model)
                 return account
+            if is_session_expired:
+                return None
             if failed_account_id:
                 for a, _ in available:
                     if a.id == failed_account_id:
@@ -521,6 +556,8 @@ class AccountRotator:
         model: str | None = None,
         current_account_id: str | None = None,
         failed_account_id: str | None = None,
+        *,
+        is_session_expired: bool = False,
     ) -> tuple[AccountMeta, AccountStats] | None:
         """获取下一个可用账号及其统计。"""
         async with self._lock:
@@ -556,6 +593,8 @@ class AccountRotator:
                         x[1].last_used,
                     ),
                 )
+            if is_session_expired:
+                return None
             if failed_account_id:
                 for a, s in available:
                     if a.id == failed_account_id:
@@ -605,6 +644,17 @@ class AccountRotator:
         )
         self.save_state()
 
+    def record_session_expired(
+        self,
+        account_id: str,
+        model: str | None = None,
+    ) -> None:
+        if account_id not in self._stats:
+            self._stats[account_id] = AccountStats(account_id=account_id)
+        self._stats[account_id].record_session_expired(model)
+        logger.error("账号 %s 登录态失效，已被永久禁用直至重新导入凭据", account_id)
+        self.save_state()
+
     def clear_cooldown(self, account_id: str, model: str | None = None) -> None:
         """清除指定账号的 429 锁定。"""
         if account_id in self._stats:
@@ -631,6 +681,21 @@ class AccountRotator:
         self._stats.pop(account_id, None)
 
         self.save_state()
+
+    def cleanup_ghost_accounts(self) -> list[str]:
+        """清理已从 AccountStore 中删除但仍残留在 rotator_state 中的幽灵账号/Cookie。"""
+        existing_ids = {a.id for a in self._store.list_accounts()}
+        ghost_ids = [
+            acc_id for acc_id in list(self._stats.keys()) if acc_id not in existing_ids
+        ]
+        for gid in ghost_ids:
+            self._stats.pop(gid, None)
+        if ghost_ids:
+            logger.info(
+                "已清理 %d 个幽灵账号/Cookie 残留状态: %s", len(ghost_ids), ghost_ids
+            )
+            self.save_state()
+        return ghost_ids
 
 
 _rotator: AccountRotator | None = None

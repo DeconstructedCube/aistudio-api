@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import Modal from '@/components/ui/Modal.vue'
 import { CONFIG_SCHEMA, SCHEMA_CATEGORIES, type FieldDefinition } from './schema.ts'
-import { Search, BookOpen, Sparkles, Tag } from 'lucide-vue-next'
+import { Search, BookOpen, CheckCircle2, Tag } from 'lucide-vue-next'
 
 defineProps<{
   modelValue: boolean
@@ -38,7 +38,7 @@ const filteredFields = computed(() => {
   <Modal
     :model-value="modelValue"
     max-width="2xl"
-    title="配置项规范与参数字典 (Configuration Specification)"
+    title="配置项规范字典"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <div class="space-y-4">
@@ -117,8 +117,8 @@ const filteredFields = computed(() => {
             v-if="field.recommendedValue !== undefined"
             class="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200/60"
           >
-            <Sparkles class="w-3.5 h-3.5 text-emerald-600" />
-            <span>推荐推荐值: {{ JSON.stringify(field.recommendedValue) }}</span>
+            <CheckCircle2 class="w-3.5 h-3.5 text-emerald-600" />
+            <span>推荐值: {{ JSON.stringify(field.recommendedValue) }}</span>
           </div>
         </div>
 

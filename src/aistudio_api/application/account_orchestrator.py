@@ -18,6 +18,7 @@ async def try_switch_account(
     failed_account_id: str | None = None,
     *,
     is_auth_error: bool = False,
+    is_session_expired: bool = False,
 ) -> bool:
     """尝试切换到下一个对目标 model 可用的账号。防止并发级联切号。"""
     async with _switch_lock:
@@ -36,10 +37,11 @@ async def try_switch_account(
         current_active = account_service.get_active_account()
         current_id = current_active.id if current_active else None
 
-        # 遇到鉴权错误时，立即记录 auth_error 并触发该账号的短时隔离
-        if failed_account_id and is_auth_error:
+        # 遇到登录态失效时，永久禁用该账号并拒绝原地重试
+        if failed_account_id and is_session_expired:
+            rotator.record_session_expired(failed_account_id, model=model)
+        elif failed_account_id and is_auth_error:
             rotator.record_auth_error(failed_account_id, model=model)
-
         # 双重检查：如果已经由并发协程切换到了新账号，且新账号对当前 model 可用，则直接复用
         if failed_account_id and current_id and current_id != failed_account_id:
             stats = rotator._stats.get(current_id)
@@ -55,8 +57,14 @@ async def try_switch_account(
             model=model,
             current_account_id=current_id,
             failed_account_id=failed_account_id,
+            is_session_expired=is_session_expired,
         )
         if next_account is None:
+            if is_session_expired:
+                logger.error(
+                    "账号 %s 登录态失效且无其他可用备用账号，禁止原地重试",
+                    failed_account_id,
+                )
             return False
 
         if current_id is None or next_account.id != current_id:
@@ -69,7 +77,14 @@ async def try_switch_account(
             )
             return result is not None
 
-        # 单账号模式或所有其他账号均不可用时，如果指定了 failed_account_id，强制刷新当前会话与 BotGuard
+        # 登录态失效严禁在原账号原地重试
+        if is_session_expired and (
+            failed_account_id == current_id or next_account.id == failed_account_id
+        ):
+            logger.error("账号 %s 登录态已失效，禁止在原账号重试", failed_account_id)
+            return False
+
+        # 单账号模式或所有其他账号均不可用时（非登录态失效，如偶发 403 鉴权波动），如果指定了 failed_account_id，强制刷新当前会话与 BotGuard
         if failed_account_id and failed_account_id == current_id:
             logger.info(
                 "无其他可用备用账号，重新刷新当前账号会话与 BotGuard: %s",

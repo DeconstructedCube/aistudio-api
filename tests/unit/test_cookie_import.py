@@ -202,3 +202,37 @@ async def test_import_bundle_flow(tmp_path):
     persisted = svc.list_accounts()
     assert len(persisted) == 2
     assert svc.get_active_account() is not None
+
+
+def test_mask_email():
+    """测试邮箱地址脱敏处理。"""
+    from aistudio_api.infrastructure.utils.common import mask_email
+
+    assert mask_email("user123@gmail.com") == "u***3@gmail.com"
+    assert mask_email("ab@gmail.com") == "a***@gmail.com"
+    assert mask_email("a@gmail.com") == "a***@gmail.com"
+    assert mask_email(None) == ""
+    assert mask_email("not_an_email") == "not_an_email"
+
+
+def test_update_account_email(tmp_path):
+    """测试自动识别并更新账号邮箱。"""
+    from aistudio_api.infrastructure.account.account_store import AccountStore
+
+    store = AccountStore(accounts_dir=tmp_path / "accounts_test")
+    acc = store.save_account(
+        name="Test",
+        email=None,
+        storage_state={"cookies": []},
+    )
+    assert acc.email is None
+
+    updated = store.update_account_email(acc.id, "real_user@gmail.com")
+    assert updated is True
+
+    reloaded = store.get_account(acc.id)
+    assert reloaded is not None
+    assert reloaded.email == "real_user@gmail.com"
+
+    # 重复更新相同邮箱返回 False
+    assert store.update_account_email(acc.id, "real_user@gmail.com") is False

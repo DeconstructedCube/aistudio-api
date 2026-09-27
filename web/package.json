@@ -11,10 +11,8 @@
     "preview": "bun --bun vite preview"
   },
   "dependencies": {
-    "clsx": "^2.1.1",
     "lucide-vue-next": "^0.475.0",
     "pinia": "^3.0.4",
-    "tailwind-merge": "^3.0.2",
     "vue": "^3.5.43",
     "vue-router": "^4.6.4",
     "yaml": "^2.9.1"

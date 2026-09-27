@@ -14,7 +14,7 @@ from aistudio_api.application.account_orchestrator import (
 )
 from aistudio_api.application.account_rotator import AccountRotator, AccountStats
 from aistudio_api.application.account_service import AccountService
-from aistudio_api.infrastructure.account.account_store import AccountMeta
+from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 
 
@@ -205,6 +205,132 @@ async def test_try_switch_account_single_account_recovery():
         runtime_state.client = orig_client
 
 
+@pytest.mark.asyncio
+async def test_try_switch_account_session_expired_strictly_forbids_in_place_retry():
+    """登录态失效时严禁在原账号原地重试，无备用账号时直接返回 False。"""
+    from unittest.mock import AsyncMock
+
+    mock_rotator = MagicMock(spec=AccountRotator)
+    mock_service = MagicMock(spec=AccountService)
+    mock_client = MagicMock(spec=AIStudioClient)
+    mock_client._session = MagicMock()
+
+    active_acc = AccountMeta(
+        id="acc_1",
+        name="Single Account",
+        email="single@gmail.com",
+        created_at="2026-01-01",
+    )
+    mock_service.get_active_account = MagicMock(return_value=active_acc)
+    mock_service.activate_account = AsyncMock()
+    # 当 is_session_expired=True 且无其他备用账号时，rotator 返回 None
+    mock_rotator.get_next_account = AsyncMock(return_value=None)
+
+    orig_rotator = runtime_state.rotator
+    orig_service = runtime_state.account_service
+    orig_client = runtime_state.client
+
+    try:
+        runtime_state.rotator = mock_rotator
+        runtime_state.account_service = mock_service
+        runtime_state.client = mock_client
+
+        result = await try_switch_account(
+            model="gemini-3.8-flash",
+            failed_account_id="acc_1",
+            is_auth_error=True,
+            is_session_expired=True,
+        )
+        # 严禁原地重试，必须返回 False
+        assert result is False
+        mock_rotator.record_session_expired.assert_called_once_with(
+            "acc_1", model="gemini-3.8-flash"
+        )
+        mock_service.activate_account.assert_not_called()
+    finally:
+        runtime_state.rotator = orig_rotator
+        runtime_state.account_service = orig_service
+        runtime_state.client = orig_client
+
+
+@pytest.mark.asyncio
+async def test_try_switch_account_session_expired_switches_to_healthy_account():
+    """同 Cookie 或备用账号中某一个失效时，仅该账号失效并平滑切换到同 Cookie 的另一个正常子账号。"""
+    from unittest.mock import AsyncMock
+
+    mock_rotator = MagicMock(spec=AccountRotator)
+    mock_service = MagicMock(spec=AccountService)
+    mock_client = MagicMock(spec=AIStudioClient)
+    mock_client._session = MagicMock()
+
+    acc1 = AccountMeta(
+        id="acc_1", name="Cookie A u/0", email="user@gmail.com", created_at="2026-01-01"
+    )
+    acc2 = AccountMeta(
+        id="acc_2", name="Cookie A u/1", email="user@gmail.com", created_at="2026-01-01"
+    )
+
+    mock_service.get_active_account = MagicMock(return_value=acc1)
+    mock_service.activate_account = AsyncMock(return_value=acc2)
+    # 成功挑中同 Cookie 的备用子账号 acc_2
+    mock_rotator.get_next_account = AsyncMock(return_value=acc2)
+
+    orig_rotator = runtime_state.rotator
+    orig_service = runtime_state.account_service
+    orig_client = runtime_state.client
+
+    try:
+        runtime_state.rotator = mock_rotator
+        runtime_state.account_service = mock_service
+        runtime_state.client = mock_client
+
+        result = await try_switch_account(
+            model="gemini-3.8-flash",
+            failed_account_id="acc_1",
+            is_auth_error=True,
+            is_session_expired=True,
+        )
+        assert result is True
+        # 仅禁用失效的 acc_1
+        mock_rotator.record_session_expired.assert_called_once_with(
+            "acc_1", model="gemini-3.8-flash"
+        )
+        # 成功激活 acc_2
+        mock_service.activate_account.assert_called_once_with(
+            "acc_2",
+            mock_client._session,
+            None,
+            None,
+            keep_snapshot_cache=False,
+        )
+    finally:
+        runtime_state.rotator = orig_rotator
+        runtime_state.account_service = orig_service
+        runtime_state.client = orig_client
+
+
+def test_account_stats_session_expired_permanent_isolation():
+    """账号标记为 session_expired 后处于永久禁用状态，美西跨天不自动重置，ignore_auth_cooldown 也不可用。"""
+    stats = AccountStats(account_id="acc_test")
+    assert stats.is_available("gemini-3.8-flash")
+
+    stats.record_session_expired(model="gemini-3.8-flash")
+    assert stats.session_expired is True
+    assert not stats.is_available("gemini-3.8-flash")
+    # 即使 ignore_auth_cooldown 也绝对不可用
+    assert not stats.is_available("gemini-3.8-flash", ignore_auth_cooldown=True)
+
+    # 模拟跨天
+    stats._check_date_reset("gemini-3.8-flash", "2099-01-01")
+    assert not stats.is_available("gemini-3.8-flash")
+    assert stats.session_expired is True
+
+    # 仅手动清除冷却/重新导入时恢复
+    stats.clear_cooldown()
+    assert stats.session_expired is False
+    assert stats.is_available("gemini-3.8-flash")
+
+
 def test_account_stats_short_cooldown_sync():
     """Verify short 60s cooldown is tracked accurately for monitoring."""
     stats = AccountStats(account_id="acc_test")
@@ -250,3 +376,35 @@ def test_safe_account_dir_path_traversal_rejection(tmp_path):
     ]:
         with pytest.raises(ValueError):
             _safe_account_dir(base, bad_id)
+
+
+def test_cleanup_ghost_accounts():
+    """测试幽灵账号清理：已被删除但残留在 rotator_state 中的失效/429 账号被自动检测并彻底剔除。"""
+    store = MagicMock(spec=AccountStore)
+    real_acc = AccountMeta(
+        id="real_acc", name="Real", email="real@gmail.com", created_at="2026-01-01"
+    )
+    store.list_accounts.return_value = [real_acc]
+
+    rotator = AccountRotator(account_store=store)
+    # 模拟 rotator_state.json 中残留了已经被删除的幽灵账号 ghost_acc_1 与 ghost_acc_2 (带着 429 状态)
+    rotator._stats["ghost_acc_1"] = AccountStats(
+        account_id="ghost_acc_1", rate_limited=5
+    )
+    rotator._stats["ghost_acc_2"] = AccountStats(
+        account_id="ghost_acc_2", session_expired=True
+    )
+
+    assert "ghost_acc_1" in rotator._stats
+    assert "ghost_acc_2" in rotator._stats
+    assert "real_acc" in rotator._stats
+
+    cleaned = rotator.cleanup_ghost_accounts()
+    assert set(cleaned) == {"ghost_acc_1", "ghost_acc_2"}
+    assert "ghost_acc_1" not in rotator._stats
+    assert "ghost_acc_2" not in rotator._stats
+    assert "real_acc" in rotator._stats
+
+    # 测试单账号删除同步
+    rotator.remove_account("real_acc")
+    assert "real_acc" not in rotator._stats
