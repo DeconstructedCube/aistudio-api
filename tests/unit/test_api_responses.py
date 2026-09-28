@@ -1,3 +1,5 @@
+import pytest
+
 from aistudio_api.api.responses import (
     to_gemini_parts,
     to_gemini_usage_metadata,
@@ -123,3 +125,56 @@ def test_clean_upstream_error_message():
     )
     jspb_404 = 'HTTP 404: [,[5,"Requested entity was not found."]]'
     assert clean_upstream_error_message(jspb_404) == "Requested entity was not found."
+
+
+@pytest.mark.asyncio
+async def test_handle_attempt_exception_retries_ambiguous_rpc_404_in_place():
+    from unittest.mock import MagicMock
+
+    from fastapi import HTTPException
+
+    from aistudio_api.application.api_service_gemini import handle_attempt_exception
+    from aistudio_api.infrastructure.gateway.client import AIStudioClient
+
+    mock_client = MagicMock(spec=AIStudioClient)
+    mock_client.clear_templates = MagicMock()
+
+    # 1. Ambiguous RPC 404 error should be retried in-place without raising
+    ambiguous_err = RequestError(
+        404,
+        "Ambiguous request for service '' and method '/GenerativeService.StreamGenerateContent'. Please use fully qualified (unique) service and method names to call this method.",
+    )
+    should_retry = await handle_attempt_exception(
+        ambiguous_err,
+        attempt=0,
+        model_path="gemini-3.7-flash",
+        normalized_model="models/gemini-3.7-flash",
+        client=mock_client,
+        has_yielded_data=False,
+    )
+    assert should_retry is True
+    mock_client.clear_templates.assert_called_once()
+
+    # 2. Other legitimate 404 errors (e.g. model not found) MUST NOT be retried
+    other_404 = RequestError(404, "Model 'models/nonexistent' not found.")
+    with pytest.raises(HTTPException) as exc_info:
+        await handle_attempt_exception(
+            other_404,
+            attempt=0,
+            model_path="nonexistent",
+            normalized_model="models/nonexistent",
+            client=mock_client,
+            has_yielded_data=False,
+        )
+    assert exc_info.value.status_code == 404
+
+    # 3. If data has already been yielded to the client, retry MUST NOT happen
+    with pytest.raises(HTTPException):
+        await handle_attempt_exception(
+            ambiguous_err,
+            attempt=0,
+            model_path="gemini-3.7-flash",
+            normalized_model="models/gemini-3.7-flash",
+            client=mock_client,
+            has_yielded_data=True,
+        )

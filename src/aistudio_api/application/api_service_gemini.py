@@ -269,6 +269,25 @@ async def handle_attempt_exception(
         client.clear_templates()
         return True
 
+    # 针对 Google 上游偶发且完全随机的 RPC 路由 404 (Ambiguous request for service '' and method '/GenerativeService.*')：
+    # 此报错为上游端点偶发抖动，在未产生输出时当场立即重试（严禁切号以防浪费配额，其他 404 严格按原样报错抛出）
+    err_str = str(exc).lower()
+    if (
+        isinstance(exc, RequestError)
+        and exc.status == 404
+        and not has_yielded_data
+        and "ambiguous request for service" in err_str
+        and "generatecontent" in err_str
+        and attempt < MAX_RETRIES - 1
+    ):
+        logger.warning(
+            "检测到 Google 上游偶发 404 (Ambiguous RPC method)，当场立即重试 (%d/%d): %s",
+            attempt + 1,
+            MAX_RETRIES,
+            clean_upstream_error_message(str(exc)),
+        )
+        client.clear_templates()
+        return True
     if isinstance(exc, (RuntimeError, TimeoutError)):
         err_msg = str(exc).lower()
         if (
