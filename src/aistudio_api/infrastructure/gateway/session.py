@@ -49,7 +49,6 @@ GOOGLE_LOGIN_BOOTSTRAP_URL = (
     "https://accounts.google.com/ServiceLogin?continue=https://aistudio.google.com"
 )
 BOTGUARD_BOOTSTRAP_PROMPT = "say '1'"
-TEMPLATE_CAPTURE_PROMPT = "say 't'"
 
 
 def _is_login_page_url(url: str | None) -> bool:
@@ -540,103 +539,27 @@ class BrowserSession:
                 self._profile_dir = original_profile_dir
 
     async def capture_template_flow(self, model: str) -> dict[str, object]:
-        """Execute browser action flow to capture request template without caching in session."""
+        """Return request template for the model using bootstrap baseline contract."""
         async with self._template_lock:
-            page = await self.ensure_botguard_service()
-            if not self._bootstrap_template:
-                await self.ensure_botguard_service(force_refresh=True)
-            if self._bootstrap_template:
-                return dict(self._bootstrap_template)
-            captured: dict[str, object] = {}
-            last_response: dict[str, object] | None = None
-
-            def on_req(req: dict[str, object]) -> None:
-                url = str(req.get("url") or "")
-                if "GenerateContent" not in url or "Count" in url or captured:
-                    return
-                body = str(req.get("post_data") or "")
-                if not body or len(body) <= 100:
-                    return
-                captured["url"] = url
-                captured["headers"] = req.get("headers") or {}
-                captured["body"] = body
-
-            def on_resp(resp: dict[str, object]) -> None:
-                nonlocal last_response
-                url = str(resp.get("url") or "")
-                if "GenerateContent" not in url or "Count" in url:
-                    return
-                last_response = resp
-
-            unsub_req = page.on_request(on_req)
-            unsub_resp = page.on_response(on_resp)
-            original_text = ""
+            if self._proc is not None and not self._proc.is_alive():
+                raise RuntimeError("Browser process died during template capture")
+            await self.ensure_botguard_service()
+            if self._proc is not None and not self._proc.is_alive():
+                raise RuntimeError("Browser process died during template capture")
+            base = dict(self._bootstrap_template or DEFAULT_BOOTSTRAP_TEMPLATE)
+            normalized_model = (
+                model if model.startswith("models/") else f"models/{model}"
+            )
             try:
-                original_text = str(
-                    (
-                        await page.evaluate(
-                            "() => document.querySelector('textarea')?.value || ''"
-                        )
-                    )
-                    or ""
-                )
-                await self._enable_temporary_chat(page)
-                await page.fill("textarea", TEMPLATE_CAPTURE_PROMPT)
-                await page.wait_for_timeout(500)
-                if not await self._click_run_button(page):
-                    raise RuntimeError("failed to trigger send during template capture")
-
-                for _ in range(30):
-                    if self._proc is not None and not self._proc.is_alive():
-                        raise RuntimeError(
-                            "Browser process died during template capture"
-                        )
-                    if page.is_closed():
-                        raise RuntimeError(
-                            "Browser page closed during template capture"
-                        )
-                    curr_url = page.url or ""
-                    if _is_login_page_url(curr_url):
-                        log.warning(
-                            "模板捕获期间检测到登录页重定向: %s，尝试重新注入 Cookie...",
-                            curr_url,
-                        )
-                        if await self.reload_current_account_cookies(page):
-                            await page.fill("textarea", TEMPLATE_CAPTURE_PROMPT)
-                            await page.wait_for_timeout(500)
-                            await self._click_run_button(page)
-                            continue
-                        raise SessionExpiredError(
-                            f"Cookie 认证失效，已跳转至登录页: {curr_url}"
-                        )
-                    await page.wait_for_timeout(1000)
-                    if captured:
-                        with suppress(Exception):
-                            await page.evaluate(STOP_GENERATION_JS)
-                        break
-                if not captured:
-                    if self._bootstrap_template:
-                        log.warning(
-                            "模型 %s 动态模板捕获超时，回退至引导模板",
-                            model,
-                        )
-                        return dict(self._bootstrap_template)
-                    if last_response is not None:
-                        raise RuntimeError(
-                            f"template capture failed after request: status={last_response.get('status')} url={last_response.get('url')}"
-                        )
-                    raise RuntimeError(f"template capture timeout for model={model}")
-
-                await page.fill("textarea", original_text)
-                with suppress(Exception):
-                    await page.evaluate(DOM_GC_CLEANUP_JS)
-                return captured
-            finally:
-                unsub_req()
-                unsub_resp()
-                with suppress(Exception):
-                    await page.fill("textarea", original_text)
-
+                body_val = base.get("body")
+                if isinstance(body_val, str) and body_val.startswith("["):
+                    body_list = json.loads(body_val)
+                    if isinstance(body_list, list) and len(body_list) > 0:
+                        body_list[0] = normalized_model
+                        base["body"] = json.dumps(body_list, separators=(",", ":"))
+            except Exception as e:
+                log.debug("Failed to adapt model into bootstrap template body: %s", e)
+            return base
     async def capture_template(self, model: str) -> dict[str, object]:
         """Capture template flow forwarder."""
         return await self.capture_template_flow(model)
@@ -1081,49 +1004,6 @@ class BrowserSession:
         if await page.click("button:has-text('Run')"):
             return True
         return await page.click("button:has(mat-icon)")
-
-    async def _has_run_button(self, page: CDPPage) -> bool:
-        try:
-            return bool(
-                await page.evaluate(
-                    """(() => {
-                        const buttons = Array.from(document.querySelectorAll('button'));
-                        const hasStop = buttons.some(b => {
-                            const t = (b.innerText || b.textContent || '').trim();
-                            return t === 'Stop' || t.startsWith('Stop') || b.classList.contains('stop-button');
-                        });
-                        if (hasStop) return false;
-                        return buttons.some(b => {
-                            const t = (b.innerText || b.textContent || '').trim();
-                            return t === 'Run' || t.startsWith('Run')
-                                || t === 'Build' || t.startsWith('Build')
-                                || b.classList.contains('build-button')
-                                || b.classList.contains('ctrl-enter-submits');
-                        });
-                    })()"""
-                )
-            )
-        except Exception:
-            return False
-
-    async def _wait_until_idle(self, page: CDPPage) -> None:
-        for _ in range(25):
-            if self._proc is not None and not self._proc.is_alive():
-                raise RuntimeError("Browser process died while waiting for idle")
-            if page.is_closed():
-                raise RuntimeError("Page closed while waiting for idle")
-            if await self._has_run_button(page):
-                return
-            await page.wait_for_timeout(1000)
-        is_running = await page.evaluate(
-            """(() => {
-                const buttons = Array.from(document.querySelectorAll('button'));
-                return buttons.some(b => (b.innerText || b.textContent || '').trim().startsWith('Stop') || b.classList.contains('stop-button'));
-            })()"""
-        )
-        if not is_running:
-            return
-        raise RuntimeError("page never became idle")
 
     async def extract_account_email(self, page: CDPPage | None = None) -> str | None:
         """从 AI Studio 页面自动提取当前登录账号的真实 Google 邮箱。"""

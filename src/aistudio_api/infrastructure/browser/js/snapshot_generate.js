@@ -1,7 +1,8 @@
 async (hash) => {
     const dms = window.default_MakerSuite;
-    const service = window.__bg_service;
-    const snapKey = window.__snap_key;
+    const aistudio = window.__AISTUDIO__ || {};
+    const service = aistudio.service || window.__bg_service;
+    const snapKey = aistudio.snapKey || window.__snap_key;
     if (!dms || !service || !snapKey || typeof dms[snapKey] !== 'function') {
         throw new Error('service_unavailable');
     }
@@ -13,8 +14,9 @@ async (hash) => {
         }
         return snapshot;
     };
-    const prev = window.__bg_snap_queue || Promise.resolve();
+    const prev = aistudio.snapQueue || window.__bg_snap_queue || Promise.resolve();
     const current = prev.catch(() => {}).then(run);
+    aistudio.snapQueue = current;
     window.__bg_snap_queue = current;
     return await current;
 }

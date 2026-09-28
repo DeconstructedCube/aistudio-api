@@ -53,3 +53,8 @@ android/**/*.iml
 *.apk
 *.aab
 
+# Reverse engineering dump outputs
+tools/reverse/output/
+tools/reverse/bundles/
+tools/reverse/wasm/
+

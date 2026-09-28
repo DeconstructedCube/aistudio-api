@@ -226,8 +226,181 @@ def _setup_child_pdeathsig() -> None:
             pass
 
 
+def _get_process_cmdline_windows(pid: int) -> str:
+    """Retrieve command line for a Windows process using NtQueryInformationProcess with fallback."""
+    if pid <= 1:
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+        class UNICODE_STRING(ctypes.Structure):
+            _fields_ = [
+                ("Length", wintypes.USHORT),
+                ("MaximumLength", wintypes.USHORT),
+                ("Buffer", wintypes.LPWSTR),
+            ]
+
+        windll = getattr(ctypes, "windll", None)
+        if not windll:
+            return ""
+        h = windll.kernel32.OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+        )
+        if not h:
+            return ""
+        try:
+            return_length = wintypes.ULONG(0)
+            status = windll.ntdll.NtQueryInformationProcess(
+                h, 60, None, 0, ctypes.byref(return_length)
+            )
+            if return_length.value == 0:
+                return ""
+            buf = (ctypes.c_char * return_length.value)()
+            status = windll.ntdll.NtQueryInformationProcess(
+                h, 60, buf, return_length.value, ctypes.byref(return_length)
+            )
+            if status != 0:
+                return ""
+            us = ctypes.cast(buf, ctypes.POINTER(UNICODE_STRING)).contents
+            return us.Buffer or ""
+        finally:
+            windll.kernel32.CloseHandle(h)
+    except Exception:
+        pass
+
+    # Fallback to PowerShell if ctypes call fails
+    try:
+        res = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"(Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CommandLine",
+            ],
+            capture_output=True,
+            text=True,
+            errors="ignore",
+            check=False,
+            timeout=2.0,
+        )
+        return res.stdout.strip()
+    except Exception:
+        return ""
+
+
+def _get_process_list_windows() -> list[tuple[int, int, str]]:
+    """Retrieve list of (pid, ppid, exe_name) using Win32 Toolhelp32 snapshot."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        TH32CS_SNAPPROCESS = 0x00000002
+
+        class PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260),
+            ]
+
+        windll = getattr(ctypes, "windll", None)
+        if not windll:
+            return []
+        snap = windll.kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if snap == -1 or not snap:
+            return []
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+
+        processes: list[tuple[int, int, str]] = []
+        try:
+            success = windll.kernel32.Process32FirstW(snap, ctypes.byref(entry))
+            while success:
+                processes.append(
+                    (
+                        int(entry.th32ProcessID),
+                        int(entry.th32ParentProcessID),
+                        str(entry.szExeFile),
+                    )
+                )
+                success = windll.kernel32.Process32NextW(
+                    snap, ctypes.byref(entry)
+                )
+        finally:
+            windll.kernel32.CloseHandle(snap)
+        return processes
+    except Exception as e:
+        log.debug("Toolhelp32 进程枚举异常: %s", e)
+        return []
+
+
+def _get_pid_listening_on_port_win32(port: int) -> int | None:
+    """Find the process ID listening on a given TCP port using GetExtendedTcpTable in <1ms."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        AF_INET = 2
+        TCP_TABLE_OWNER_PID_ALL = 5
+
+        class MIB_TCPROW_OWNER_PID(ctypes.Structure):
+            _fields_ = [
+                ("dwState", wintypes.DWORD),
+                ("dwLocalAddr", wintypes.DWORD),
+                ("dwLocalPort", wintypes.DWORD),
+                ("dwRemoteAddr", wintypes.DWORD),
+                ("dwRemotePort", wintypes.DWORD),
+                ("dwOwningPid", wintypes.DWORD),
+            ]
+
+        windll = getattr(ctypes, "windll", None)
+        if not windll:
+            return None
+        dwSize = wintypes.DWORD(0)
+        windll.iphlpapi.GetExtendedTcpTable(
+            None, ctypes.byref(dwSize), True, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0
+        )
+        if dwSize.value == 0:
+            return None
+        buf = (ctypes.c_char * dwSize.value)()
+        res = windll.iphlpapi.GetExtendedTcpTable(
+            buf, ctypes.byref(dwSize), True, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0
+        )
+        if res != 0:
+            return None
+        num_entries = ctypes.cast(buf, ctypes.POINTER(wintypes.DWORD)).contents.value
+        p_rows = ctypes.cast(
+            ctypes.byref(buf, 4),
+            ctypes.POINTER(MIB_TCPROW_OWNER_PID * num_entries),
+        ).contents
+        for row in p_rows:
+            row_port = socket.ntohs(row.dwLocalPort & 0xFFFF)
+            # MIB_TCP_STATE_LISTEN = 2
+            if row.dwState == 2 and row_port == port:
+                return int(row.dwOwningPid)
+    except Exception as e:
+        log.debug("GetExtendedTcpTable 查询失败: %s", e)
+    return None
+
+
 def _find_pid_listening_on_port_windows(port: int) -> int | None:
     """Find the process ID listening on a given TCP port on Windows."""
+    # 1. Native Win32 API (<1ms)
+    pid = _get_pid_listening_on_port_win32(port)
+    if pid is not None:
+        return pid
+
+    # 2. Netstat fallback
     try:
         out = subprocess.check_output(
             ["netstat", "-ano", "-p", "tcp"], text=True, errors="ignore"
@@ -253,26 +426,8 @@ def _is_active_api_server(pid: int) -> bool:
     if pid in (os.getpid(), os.getppid()):
         return False
     if platform.system() == "Windows":
-        try:
-            res = subprocess.run(
-                [
-                    "powershell",
-                    "-NoProfile",
-                    "-Command",
-                    f"(Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CommandLine",
-                ],
-                capture_output=True,
-                text=True,
-                errors="ignore",
-                check=False,
-                timeout=2.0,
-            )
-            cmd = res.stdout.strip()
-            if any(k in cmd for k in ("main.py", "aistudio-api-server", "uvicorn")):
-                return True
-        except Exception:
-            pass
-        return False
+        cmd = _get_process_cmdline_windows(pid)
+        return bool(cmd and any(k in cmd for k in ("main.py", "aistudio-api-server", "uvicorn")))
 
     try:
         cmdline_path = Path(f"/proc/{pid}/cmdline")
@@ -321,55 +476,36 @@ def cleanup_stale_chromium(
     candidate_pids: set[int] = set()
 
     if platform.system() == "Windows":
+        proc_list = _get_process_list_windows()
+        parent_map = {p[0]: p[1] for p in proc_list}
+
         # 1. Check if the target port is held by any listening process
         listener_pid = _find_pid_listening_on_port_windows(port)
         if (
             listener_pid
             and listener_pid not in (cur_pid, parent_pid)
             and listener_pid > 1
-            and not _is_active_api_server(listener_pid)
         ):
-            candidate_pids.add(listener_pid)
+            # SAFETY GUARANTEE: Never touch listener if it or its parent is an active API server!
+            listener_parent = parent_map.get(listener_pid, 0)
+            if not _is_active_api_server(listener_pid) and not (
+                listener_parent > 1 and _is_active_api_server(listener_parent)
+            ):
+                candidate_pids.add(listener_pid)
 
         # 2. Check running chrome.exe processes matching port or data dir
-        try:
-            ps_cmd = (
-                "Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe'\" | "
-                "Select-Object ProcessId, ParentProcessId, CommandLine | "
-                "ConvertTo-Json -Compress"
-            )
-            res = subprocess.run(
-                ["powershell", "-NoProfile", "-Command", ps_cmd],
-                capture_output=True,
-                text=True,
-                errors="ignore",
-                check=False,
-                timeout=3.0,
-            )
-            data_str = res.stdout.strip()
-            if data_str:
-                import json
-
-                items = json.loads(data_str)
-                if isinstance(items, dict):
-                    items = [items]
-                for it in items:
-                    try:
-                        c_pid = int(it.get("ProcessId", 0))
-                        c_ppid = int(it.get("ParentProcessId", 0))
-                        c_cmd = str(it.get("CommandLine", ""))
-                    except Exception:
-                        continue
-                    if c_pid in (cur_pid, parent_pid) or c_pid <= 1:
-                        continue
-                    if c_ppid > 1 and _is_active_api_server(c_ppid):
-                        continue
-                    if f"--remote-debugging-port={port}" in c_cmd or (
-                        user_data_dir and user_data_dir in c_cmd
-                    ):
-                        candidate_pids.add(c_pid)
-        except Exception as e:
-            log.debug("Windows 进程查询失败: %s", e)
+        for c_pid, c_ppid, exe_name in proc_list:
+            if exe_name.lower() != "chrome.exe":
+                continue
+            if c_pid in (cur_pid, parent_pid) or c_pid <= 1:
+                continue
+            if c_ppid > 1 and _is_active_api_server(c_ppid):
+                continue
+            c_cmd = _get_process_cmdline_windows(c_pid)
+            if f"--remote-debugging-port={port}" in c_cmd or (
+                user_data_dir and user_data_dir in c_cmd
+            ):
+                candidate_pids.add(c_pid)
     else:
         proc_dir = Path("/proc")
         if proc_dir.is_dir():

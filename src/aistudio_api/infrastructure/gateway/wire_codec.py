@@ -20,6 +20,7 @@ from .wire_parser import (
     WIRE_PART_TEXT_INDEX,
     WIRE_PART_THOUGHT_SIGNATURE_INDEX,
 )
+from .wire_spec import TopLevelIndex
 from .wire_types import (
     AistudioContent,
     AistudioGenerationConfig,
@@ -135,17 +136,17 @@ def _encode_image(path: str) -> tuple[str, str]:
 
 
 class AistudioWireCodec:
-    MODEL_INDEX = 0
-    CONTENTS_INDEX = 1
-    SAFETY_INDEX = 2
-    GENERATION_CONFIG_INDEX = 3
-    SNAPSHOT_INDEX = 4
-    SYSTEM_INSTRUCTION_INDEX = 5
-    TOOLS_INDEX = 6
-    EVERGREEN_MODEL_URI_INDEX = 7
-    REQUEST_FLAG_INDEX = 10
-    CACHED_CONTENT_INDEX = 11
-    TIMEZONE_INDEX = 13
+    MODEL_INDEX = TopLevelIndex.MODEL
+    CONTENTS_INDEX = TopLevelIndex.CONTENTS
+    SAFETY_INDEX = TopLevelIndex.SAFETY_SETTINGS
+    GENERATION_CONFIG_INDEX = TopLevelIndex.GENERATION_CONFIG
+    SNAPSHOT_INDEX = TopLevelIndex.SNAPSHOT
+    SYSTEM_INSTRUCTION_INDEX = TopLevelIndex.SYSTEM_INSTRUCTION
+    TOOLS_INDEX = TopLevelIndex.TOOLS
+    EVERGREEN_MODEL_URI_INDEX = TopLevelIndex.EVERGREEN_MODEL_URI
+    REQUEST_FLAG_INDEX = TopLevelIndex.REQUEST_FLAG
+    CACHED_CONTENT_INDEX = TopLevelIndex.CACHED_CONTENT
+    TIMEZONE_INDEX = TopLevelIndex.LOCATION
 
     def decode(self, raw_body: str) -> AistudioRequest:
         body = json.loads(raw_body)

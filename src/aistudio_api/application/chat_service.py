@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from aistudio_api.infrastructure.gateway.model_defaults import resolve_model_defaults
 from aistudio_api.infrastructure.gateway.wire_codec import build_tools_from_names
+from aistudio_api.infrastructure.gateway.wire_spec import JspbArray, SchemaIndex
 from aistudio_api.infrastructure.gateway.wire_types import (
     AistudioContent,
     AistudioImageOutputMode,
@@ -80,20 +81,13 @@ def _encode_wire_value(val: object) -> object:
     return val
 
 
-def _pad_wire(wire: list[object], target_index: int) -> None:
-    while len(wire) <= target_index:
-        wire.append(None)
-
-
 def cleanup_files(paths: list[str]):
     for path in paths:
         with contextlib.suppress(OSError):
             Path(path).unlink()
 
 
-def encode_schema_to_wire(
-    schema: dict[str, object], *, include_required: bool = True
-) -> list[object]:
+def _resolve_schema_type_code(schema: dict[str, object]) -> tuple[int, str, bool]:
     raw_type = schema.get("type")
     is_nullable = False
     if isinstance(raw_type, list):
@@ -168,60 +162,96 @@ def encode_schema_to_wire(
     type_code = SCHEMA_TYPE_CODES.get(schema_type, 6)
     if type_code not in (1, 2, 3, 4, 5, 6):
         type_code = 6
+    return type_code, schema_type, is_nullable
 
-    def _pad(w: list[object], idx: int) -> None:
-        while len(w) <= idx:
-            w.append(None)
 
-    wire: list[object] = [type_code]
+def _encode_schema_combiners(
+    schema: dict[str, object], wire: JspbArray, include_required: bool
+) -> None:
+    one_of = schema.get("oneOf") or schema.get("one_of")
+    if isinstance(one_of, list) and one_of:
+        wire[SchemaIndex.ONE_OF] = [
+            encode_schema_to_wire(
+                sub if isinstance(sub, dict) else {},
+                include_required=include_required,
+            )
+            for sub in one_of
+            if isinstance(sub, dict) or sub is True
+        ]
+
+    any_of = schema.get("anyOf") or schema.get("any_of")
+    if isinstance(any_of, list) and any_of:
+        wire[SchemaIndex.ANY_OF] = [
+            encode_schema_to_wire(
+                sub if isinstance(sub, dict) else {},
+                include_required=include_required,
+            )
+            for sub in any_of
+            if isinstance(sub, dict) or sub is True
+        ]
+
+    all_of = schema.get("allOf") or schema.get("all_of")
+    if isinstance(all_of, list) and all_of:
+        wire[SchemaIndex.ALL_OF] = [
+            encode_schema_to_wire(
+                sub if isinstance(sub, dict) else {},
+                include_required=include_required,
+            )
+            for sub in all_of
+            if isinstance(sub, dict) or sub is True
+        ]
+
+    not_schema = schema.get("not") or schema.get("not_")
+    if isinstance(not_schema, dict):
+        wire[SchemaIndex.NOT] = encode_schema_to_wire(
+            not_schema, include_required=include_required
+        )
+
+
+def encode_schema_to_wire(
+    schema: dict[str, object], *, include_required: bool = True
+) -> list[object]:
+    type_code, schema_type, is_nullable = _resolve_schema_type_code(schema)
+    wire = JspbArray([type_code])
 
     fmt = schema.get("format")
     if isinstance(fmt, str) and fmt:
-        _pad(wire, 1)
-        wire[1] = fmt
+        wire[SchemaIndex.FORMAT] = fmt
 
     desc = schema.get("description")
     if isinstance(desc, str) and desc:
-        _pad(wire, 2)
-        wire[2] = desc
+        wire[SchemaIndex.DESCRIPTION] = desc
 
     nullable = schema.get("nullable")
     if isinstance(nullable, bool):
-        _pad(wire, 3)
-        wire[3] = nullable
+        wire[SchemaIndex.NULLABLE] = nullable
     elif is_nullable:
-        _pad(wire, 3)
-        wire[3] = True
+        wire[SchemaIndex.NULLABLE] = True
 
     enum_vals = schema.get("enum")
     if not enum_vals and "const" in schema:
         enum_vals = [schema["const"]]
     if isinstance(enum_vals, (list, tuple)) and enum_vals:
-        _pad(wire, 4)
-        wire[4] = [str(x) for x in enum_vals]
+        wire[SchemaIndex.ENUM] = [str(x) for x in enum_vals]
 
     items = schema.get("items")
     if schema_type == "array" or items is not None:
         if isinstance(items, dict):
-            _pad(wire, 5)
-            wire[5] = encode_schema_to_wire(
+            wire[SchemaIndex.ITEMS] = encode_schema_to_wire(
                 items,
                 include_required=include_required,
             )
         elif isinstance(items, list) and items and isinstance(items[0], dict):
-            _pad(wire, 5)
-            wire[5] = encode_schema_to_wire(
+            wire[SchemaIndex.ITEMS] = encode_schema_to_wire(
                 items[0],
                 include_required=include_required,
             )
         elif items is True:
-            _pad(wire, 5)
-            wire[5] = [6]
+            wire[SchemaIndex.ITEMS] = [6]
 
     properties = schema.get("properties")
     if isinstance(properties, dict):
-        _pad(wire, 6)
-        wire[6] = [
+        wire[SchemaIndex.PROPERTIES] = [
             [
                 name,
                 encode_schema_to_wire(
@@ -235,103 +265,54 @@ def encode_schema_to_wire(
 
     required = schema.get("required")
     if include_required and isinstance(required, (list, tuple, set)):
-        _pad(wire, 7)
-        wire[7] = [str(x) for x in required]
+        wire[SchemaIndex.REQUIRED] = [str(x) for x in required]
 
     min_props = schema.get("minProperties") or schema.get("min_properties")
     if isinstance(min_props, int):
-        _pad(wire, 8)
-        wire[8] = min_props
+        wire[SchemaIndex.MIN_PROPERTIES] = min_props
 
     max_props = schema.get("maxProperties") or schema.get("max_properties")
     if isinstance(max_props, int):
-        _pad(wire, 9)
-        wire[9] = max_props
+        wire[SchemaIndex.MAX_PROPERTIES] = max_props
 
     minimum = schema.get("minimum")
     if isinstance(minimum, (int, float)) and not isinstance(minimum, bool):
-        _pad(wire, 10)
-        wire[10] = minimum
+        wire[SchemaIndex.MINIMUM] = minimum
 
     maximum = schema.get("maximum")
     if isinstance(maximum, (int, float)) and not isinstance(maximum, bool):
-        _pad(wire, 11)
-        wire[11] = maximum
+        wire[SchemaIndex.MAXIMUM] = maximum
 
     min_len = schema.get("minLength") or schema.get("min_length")
     if isinstance(min_len, int):
-        _pad(wire, 12)
-        wire[12] = min_len
+        wire[SchemaIndex.MIN_LENGTH] = min_len
 
     max_len = schema.get("maxLength") or schema.get("max_length")
     if isinstance(max_len, int):
-        _pad(wire, 13)
-        wire[13] = max_len
+        wire[SchemaIndex.MAX_LENGTH] = max_len
 
     pattern = schema.get("pattern")
     if isinstance(pattern, str) and pattern:
-        _pad(wire, 14)
-        wire[14] = pattern
+        wire[SchemaIndex.PATTERN] = pattern
 
-    one_of = schema.get("oneOf") or schema.get("one_of")
-    if isinstance(one_of, list) and one_of:
-        _pad_wire(wire, 16)
-        wire[16] = [
-            encode_schema_to_wire(
-                sub if isinstance(sub, dict) else {},
-                include_required=include_required,
-            )
-            for sub in one_of
-            if isinstance(sub, dict) or sub is True
-        ]
-
-    any_of = schema.get("anyOf") or schema.get("any_of")
-    if isinstance(any_of, list) and any_of:
-        _pad_wire(wire, 17)
-        wire[17] = [
-            encode_schema_to_wire(
-                sub if isinstance(sub, dict) else {},
-                include_required=include_required,
-            )
-            for sub in any_of
-            if isinstance(sub, dict) or sub is True
-        ]
-
-    all_of = schema.get("allOf") or schema.get("all_of")
-    if isinstance(all_of, list) and all_of:
-        _pad_wire(wire, 18)
-        wire[18] = [
-            encode_schema_to_wire(
-                sub if isinstance(sub, dict) else {},
-                include_required=include_required,
-            )
-            for sub in all_of
-            if isinstance(sub, dict) or sub is True
-        ]
-
-    not_schema = schema.get("not") or schema.get("not_")
-    if isinstance(not_schema, dict):
-        _pad_wire(wire, 19)
-        wire[19] = encode_schema_to_wire(not_schema, include_required=include_required)
+    _encode_schema_combiners(schema, wire, include_required)
 
     max_items = schema.get("maxItems") or schema.get("max_items")
     if isinstance(max_items, int):
-        _pad_wire(wire, 20)
-        wire[20] = max_items
+        wire[SchemaIndex.MAX_ITEMS] = max_items
 
     min_items = schema.get("minItems") or schema.get("min_items")
     if isinstance(min_items, int):
-        _pad_wire(wire, 21)
-        wire[21] = min_items
+        wire[SchemaIndex.MIN_ITEMS] = min_items
 
     property_ordering = schema.get("propertyOrdering") or schema.get(
         "property_ordering"
     )
     if isinstance(property_ordering, list):
-        _pad_wire(wire, 22)
-        wire[22] = list(property_ordering)
+        wire[SchemaIndex.PROPERTY_ORDERING] = list(property_ordering)
 
-    return wire
+    return wire.compact(max_index=SchemaIndex.PROPERTY_ORDERING)
+
 
 
 def encode_function_declaration_to_wire(declaration: dict[str, object]) -> list[object]:
@@ -339,10 +320,8 @@ def encode_function_declaration_to_wire(declaration: dict[str, object]) -> list[
         declaration = declaration["function"]  # type: ignore[assignment]
     if not declaration.get("name"):
         raise ValueError("functionDeclarations[].name is required")
-    wire = [declaration["name"]]
+    wire = JspbArray([declaration["name"]])
     if declaration.get("description") is not None:
-        while len(wire) <= 1:
-            wire.append(None)
         wire[1] = declaration["description"]
 
     parameters = (
@@ -353,15 +332,11 @@ def encode_function_declaration_to_wire(declaration: dict[str, object]) -> list[
         or declaration.get("parameters_schema")
     )
     if isinstance(parameters, dict):
-        while len(wire) <= 2:
-            wire.append(None)
         wire[2] = encode_schema_to_wire(parameters, include_required=True)
     elif isinstance(parameters, list):
-        while len(wire) <= 2:
-            wire.append(None)
         wire[2] = parameters
 
-    return wire
+    return wire.compact()
 
 
 def _normalize_gemini_modalities(

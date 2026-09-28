@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import IntEnum
 
+from .wire_spec import GenerationConfigIndex, JspbArray, PartIndex
+
 
 class ThinkingLevel(IntEnum):
     LOW = 1
@@ -61,147 +63,177 @@ class AistudioGenerationConfig:
 
     @property
     def stop_sequences(self):
-        return self.values[1] if len(self.values) > 1 else None
+        idx = GenerationConfigIndex.STOP_SEQUENCES
+        return self.values[idx] if len(self.values) > idx else None
 
     @stop_sequences.setter
     def stop_sequences(self, value):
-        self._ensure_len(2)
-        self.values[1] = value
+        idx = GenerationConfigIndex.STOP_SEQUENCES
+        self._ensure_len(idx + 1)
+        self.values[idx] = value
 
     @property
     def max_tokens(self):
-        return self.values[3] if len(self.values) > 3 else None
+        idx = GenerationConfigIndex.MAX_TOKENS
+        return self.values[idx] if len(self.values) > idx else None
 
     @max_tokens.setter
     def max_tokens(self, value):
-        self._ensure_len(4)
-        self.values[3] = value
+        idx = GenerationConfigIndex.MAX_TOKENS
+        self._ensure_len(idx + 1)
+        self.values[idx] = value
 
     @property
     def temperature(self):
-        return self.values[4] if len(self.values) > 4 else None
+        idx = GenerationConfigIndex.TEMPERATURE
+        return self.values[idx] if len(self.values) > idx else None
 
     @temperature.setter
     def temperature(self, value):
-        self._ensure_len(5)
-        self.values[4] = value
+        idx = GenerationConfigIndex.TEMPERATURE
+        self._ensure_len(idx + 1)
+        self.values[idx] = value
 
     @property
     def top_p(self):
-        return self.values[5] if len(self.values) > 5 else None
+        idx = GenerationConfigIndex.TOP_P
+        return self.values[idx] if len(self.values) > idx else None
 
     @top_p.setter
     def top_p(self, value):
-        self._ensure_len(6)
-        self.values[5] = value
+        idx = GenerationConfigIndex.TOP_P
+        self._ensure_len(idx + 1)
+        self.values[idx] = value
 
     @property
     def top_k(self):
-        return self.values[6] if len(self.values) > 6 else None
+        idx = GenerationConfigIndex.TOP_K
+        return self.values[idx] if len(self.values) > idx else None
 
     @top_k.setter
     def top_k(self, value):
-        self._ensure_len(7)
-        self.values[6] = value
+        idx = GenerationConfigIndex.TOP_K
+        self._ensure_len(idx + 1)
+        self.values[idx] = value
 
     @property
     def response_mime_type(self):
-        return self.values[7] if len(self.values) > 7 else None
+        idx = GenerationConfigIndex.RESPONSE_MIME_TYPE
+        return self.values[idx] if len(self.values) > idx else None
 
     @response_mime_type.setter
     def response_mime_type(self, value):
-        self._ensure_len(8)
-        self.values[7] = value
+        idx = GenerationConfigIndex.RESPONSE_MIME_TYPE
+        self._ensure_len(idx + 1)
+        self.values[idx] = value
 
     @property
     def response_schema(self):
-        return self.values[8] if len(self.values) > 8 else None
+        idx = GenerationConfigIndex.RESPONSE_SCHEMA
+        return self.values[idx] if len(self.values) > idx else None
 
     @response_schema.setter
     def response_schema(self, value):
-        self._ensure_len(9)
-        self.values[8] = value
+        idx = GenerationConfigIndex.RESPONSE_SCHEMA
+        self._ensure_len(idx + 1)
+        self.values[idx] = value
 
     @property
     def presence_penalty(self):
-        return self.values[9] if len(self.values) > 9 else None
+        idx = GenerationConfigIndex.PRESENCE_PENALTY
+        return self.values[idx] if len(self.values) > idx else None
 
     @presence_penalty.setter
     def presence_penalty(self, value):
-        self._ensure_len(10)
-        self.values[9] = value
+        idx = GenerationConfigIndex.PRESENCE_PENALTY
+        self._ensure_len(idx + 1)
+        self.values[idx] = value
 
     @property
     def frequency_penalty(self):
-        return self.values[10] if len(self.values) > 10 else None
+        idx = GenerationConfigIndex.FREQUENCY_PENALTY
+        return self.values[idx] if len(self.values) > idx else None
 
     @frequency_penalty.setter
     def frequency_penalty(self, value):
-        self._ensure_len(11)
-        self.values[10] = value
+        idx = GenerationConfigIndex.FREQUENCY_PENALTY
+        self._ensure_len(idx + 1)
+        self.values[idx] = value
 
     @property
     def response_logprobs(self):
-        return self.values[11] if len(self.values) > 11 else None
+        idx = GenerationConfigIndex.RESPONSE_LOGPROBS
+        return self.values[idx] if len(self.values) > idx else None
 
     @response_logprobs.setter
     def response_logprobs(self, value):
-        self._ensure_len(12)
-        self.values[11] = value
+        idx = GenerationConfigIndex.RESPONSE_LOGPROBS
+        self._ensure_len(idx + 1)
+        self.values[idx] = value
 
     @property
     def logprobs(self):
-        return self.values[12] if len(self.values) > 12 else None
+        idx = GenerationConfigIndex.LOGPROBS
+        return self.values[idx] if len(self.values) > idx else None
 
     @logprobs.setter
     def logprobs(self, value):
-        self._ensure_len(13)
-        self.values[12] = value
+        idx = GenerationConfigIndex.LOGPROBS
+        self._ensure_len(idx + 1)
+        self.values[idx] = value
 
     @property
     def image_output_mode(self):
-        return self.values[14] if len(self.values) > 14 else None
+        idx = GenerationConfigIndex.IMAGE_OUTPUT_MODE
+        return self.values[idx] if len(self.values) > idx else None
 
     @image_output_mode.setter
     def image_output_mode(self, value):
-        self._ensure_len(15)
+        idx = GenerationConfigIndex.IMAGE_OUTPUT_MODE
+        self._ensure_len(idx + 1)
         if isinstance(value, AistudioImageOutputMode):
             value = value.to_wire()
-        self.values[14] = value
+        self.values[idx] = value
 
     @property
     def thinking_config(self):
-        return self.values[16] if len(self.values) > 16 else None
+        idx = GenerationConfigIndex.THINKING_CONFIG
+        return self.values[idx] if len(self.values) > idx else None
 
     @thinking_config.setter
     def thinking_config(self, value):
-        self._ensure_len(17)
-        self.values[16] = value
+        idx = GenerationConfigIndex.THINKING_CONFIG
+        self._ensure_len(idx + 1)
+        self.values[idx] = value
 
     @property
     def media_resolution(self):
-        return self.values[17] if len(self.values) > 17 else None
+        idx = GenerationConfigIndex.MEDIA_RESOLUTION
+        return self.values[idx] if len(self.values) > idx else None
 
     @media_resolution.setter
     def media_resolution(self, value):
-        self._ensure_len(18)
+        idx = GenerationConfigIndex.MEDIA_RESOLUTION
+        self._ensure_len(idx + 1)
         if isinstance(value, MediaResolution):
             value = int(value)
-        self.values[17] = value
+        self.values[idx] = value
 
     @property
     def output_resolution(self):
-        return self.values[26] if len(self.values) > 26 else None
+        idx = GenerationConfigIndex.OUTPUT_RESOLUTION
+        return self.values[idx] if len(self.values) > idx else None
 
     @output_resolution.setter
     def output_resolution(self, value):
-        self._ensure_len(27)
-        self.values[26] = value
+        idx = GenerationConfigIndex.OUTPUT_RESOLUTION
+        self._ensure_len(idx + 1)
+        self.values[idx] = value
 
     def clear_gemma_thinking_budget(self):
-        if len(self.values) > 16:
-            self.values[16] = None
-
+        idx = GenerationConfigIndex.THINKING_CONFIG
+        if len(self.values) > idx:
+            self.values[idx] = None
     def enable_default_thinking(self):
         if self.thinking_config is None:
             self.thinking_config = AistudioThinkingConfig.default().to_wire()
@@ -226,30 +258,27 @@ class AistudioPart:
     thought_signature: str | None = None
     thought: bool = False
 
-    def to_wire(self):
+    def to_wire(self) -> list[object]:
+        wire = JspbArray()
         if self.file_id:
-            return [None, None, None, None, None, [self.file_id]]
+            wire[PartIndex.FILE_DATA] = [self.file_id]
+            return wire.compact()
         if self.inline_data:
             mime, b64 = self.inline_data
-            part = [None, None, [mime, b64]]
+            wire[PartIndex.INLINE_DATA] = [mime, b64]
             if self.thought_signature:
-                while len(part) <= 14:
-                    part.append(None)
-                part[14] = self.thought_signature
-            return part
+                wire[PartIndex.THOUGHT_SIGNATURE] = self.thought_signature
+            return wire.compact()
         if self.function_call:
             name, args = self.function_call[0], self.function_call[1]
             call_id = self.function_call[2] if len(self.function_call) > 2 else None
             function_call = [name, _encode_wire_args(args)]
             if call_id:
                 function_call.append(call_id)
-            part = [None] * 11
-            part[10] = function_call
+            wire[PartIndex.FUNCTION_CALL_ALT] = function_call
             if self.thought_signature:
-                while len(part) <= 14:
-                    part.append(None)
-                part[14] = self.thought_signature
-            return part
+                wire[PartIndex.THOUGHT_SIGNATURE] = self.thought_signature
+            return wire.compact()
         if self.function_response:
             name, response = self.function_response[0], self.function_response[1]
             call_id = (
@@ -258,27 +287,21 @@ class AistudioPart:
             function_response = [name, _encode_wire_args(response)]
             if call_id:
                 function_response.append(call_id)
-            part = [None] * 12
-            part[11] = function_response
-            return part
+            wire[PartIndex.FUNCTION_RESPONSE_ALT] = function_response
+            return wire.compact()
         # Text part — mark as thinking when thought=True (wire index 12 = 1).
         if self.thought:
-            part: list = [None, self.text]
-            while len(part) <= 12:
-                part.append(None)
-            part[12] = 1
+            wire[PartIndex.TEXT] = self.text
+            wire[PartIndex.THOUGHT_ALT_FLAG] = 1
             if self.thought_signature:
-                while len(part) <= 14:
-                    part.append(None)
-                part[14] = self.thought_signature
-            return part
+                wire[PartIndex.THOUGHT_SIGNATURE] = self.thought_signature
+            return wire.compact()
         if self.thought_signature:
-            part = [None, self.text]
-            while len(part) <= 14:
-                part.append(None)
-            part[14] = self.thought_signature
-            return part
-        return [None, self.text]
+            wire[PartIndex.TEXT] = self.text
+            wire[PartIndex.THOUGHT_SIGNATURE] = self.thought_signature
+            return wire.compact()
+        wire[PartIndex.TEXT] = self.text
+        return wire.compact()
 
 
 def _encode_wire_args(value):

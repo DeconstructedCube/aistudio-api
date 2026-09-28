@@ -86,31 +86,22 @@ sequenceDiagram
    - 用户访问 `https://aistudio.google.com/prompts/new_chat?model=gemini-3.8-flash`（或子账号路由 `/u/{auth_user}/...`）。
    - HTML 页面引入 `boq-makersuite` JavaScript Bundle。
 2. **依赖注入容器初始化**：
-   - Angular 根组件启动时，DI 容器解析并实例化 `BotGuardService`（即混淆类 `_.Vv`，注入令牌 `_.Vv.sa`）单例：
+   - Angular 根组件启动时，DI 容器解析并实例化 `BotGuardService`（符号随版本变化，如 `_.QC`、`_.Vv`，注入令牌挂载于 root 作用域）：
      ```javascript
-     _.Vv = class {
+     // 结构参考 (类混淆名以实际运行环境为准):
+     _.QC = class {
          constructor() {
-             this.wb = _.q(_.mr); // 注入全局环境配置
-             this.F = false;
+             this.qb = _.n(_.Aq);
+             this.F = !1;
              this.H = new Promise(a => {
                  var b = this;
-                 return _.z(function*() {
-                     b.wb.la && (yield b.initialize());
+                 return _.y(function*() {
+                     b.qb.la && (yield b.initialize());
                      a();
                  });
              });
-             // 监听标签页可见性变化
-             document.addEventListener("visibilitychange", () => {
-                 if (this.F && document.visibilityState === "visible") {
-                     let a;
-                     (a = this.A) == null || a.KE();
-                 }
-                 this.F = document.visibilityState === "hidden";
-             });
          }
      };
-     _.Vv.J = function(a) { return new (a || _.Vv); };
-     _.Vv.sa = _.bd({ token: _.Vv, factory: _.Vv.J, Aa: "root" });
      ```
    - 从 Cookie 中读取 `SAPISID`，并根据当前 UNIX 时间戳计算 `SAPISIDHASH`。
 
@@ -210,19 +201,33 @@ _.l(requestProto, 5, t);             // 3. 将 Token 注入 Protobuf 字段 5 (W
    };
    ```
 
-2. **生成 BotGuard 快照 (`_.Dp` / `snapKey`)**：
+2. **生成 BotGuard 快照 (`_.jp` / `_.Dp` / `snapKey`)**：
    前端调用被检测到的专属签名函数（在 `default_MakerSuite` 中动态匹配注册）：
    ```javascript
+   // 实测最新版本 (2026-09-28 live 验证):
+   _.jp = function(a, b) {
+       return _.y(function*() {
+           yield a.H; // 等待 BotGuardService 初始化 Promise
+           return a.A
+               ? (yield Vqb(a.A), a.A.snapshot({ Bcc: { content: b } }))
+               : "";
+       });
+   };
+   // 历史版本混淆符号参考:
    _.Dp = function(service, contentHash) {
        return _.z(function*() {
-           yield service.H; // 等待 BotGuardService 初始化 Promise
+           yield service.H;
            return service.A
                ? (yield JUa(service.A), service.A.snapshot({ e9b: { content: contentHash } }))
                : "";
        });
    };
    ```
-
+   > **符号混淆与动态匹配**：Google 构建版本更新时会重置混淆名（如类名 `_.QC`、签名函数 `_.jp`、参数键 `Bcc` 等），因此系统通过源码特征（`.snapshot`、`content`、`yield`）动态定位函数，避免硬编码混淆符号。
+   >
+   > **生命周期与状态**：
+   > - 快照 Token 与单次请求内容及时间戳绑定，不跨请求复用。
+   > - 会话凭据与 Nonce 由服务端动态下发，账号切换时重新初始化。
 3. **虚拟机内部处理**：
    - 采集浏览器指纹（屏幕分辨率、语言列表、时钟精度、WebGL 上下文特征等）；
    - 使用握手会话秘钥对 `contentHash` 与环境特征进行加密并计算 HMAC 签名；

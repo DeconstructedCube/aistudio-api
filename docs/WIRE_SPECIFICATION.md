@@ -183,11 +183,11 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 
 | 数组索引 | Proto 字段号 | 字段名 (Property) | 类型 | 说明与编码规范 |
 |---|---|---|---|---|
-| **`0`** | Field 1 | `type` | `int` | **严格限制取值 `1..6`**：`1`=string, `2`=number, `3`=integer, `4`=boolean, `5`=array, `6`=object。**严禁赋值为 `0` (`TYPE_UNSPECIFIED`)**，否则上游直接抛出 `HTTP 400: Request contains an invalid argument`（前端 `dwa()` 报 `Invalid "type" 0`） |
+| **`0`** | Field 1 | `type` | `int` | 取值范围 `1..6`：`1`=string, `2`=number, `3`=integer, `4`=boolean, `5`=array, `6`=object。不可为 `0` (`TYPE_UNSPECIFIED`)，否则上游返回 `HTTP 400` |
 | **`1`** | Field 2 | `format` | `string` | 格式修饰符（如 `"date-time"`, `"int64"`） |
-| **`2`** | Field 3 | `description` | `string` | **字段语义描述**（向模型传达业务逻辑的关键元数据） |
+| **`2`** | Field 3 | `description` | `string` | 字段语义描述 |
 | **`3`** | Field 4 | `nullable` | `bool` | 是否允许为 null |
-| **`4`** | Field 5 | `enum` | `list[str]` | **枚举合法取值数组**（防止模型生成非法入参的核心约束） |
+| **`4`** | Field 5 | `enum` | `list[str]` | 枚举合法取值数组 |
 | **`5`** | Field 6 | `items` | `list` | 数组元素 Schema 递归定义（针对 array 类型） |
 | **`6`** | Field 7 | `properties` | `list` | 对象属性键值对列表：`[[prop_name, prop_schema], ...]` |
 | **`7`** | Field 8 | `required` | `list[str]` | 必填属性名称数组 |
@@ -210,6 +210,9 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 > [!NOTE]
 > **Schema 字段边界说明**：
 > 根据 AI Studio 前端 Bundle 逆向提取的 Schema Proto 字段集（`_.mhb = new Set(...)`），定义范围截止于 Field 23（`propertyOrdering`，数组下标 22）。早期推测的 `title` (Field 24) 与 `default` (Field 25) 并不存在于 Google Schema Proto 中；向数组注入下标 23 或 24 会被服务端识别为未知字段并返回 `HTTP 400: Request contains an invalid argument`。
+
+### 6.4 工具控制模式 (ToolConfig)
+
 MakerSuite 协议无独立顶层工具控制字段，Gemini API 的 `toolConfig` 在网关层按语义映射：
 
 | 模式 (Mode) | 语义说明 | 网关处理策略 |
@@ -339,7 +342,7 @@ AI Studio Web 核心过滤数组：
 5. **视频帧流式抽取服务 (`StreamExtractVideoFrames`)**：
    RPC 服务 `/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/StreamExtractVideoFrames`，用于在后端按时间戳或指定采样率无损切片视频流并回传图片帧。
 
-### 8.6 前端 JS (JSPB) 工具调用参数压缩机制与解包原则
+### 8.1 前端 JS (JSPB) 工具调用参数压缩机制与解包原则
 
 根据对 AI Studio 前端生产包动态逆向分析，Google 前端在处理 `FunctionCall.args` 与 JSON Schema 时存在特定的 JSPB 优化机制：
 1. **布尔压缩 (Boolean 0/1 Compression)**：

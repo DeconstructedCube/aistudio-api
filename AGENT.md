@@ -21,9 +21,9 @@
 - **原生 Gemini 协议专一性**：服务于 Gemini 官方 API 规范（包含 thinking、multimodal、image-generation、function calling 等），不引入额外的跨厂商协议转译层。
 - **轻量 CDP 驱动**：使用纯 Python 异步 WebSocket 直连 Chrome DevTools Protocol（CDP），不依赖 Node.js、Playwright 或 Selenium。
 - **浏览器内 XHR Replay**：在 MakerSuite 页面上下文中执行携带 `withCredentials = true` 的异步 XHR 请求，天然复用完整的 Cookie 会话、BotGuard 快照与环境指纹。
-- **代码即地面真理（Code as Ground Truth）**：通过全量测试验证的代码是系统最终的事实标准。当技术规范文档与真实代码逻辑出现分歧时，**一律以代码为准**，严禁劣化生产代码去迎合陈旧文档，并在重构过程中顺手同步修正完善文档。
-- **优化事实优先，严禁过度迎合测试（Fact & Architecture over Brittle Tests）**：系统架构整洁性、高内聚低耦合与防御边界是最高优先级。严禁为了迁就强耦合了私有变量（如内部字典 `rotator._stats`）的脆弱 mock 测试而妥协生产架构设计；遇冲突时应重构测试使其对齐公共领域契约，坚决消除抽象泄露（Abstraction Leak）。
-- **协议逆向规范常量化（Specification Constants & No Magic Numbers）**：Protobuf-over-JSON 逆向数组索引或魔数必须有据可查，统一提取为具备语义的规范常量（如 `WIRE_PART_*`、`WIRE_USAGE_*`），并附带对应 `docs/WIRE_SPECIFICATION.md` 章节交叉引用，杜绝裸数字直接散落业务逻辑中。
+- **代码即事实标准（Code as Ground Truth）**：通过全量测试验证的代码是系统的事实标准。当技术规范文档与真实代码逻辑出现分歧时以代码为准，并在重构过程中同步更新文档。
+- **架构事实优先（Fact & Architecture over Brittle Tests）**：保持架构整洁与低耦合。避免为了迁就耦合了私有变量的脆弱 mock 测试而妥协生产设计；遇冲突时应重构测试以对齐公共接口契约，消除抽象泄露。
+- **协议索引常量化（Specification Constants & No Magic Numbers）**：Protobuf-over-JSON 逆向数组索引统一提取为具备明确语义的规范枚举或常量（如 `wire_spec.py`），杜绝裸数字散落业务逻辑中。
 
 ## 2. 运行时与环境约束 (Termux)
 
@@ -124,9 +124,9 @@ uv run python3 main.py server --port 8080
 1. **优先读取完整文件，严禁滥用范围截断与 raw（Full Reads Only）**：
    - 查看代码、测试及文档文件时，**一律使用完整的相对文件路径读取完整文件**。
    - **严禁无端添加行号范围选择器（如 `:1-50`）或 `:raw`**，避免局部切片截断导致上下文断裂、误判函数边界，或由于行号漂移造成后续 `edit` 命中失败被拦截。
-2. **批量并发读取，严禁逐个串行读取（Batch Parallel Reads）**：
-   - 涉及多个独立文件、测试文件或模块的调研与比对时，**必须在单个响应轮次中同时并发发起多个 `read` 调用**。
-   - 严禁像挤牙膏一样每一轮交互只读一个文件，杜绝串行多轮调用造成的上下文浪费与交互拖沓。
+2. **批量并发读取（Batch Parallel Reads）**：
+   - 涉及多个独立文件、测试文件或模块的调研比对时，在单个响应轮次中同时并发发起多个 `read` 调用。
+   - 避免逐个串行读取导致多轮调用消耗上下文与拖慢交互。
 3. **严禁滥用 `eval` 执行文件查看（No Eval Abuse）**：
    - 查看文件内容、定位符号与阅读代码必须使用专业的 `read` / `grep` 工具，**严禁使用 `eval` 编写 Python 文件读取脚本来替代 `read`**。
    - `eval` 仅限用于必要的复杂内存原型运算、即时逻辑求值或重现动态执行结果，非必要绝不滥用。
@@ -136,9 +136,9 @@ uv run python3 main.py server --port 8080
 5. **任务清单 (todo) 保持敏捷与批量操作**：
    - 待办事项完成时，**允许并鼓励一次性全部批量划掉**，严禁机械地一轮交互只标记一个任务。
    - 专注推动实质性工程进展，避免频繁产生仅包含待办状态翻转的无效上下文。
-6. **精炼克制，严禁画蛇添足（No Bloat）**：
-   - 方案设计、代码修改与文档更新必须直击痛点、切中要害。
-   - 严禁为了“显得工作量大”而添加冗余胶水层、无用抽象、过度包装或形式主义样板文档，保持代码与文档精炼干脆。
+6. **精炼克制（No Bloat）**：
+   - 方案设计、代码修改与文档更新直击痛点。
+   - 避免引入形式主义的胶水层、过度抽象与冗余样板代码，保持代码与文档紧凑精炼。
 7. **交付前全量审查完整 diff（Review Full Diff）**：
    - 每次提交或报告完成前，**必须完整查看整个 `git diff`（不带行数折叠与省略）**，逐行确认所有改动准确无误、没有残留调试代码或意外破损。
    - 确保 `uv run ruff check .`、`bun x pyright` 和 `uv run pytest` 全部零报错通过后再行提交。

@@ -1,8 +1,10 @@
 (args) => {
     const rid = args.rid;
-    if (!window.__streams) window.__streams = {};
-    if (!window.__stream_abort) window.__stream_abort = {};
-
+    window.__AISTUDIO__ = window.__AISTUDIO__ || {};
+    const streams = window.__AISTUDIO__.streams = window.__AISTUDIO__.streams || window.__streams || {};
+    const aborts = window.__AISTUDIO__.streamAbort = window.__AISTUDIO__.streamAbort || window.__stream_abort || {};
+    window.__streams = streams;
+    window.__stream_abort = aborts;
     const existing = window.__streams[rid];
     if (existing && existing.abort) {
         try { existing.abort(); } catch (e) {}
@@ -44,10 +46,11 @@
             timeoutId = null;
         }
         try {
+            if (window.__AISTUDIO__ && window.__AISTUDIO__.streams) delete window.__AISTUDIO__.streams[rid];
+            if (window.__AISTUDIO__ && window.__AISTUDIO__.streamAbort) delete window.__AISTUDIO__.streamAbort[rid];
             if (window.__streams) delete window.__streams[rid];
             if (window.__stream_abort) delete window.__stream_abort[rid];
         } catch (e) {}
-    }
 
     const doAbort = function() {
         cleanup();

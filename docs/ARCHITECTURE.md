@@ -115,26 +115,27 @@ flowchart TD
 ### 2.4 基础设施层 (`src/aistudio_api/infrastructure/`)
 
 - **浏览器与 CDP 子系统 (`browser/`)**：
-  - `cdp_client.py`：基于纯 Python 异步 WebSocket 的 Chrome DevTools Protocol 客户端，支持网络层黑名单拦截与自动清理监听器。
-  - `browser_engine.py`：负责 Chromium 跨平台路径探测，配置进程启动参数（如 `--max-old-space-size=128 --expose-gc` 控制内存占用）。
-  - `scripts.py`：浏览器自动化脚本加载器，将注入脚本从 Python 源码剥离至 `js/*.js` 独立管理。
-  - `js/`：独立 JavaScript 模块库，包含 `install_hooks.js`、`streaming_init.js`、`stream_cleanup.js`、`dialog_cleanup.js`、`dom_gc_cleanup.js` 等，支持静态语法检查与独立维护。
+  - `cdp_client.py`：Chrome DevTools Protocol 异步客户端，负责 WebSocket 协议通信、网络过滤与目标管理。
+  - `browser_engine.py`：Chromium 路径探测、参数组装与进程/端口生命周期管理（支持 Win32 API 与 Linux 容器环境）。
+  - `scripts.py`：浏览器端注入脚本加载器。
+  - `js/`：浏览器端独立脚本，包含 Hook 注入、流式通信、快照签名与内存清理。
 - **网关与编解码子系统 (`gateway/`)**：
-  - `client.py`：`AIStudioClient` 网关统一门面，组装会话、模板捕获、请求重放与流式生成。
-  - `session.py`：`BrowserSession` 会话管理器，负责页面导航、请求拦截、保持 BotGuard 服务运行时，并通过 `_snapshot_lock` 串行生成单次请求快照签名。
-  - `transport.py`：基于 CDP 原生 Binding (`__aistudio_stream_push__`) 的实时事件驱动流式管道，消除冗余轮询，辅以有界异步队列反压控制与 Python 端 SAPISIDHASH 鉴权注入。
-  - `wire_codec.py`：负责 Google 内部 Protobuf-over-JSON 数组结构构造与请求重写。
-  - `wire_parser.py`：Protobuf-over-JSON 响应解析器，防范 JSPB `[parts, role]` 结构混淆，解包 Struct 字典与 ListValue 数组并还原布尔压缩值。
-  - `stream_parser.py`：增量式流式 JSON 状态机解析器，负责去除 XSSI 前缀（`)]}'`）并在流式传输中按深度截取解析完整分块。
-  - `capture.py`：集中统一的请求模板单例缓存管理。
-  - `replay.py`：请求重放服务，在页面上下文内执行注入请求并支持 HTTP 降级。
-  - `streaming.py`：流式生成编排与异常转换网关。
-  - `model_discovery.py`：双通道模型列表探测（浏览器内 XHR 与外部 HTTP RPC），提供本地默认列表保底。
-  - `model_defaults.py`：模型规则解析、工具默认注入及基于文件 mtime 的内存缓存。
+  - `client.py`：`AIStudioClient` 统一门面，组装请求重放、流式生成与会话生命周期。
+  - `session.py`：`BrowserSession` 会话管理器，负责页面导航、WAA 运行时保持及实时快照生成。
+  - `wire_spec.py`：Protobuf-over-JSON (JSPB) 字段索引枚举与 `JspbArray` 稀疏容器定义。
+  - `wire_codec.py`：JSPB 请求结构组包与参数改写。
+  - `wire_parser.py`：JSPB 响应解析器，处理 Struct 结构体、ListValue 数组与状态码映射。
+  - `stream_parser.py`：流式 JSON 增量状态机解析器，去除 XSSI 前缀并按深度解析数据分块。
+  - `transport.py`：基于 CDP Binding 的事件推送管道，支持队列反压控制与时间戳签名注入。
+  - `capture.py`：请求模板缓存与模型适配。
+  - `replay.py`：页面上下文 XHR 请求重放与异常降级。
+  - `streaming.py`：流式响应分发与异常映射。
+  - `model_discovery.py`：可用模型列表动态探测与本地降级。
+  - `model_defaults.py`：模型默认规则解析与缓存。
 - **账号与持久化子系统 (`account/`)**：
-  - `account_store.py`：基于文件系统的原子持久化凭据库（写入临时文件后 `os.replace` 原子替换，避免写入损坏）。
-  - `cookie_parser.py`：支持 JSON、Netscape 与 Header 格式 Cookie 解析，计算 SAPISIDHASH 签名，过滤环境易腐凭据，提供多账号递归探活（`u/0`, `u/1` 等）。
-  - `cookie_refresher.py`：浏览器凭据格式规整与会话探活刷新。
+  - `account_store.py`：账号凭据持久化存储（通过临时文件原子替换保障并发安全）。
+  - `cookie_parser.py`：Cookie 格式解析、SAPISIDHASH 计算与多子账号探测。
+  - `cookie_refresher.py`：Cookie 凭据规整与会话保活刷新。
 
 ## 3. 请求生命周期与执行时序
 
