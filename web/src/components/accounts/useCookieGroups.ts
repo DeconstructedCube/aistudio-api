@@ -43,8 +43,6 @@ export function useCookieGroups(accounts: Ref<AccountWithStats[]>, activeId: Ref
       let totalSuccess = 0
       let totalRateLimited = 0
       let hasActive = false
-      let primaryEmail = ''
-
       for (let j = 0; j < accList.length; j++) {
         const a = accList[j]
         totalRequests += a.requests || 0
@@ -52,9 +50,6 @@ export function useCookieGroups(accounts: Ref<AccountWithStats[]>, activeId: Ref
         totalRateLimited += a.rate_limited || 0
         if (a.id === currentActiveId) {
           hasActive = true
-        }
-        if (!primaryEmail && a.email) {
-          primaryEmail = a.email
         }
       }
 
@@ -65,7 +60,7 @@ export function useCookieGroups(accounts: Ref<AccountWithStats[]>, activeId: Ref
       })
 
       const earliestCreatedAt = accList[0]?.created_at || ''
-      const sessionTitle = primaryEmail || `Cookie 会话 #${i + 1}`
+      const sessionTitle = `Cookie 凭据组 #${i + 1}`
 
       result.push({
         id: cid,

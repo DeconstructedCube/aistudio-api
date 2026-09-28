@@ -370,3 +370,36 @@ async def test_browser_session_generate_snapshot_concurrency(mock_cdp_page):
     # Because of _snapshot_lock, max_concurrent_evals must be exactly 1
     assert max_concurrent_evals == 1
     assert len(set(results)) == 5
+
+
+def test_browser_session_temporary_chat_urls():
+    """Verify AI Studio navigation URLs always enforce temporary=true to prevent history pollution."""
+    from aistudio_api.infrastructure.gateway.session import (
+        AI_STUDIO_URL,
+        AI_STUDIO_URL_FALLBACK,
+    )
+
+    assert "temporary=true" in AI_STUDIO_URL
+    assert "temporary=true" in AI_STUDIO_URL_FALLBACK
+
+    session = BrowserSession(port=9222)
+    urls_default = session._get_aistudio_url(model="gemini-3.7-flash")
+    assert all("temporary=true" in u for u in urls_default)
+
+    session.get_current_auth_user = MagicMock(return_value="3")
+    urls_multi = session._get_aistudio_url(model="gemini-3.8-flash")
+    assert all("temporary=true" in u for u in urls_multi)
+    assert any("/u/3/" in u for u in urls_multi)
+
+
+@pytest.mark.asyncio
+async def test_browser_session_enable_temporary_chat(mock_cdp_page):
+    """Verify _enable_temporary_chat evaluates the in-page selector script."""
+    session = BrowserSession(port=9222)
+    mock_cdp_page.evaluate.return_value = True
+
+    res = await session._enable_temporary_chat(mock_cdp_page)
+    assert res is True
+    mock_cdp_page.evaluate.assert_called_once()
+    expr = mock_cdp_page.evaluate.call_args[0][0]
+    assert "temporary" in expr.lower()

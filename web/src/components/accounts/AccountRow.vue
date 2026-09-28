@@ -13,7 +13,9 @@ import {
   RotateCcw,
   AlertCircle,
   RefreshCw,
+  Mail,
 } from 'lucide-vue-next'
+import { useAccountsStore } from '@/stores/accounts.ts'
 
 const props = defineProps<{
   account: AccountWithStats
@@ -46,6 +48,18 @@ const todayRequests = computed(() => {
   const reqs = props.account.model_requests || {}
   return Object.values(reqs).reduce((sum, count) => sum + (Number(count) || 0), 0)
 })
+
+const accountsStore = useAccountsStore()
+const detectingEmail = ref(false)
+
+async function handleDetectEmail() {
+  detectingEmail.value = true
+  try {
+    await accountsStore.detectAccountEmail(props.account.id)
+  } finally {
+    detectingEmail.value = false
+  }
+}
 </script>
 
 <template>
@@ -80,7 +94,7 @@ const todayRequests = computed(() => {
         <div class="truncate">
           <div class="flex items-center gap-1.5">
             <span class="font-semibold text-gray-900 text-xs truncate">
-              {{ account.name || 'Google Account' }}
+              {{ account.email || account.name || 'Google Account' }}
             </span>
             <button
               type="button"
@@ -91,11 +105,15 @@ const todayRequests = computed(() => {
               <Edit2 class="w-3 h-3" />
             </button>
           </div>
-          <div class="text-[11px] text-gray-400 font-mono truncate">
+          <div class="text-[11px] text-gray-400 font-mono truncate flex items-center gap-1.5">
             <span
-              v-if="account.email"
-              class="text-gray-600 mr-1"
-            >{{ account.email }}</span>
+              v-if="account.email && account.name && account.name !== account.email"
+              class="text-gray-500"
+            >{{ account.name }} ·</span>
+            <span
+              v-else-if="!account.email"
+              class="text-amber-600/90 bg-amber-50 px-1 py-0.2 rounded text-[10px] border border-amber-200/50"
+            >未记录邮箱</span>
             <span>ID: {{ account.id }}</span>
           </div>
         </div>
@@ -180,6 +198,17 @@ const todayRequests = computed(() => {
           >
             <span>激活</span>
           </Button>
+
+          <button
+            type="button"
+            class="p-1 text-gray-400 hover:text-brand-600 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+            :class="{ 'opacity-50 cursor-not-allowed': detectingEmail }"
+            title="自动识别并记录此子账号真实邮箱"
+            :disabled="detectingEmail"
+            @click="handleDetectEmail"
+          >
+            <Mail class="w-3.5 h-3.5" />
+          </button>
 
           <button
             v-if="(account.rate_limited || 0) > 0 && !account.session_expired"

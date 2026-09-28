@@ -23,6 +23,8 @@ def test_blocked_url_patterns_coverage():
     assert "*.woff2" in BLOCKED_URL_PATTERNS
     assert "*google-analytics.com*" in BLOCKED_URL_PATTERNS
     assert "*play.google.com/log*" in BLOCKED_URL_PATTERNS
+    assert "*SavePrompt*" in BLOCKED_URL_PATTERNS
+    assert "*CreatePrompt*" in BLOCKED_URL_PATTERNS
 
 
 @pytest.mark.asyncio

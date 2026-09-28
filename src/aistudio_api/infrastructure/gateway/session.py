@@ -39,8 +39,12 @@ from aistudio_api.infrastructure.utils.logger import get_logger
 
 log = get_logger("session")
 
-AI_STUDIO_URL = "https://aistudio.google.com/prompts/new_chat?model=gemini-3.7-flash"
-AI_STUDIO_URL_FALLBACK = "https://aistudio.google.com/app/prompts/new_chat"
+AI_STUDIO_URL = (
+    "https://aistudio.google.com/prompts/new_chat?model=gemini-3.7-flash&temporary=true"
+)
+AI_STUDIO_URL_FALLBACK = (
+    "https://aistudio.google.com/app/prompts/new_chat?temporary=true"
+)
 GOOGLE_LOGIN_BOOTSTRAP_URL = (
     "https://accounts.google.com/ServiceLogin?continue=https://aistudio.google.com"
 )
@@ -420,6 +424,7 @@ class BrowserSession:
                     )
                     or ""
                 )
+                await self._enable_temporary_chat(page)
                 await page.fill("textarea", BOTGUARD_BOOTSTRAP_PROMPT)
                 await page.wait_for_timeout(800)
                 await page.evaluate(DIALOG_CLEANUP_JS)
@@ -465,6 +470,9 @@ class BrowserSession:
                         # 执行 DOM 垃圾回收，消除历史对话 DOM 堆积
                         with suppress(Exception):
                             await page.evaluate(DOM_GC_CLEANUP_JS)
+                        # 自动识别并记录当前账号的真实邮箱
+                        with suppress(Exception):
+                            await self._verify_account_identity(page)
                         log.debug(
                             "BotGuard 捕获成功，耗时 %d 秒 (累计 %.1f 秒)",
                             i + 1,
@@ -572,6 +580,7 @@ class BrowserSession:
                     )
                     or ""
                 )
+                await self._enable_temporary_chat(page)
                 await page.fill("textarea", TEMPLATE_CAPTURE_PROMPT)
                 await page.wait_for_timeout(500)
                 if not await self._click_run_button(page):
@@ -880,8 +889,8 @@ class BrowserSession:
         auth_user = self.get_current_auth_user()
         if auth_user and auth_user != "0":
             return [
-                f"https://aistudio.google.com/u/{auth_user}/prompts/new_chat?model={model}",
-                f"https://aistudio.google.com/u/{auth_user}/app/prompts/new_chat",
+                f"https://aistudio.google.com/u/{auth_user}/prompts/new_chat?model={model}&temporary=true",
+                f"https://aistudio.google.com/u/{auth_user}/app/prompts/new_chat?temporary=true",
             ]
         return [AI_STUDIO_URL, AI_STUDIO_URL_FALLBACK]
 
@@ -997,6 +1006,48 @@ class BrowserSession:
             f"Hook install failed: {result} (url={page_url}, title={page_title!r})"
         )
 
+    async def _enable_temporary_chat(self, page: CDPPage) -> bool:
+        """激活 Temporary chat 模式，防止预热请求保存至账号历史。"""
+        try:
+            return bool(
+                await page.evaluate(
+                    """(() => {
+                        const clickable = Array.from(document.querySelectorAll('button, [role="button"], mat-slide-toggle, a'));
+                        const tempBtn = clickable.find(el => {
+                            const s = ((el.innerText || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('mattooltip') || '')).toLowerCase();
+                            return (s.includes('temporary chat') || s.includes('temporary mode') || s.includes('turn on temporary'))
+                                && !s.includes('data use policy');
+                        });
+                        if (tempBtn) {
+                            tempBtn.click();
+                            return true;
+                        }
+
+                        const moreBtn = clickable.find(el => {
+                            const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                            const txt = (el.innerText || '').trim();
+                            return aria === 'view more actions' || txt === 'more_vert';
+                        });
+                        if (moreBtn && moreBtn.getAttribute('aria-expanded') !== 'true') {
+                            moreBtn.click();
+                            const menuItem = Array.from(document.querySelectorAll('[role="menuitem"], .mat-mdc-menu-item')).find(item => {
+                                const s = ((item.innerText || '') + ' ' + (item.getAttribute('aria-label') || '')).toLowerCase();
+                                return s.includes('temporary');
+                            });
+                            if (menuItem) {
+                                menuItem.click();
+                                return true;
+                            }
+                            moreBtn.click();
+                        }
+                        return false;
+                    })()"""
+                )
+            )
+        except Exception as e:
+            log.debug("尝试激活 Temporary chat 异常: %s", e)
+            return False
+
     async def _click_run_button(self, page: CDPPage) -> bool:
         clicked = await page.evaluate(
             """(() => {
@@ -1099,18 +1150,29 @@ class BrowserSession:
         except Exception:
             return True
         account_id = meta.get("id", "unknown")
+        auth_user = str(meta.get("auth_user") or "0")
 
-        # 尝试从页面自动识别当前登录账号的真实 Google 邮箱并脱敏回填
-        discovered_email = await self.extract_account_email(page)
-        if discovered_email:
-            account_store = AccountStore()
-            if account_store.update_account_email(account_id, discovered_email):
-                log.info(
-                    "已自动识别并更新账号 %s 登录邮箱: %s",
-                    account_id,
-                    mask_email(discovered_email),
-                )
-            meta["email"] = discovered_email
+        # 检查当前页面 URL 是否处于目标账号的 auth_user 路由
+        curr_url = str(getattr(page, "url", "") or "")
+        is_on_correct_user = (
+            f"/u/{auth_user}/" in curr_url
+            if auth_user != "0"
+            else ("/u/0/" in curr_url or "/u/" not in curr_url)
+        )
+
+        # 仅在页面路由与当前子账号匹配时提取邮箱，防止多账号 Cookie 共享导致的邮箱跨账号串号污染
+        if is_on_correct_user:
+            discovered_email = await self.extract_account_email(page)
+            if discovered_email:
+                account_store = AccountStore()
+                if account_store.update_account_email(account_id, discovered_email):
+                    log.info(
+                        "已自动识别并更新账号 %s (u/%s) 登录邮箱: %s",
+                        account_id,
+                        auth_user,
+                        mask_email(discovered_email),
+                    )
+                meta["email"] = discovered_email
 
         expected_email = meta.get("email") or ""
         if not expected_email:
@@ -1118,9 +1180,14 @@ class BrowserSession:
 
         is_verified = False
         with suppress(Exception):
-            is_verified = bool(await page.evaluate(CHECK_IDENTITY_JS, expected_email))
+            is_verified = bool(
+                await page.evaluate(
+                    CHECK_IDENTITY_JS,
+                    {"email": expected_email, "authUser": auth_user},
+                )
+            )
 
-        if not is_verified:
+        if not is_verified and is_on_correct_user:
             with suppress(Exception):
                 cookies = await page.get_cookies()
                 for c in cookies:
@@ -1130,11 +1197,12 @@ class BrowserSession:
         if is_verified:
             return True
 
-        account_id = meta.get("id", "unknown")
         log.warning(
-            "[account-guard] 页面未校验到期望账号 %s (%s)，跳过本次 Cookie 回写以防覆盖",
+            "[account-guard] 页面未校验到期望账号 %s (%s, u/%s, url=%s)，跳过本次 Cookie 回写以防覆盖",
             expected_email,
             account_id,
+            auth_user,
+            curr_url,
         )
         return False
 

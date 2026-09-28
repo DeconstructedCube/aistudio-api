@@ -1,7 +1,7 @@
 (() => {
 
-    document.querySelectorAll('ms-chat-session, ms-chat-turn, ms-chat-turn-options, ms-chat-loading-indicator, ms-prompt-chunk, ms-chunk, ms-response-chunk, .chat-turn, .history-container').forEach(el => el.remove());
-    document.querySelectorAll('.cdk-overlay-backdrop, .cdk-overlay-container, mat-menu, ms-updates, ms-nav-popover').forEach(el => el.remove());
+    document.querySelectorAll('ms-chat-turn-options, ms-chat-loading-indicator').forEach(el => el.remove());
+    document.querySelectorAll('.cdk-overlay-backdrop, ms-updates, ms-nav-popover').forEach(el => el.remove());
     document.querySelectorAll('canvas, video, audio').forEach(el => el.remove());
 
     try {

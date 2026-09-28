@@ -166,6 +166,24 @@ export const useAccountsStore = defineStore('accounts', () => {
     }
   }
 
+  async function detectAccountEmail(id: string) {
+    const toast = useToastStore()
+    try {
+      const res = await accountsApi.detectEmail(id)
+      if (res.email) {
+        toast.success(`已成功识别账号邮箱: ${res.email}`)
+      } else {
+        toast.info('未在当前页面识别到有效邮箱')
+      }
+      await fetchAll()
+      return res
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '识别邮箱失败'
+      toast.error(msg)
+      return null
+    }
+  }
+
   return {
     accounts,
     activeAccount,
@@ -183,5 +201,6 @@ export const useAccountsStore = defineStore('accounts', () => {
     importCookies,
     probeAndImport,
     importBundle,
+    detectAccountEmail,
   }
 })

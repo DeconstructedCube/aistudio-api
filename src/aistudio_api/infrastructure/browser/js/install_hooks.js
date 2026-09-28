@@ -31,6 +31,24 @@
         dms[snapKey].__api_hooked = true;
     }
 
+    // Intercept prompt save requests in-page to avoid polluting user account history
+    if (!window.__api_fetch_hooked && typeof window.fetch === 'function') {
+        const origFetch = window.fetch;
+        window.fetch = function(...args) {
+            try {
+                const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url ? args[0].url : '');
+                if (url.includes('SavePrompt') || url.includes('CreatePrompt')) {
+                    return (async () => new Response(JSON.stringify([]), {
+                        status: 200,
+                        headers: { 'Content-Type': 'application/json+protobuf' }
+                    }))();
+                }
+            } catch(e) {}
+                return origFetch.apply(this, args);
+        };
+        window.__api_fetch_hooked = true;
+    }
+
     window.__bg_hooked = true;
     window.__snap_key = snapKey;
     return 'hooked:' + snapKey;

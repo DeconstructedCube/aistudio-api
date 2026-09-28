@@ -55,6 +55,8 @@ BLOCKED_URL_PATTERNS: list[str] = [
     "*doubleclick.net*",
     "*recaptcha*",
     "*google.com/recaptcha*",
+    "*SavePrompt*",
+    "*CreatePrompt*",
 ]
 
 

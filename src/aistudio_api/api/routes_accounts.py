@@ -151,6 +151,13 @@ async def detect_account_email(
     browser_session = runtime_state.client._session if runtime_state.client else None
     if browser_session is None or browser_session._page is None:
         raise HTTPException(status_code=503, detail="受控浏览器未就绪")
+    acc = account_service.get_account(account_id)
+    if not acc:
+        raise HTTPException(status_code=404, detail="账号不存在")
+
+    target_auth = account_service.get_account_auth_path(account_id)
+    if target_auth and str(target_auth) != browser_session._auth_file:
+        await browser_session.switch_auth(str(target_auth))
 
     email = await browser_session.extract_account_email()
     if email:
