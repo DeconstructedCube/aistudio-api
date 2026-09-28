@@ -5,8 +5,13 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
+import pytest
+
 from aistudio_api.infrastructure.browser.browser_engine import (
+    _assign_process_to_job,
+    _create_windows_job_object,
     _derive_stable_fingerprint_seed,
+    _is_active_api_server,
     _spawn_process_watchdog,
     build_chromium_args,
     cleanup_stale_chromium,
@@ -49,10 +54,32 @@ def test_build_chromium_args_contains_stealth_and_mobile_optimizations():
     assert "--fingerprint-locale=" in args_str
 
 
-def test_find_chromium_executable_locates_binary():
+def test_find_chromium_executable_strictly_requires_cloakbrowser(tmp_path):
+    # 1. When CloakBrowser is installed, successfully returns executable
     executable = find_chromium_executable()
     assert os.path.exists(executable)
-    assert os.access(executable, os.X_OK)
+    assert "chrome" in os.path.basename(executable).lower()
+
+    # 2. When CloakBrowser directories do not exist, strictly raises FileNotFoundError
+    with (
+        patch("pathlib.Path.is_dir", return_value=False),
+        patch("aistudio_api.config.settings.browser_executable_path", None),
+        patch(
+            "aistudio_api.infrastructure.browser.browser_engine._is_termux",
+            return_value=False,
+        ),
+        pytest.raises(FileNotFoundError, match="未检测到 CloakBrowser"),
+    ):
+        find_chromium_executable()
+
+    # 3. When explicit CloakBrowser executable path is provided, returns it
+    fake_chrome = tmp_path / "chrome.exe"
+    fake_chrome.write_text("fake cloakbrowser")
+    with patch(
+        "aistudio_api.config.settings.browser_executable_path", str(fake_chrome)
+    ):
+        found = find_chromium_executable()
+        assert found == str(fake_chrome)
 
 
 def test_build_chromium_args_low_memory_optimizations():
@@ -115,3 +142,40 @@ def test_build_chromium_args_platform_and_timezone():
         assert "--fingerprint-platform=windows" in args_str
     else:
         assert "--fingerprint-platform=macos" in args_str
+
+
+def test_windows_job_object_lifecycle():
+    """Verify Windows Job Object auto-terminates child process on handle close."""
+    import platform
+    import subprocess
+    import time
+
+    if platform.system() != "Windows":
+        assert _create_windows_job_object() is None
+        return
+
+    import ctypes
+
+    job = _create_windows_job_object()
+    assert job is not None
+    proc = subprocess.Popen(["cmd.exe", "/c", "pause"])
+    proc_handle = int(getattr(proc, "_handle", 0))
+    try:
+        assigned = _assign_process_to_job(job, proc_handle)
+        assert assigned is True
+        assert proc.poll() is None
+    finally:
+        win_dll = getattr(ctypes, "WinDLL", None)
+        if win_dll is not None:
+            kernel32 = win_dll("kernel32", use_last_error=True)
+            kernel32.CloseHandle(job)
+        time.sleep(0.2)
+        assert proc.poll() is not None
+
+
+def test_is_active_api_server_self_and_parent():
+    """Verify _is_active_api_server rejects invalid PIDs and own PID."""
+    assert _is_active_api_server(0) is False
+    assert _is_active_api_server(-1) is False
+    assert _is_active_api_server(os.getpid()) is False
+    assert _is_active_api_server(os.getppid()) is False

@@ -1,41 +1,77 @@
 (() => {
     try {
-        // 1. Direct account switcher text in Google AI Studio left navigation
-        const switcherText = document.querySelector("ms-account-switcher .account-switcher-text, .account-switcher-button .account-switcher-text");
-        if (switcherText && switcherText.innerText && switcherText.innerText.includes("@")) {
-            return switcherText.innerText.trim();
+        const EMAIL_RE = /[\w.+-]+@[\w-]+\.[a-zA-Z0-9.-]+/;
+
+        // 1. Check all elements with aria-label containing @ (Google account buttons, avatars)
+        const ariaEls = document.querySelectorAll('[aria-label*="@"]');
+        for (const el of ariaEls) {
+            const label = el.getAttribute("aria-label") || "";
+            const m = label.match(EMAIL_RE);
+            if (m) return m[0].trim().toLowerCase();
         }
 
-        // 2. Account switcher button aria-label or innerText
-        const switcherBtn = document.querySelector("ms-account-switcher button, button.account-switcher-button");
-        if (switcherBtn) {
-            const label = switcherBtn.getAttribute("aria-label") || "";
-            const m = label.match(/[\w.+-]+@[\w-]+\.[a-zA-Z0-9.-]+/);
-            if (m) return m[0];
-            const txt = switcherBtn.innerText || "";
-            const m2 = txt.match(/[\w.+-]+@[\w-]+\.[a-zA-Z0-9.-]+/);
-            if (m2) return m2[0];
+        // 2. Check Google Account profile button / OneGoogleBar elements
+        const profileSelectors = [
+            'a[href*="SignOutOptions"]',
+            'a[href*="accounts.google.com"]',
+            'a[aria-label*="Google"]',
+            'button[aria-label*="Google"]',
+            'div[aria-label*="Google"]',
+            '#gb',
+            '[data-email]',
+            'img[alt*="@"]',
+            '[title*="@"]'
+        ];
+        for (const sel of profileSelectors) {
+            const els = document.querySelectorAll(sel);
+            for (const el of els) {
+                const combined = [
+                    el.getAttribute("data-email") || "",
+                    el.getAttribute("aria-label") || "",
+                    el.getAttribute("title") || "",
+                    el.getAttribute("alt") || "",
+                    el.innerText || "",
+                    el.textContent || ""
+                ].join(" ");
+                const m = combined.match(EMAIL_RE);
+                if (m) return m[0].trim().toLowerCase();
+            }
         }
 
-        // 3. Fallback to entire ms-account-switcher element text
-        const switcher = document.querySelector("ms-account-switcher");
-        if (switcher) {
-            const m = (switcher.innerText || "").match(/[\w.+-]+@[\w-]+\.[a-zA-Z0-9.-]+/);
-            if (m) return m[0];
+        // 3. MakerSuite / AI Studio account switcher text
+        const switcherSelectors = [
+            "ms-account-switcher .account-switcher-text",
+            ".account-switcher-button .account-switcher-text",
+            "ms-account-switcher button",
+            "button.account-switcher-button",
+            "ms-account-switcher"
+        ];
+        for (const sel of switcherSelectors) {
+            const el = document.querySelector(sel);
+            if (el) {
+                const txt = [el.getAttribute("aria-label") || "", el.innerText || "", el.textContent || ""].join(" ");
+                const m = txt.match(EMAIL_RE);
+                if (m) return m[0].trim().toLowerCase();
+            }
         }
 
-        // 4. Any element with an aria-label containing an email
-        const ariaEl = document.querySelector('[aria-label*="@"]');
-        if (ariaEl) {
-            const m = (ariaEl.getAttribute("aria-label") || "").match(/[\w.+-]+@[\w-]+\.[a-zA-Z0-9.-]+/);
-            if (m) return m[0];
-        }
-
-        // 5. Check global Google account structures if present
-        if (window.WIZ_global_data) {
-            const str = JSON.stringify(window.WIZ_global_data);
-            const m = str.match(/[\w.+-]+@[\w-]+\.[a-zA-Z0-9.-]+/);
-            if (m) return m[0];
+        // 4. Check global Google account data structures
+        const globals = [
+            window.WIZ_global_data,
+            window.__ACCOUNT__,
+            window.default_MakerSuite,
+            window.IJ_values,
+            window.RAISE_data,
+            window.__INITIAL_DATA__
+        ];
+        for (const g of globals) {
+            if (g) {
+                try {
+                    const str = typeof g === "string" ? g : JSON.stringify(g);
+                    const m = str.match(EMAIL_RE);
+                    if (m) return m[0].trim().toLowerCase();
+                } catch (e) {}
+            }
         }
     } catch (e) {}
     return null;

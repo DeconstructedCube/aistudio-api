@@ -21,7 +21,7 @@ set -euo pipefail
 PROJECT_ROOT="$(pwd)"
 PROOT_NAME="aistudio-api"
 PROOT_IMAGE="ubuntu:24.04"
-CHROMIUM_VERSION="146.0.7680.177.3"
+CHROMIUM_VERSION="146.0.7680.177.4"
 SKIP_PROOT=0
 SKIP_BROWSER=0
 
@@ -147,14 +147,7 @@ setup_linux() {
     local arch="$(uname -m)"
     log "Configuring Linux native browser (${arch})..."
 
-    # Check if a system Chromium or Chrome is already installed and runnable
-    for bin in google-chrome-stable google-chrome chromium-browser chromium brave-browser; do
-        if command -v "${bin}" >/dev/null 2>&1; then
-            log "Found existing system browser: $(command -v "${bin}")"
-            log "System browser is ready for use."
-            return 0
-        fi
-    done
+    # Enforce CloakBrowser only; system Chrome/Edge/Brave are strictly ignored
 
     # If no system browser, provide standalone CloakBrowser
     mkdir -p "${CLOAK_ROOT}"
@@ -191,19 +184,56 @@ setup_linux() {
 # ==============================================================================
 setup_desktop() {
     local os_type="$(uname -s)"
-    log "Configuring browser for ${os_type}..."
+    log "Configuring CloakBrowser for ${os_type}..."
 
-    # Check common system browsers
-    for bin in "Google Chrome" "Chromium" "Microsoft Edge" "Brave Browser"; do
-        if [[ "${os_type}" == "Darwin" ]]; then
-            if [[ -d "/Applications/${bin}.app" || -d "${HOME}/Applications/${bin}.app" ]]; then
-                log "Found installed browser: ${bin}.app"
-                return 0
-            fi
+    mkdir -p "${CLOAK_ROOT}"
+
+    if [[ "${os_type}" =~ (MINGW|MSYS|CYGWIN|Windows) ]]; then
+        # Windows via Git Bash / MSYS
+        local archive="cloakbrowser-windows-x64.zip"
+        local download_url="https://github.com/CloakHQ/cloakbrowser/releases/download/chromium-v${CHROMIUM_VERSION}/${archive}"
+        if [[ -x "${CHROME_DIR_HOST}/chrome.exe" ]]; then
+            log "CloakBrowser ${CHROMIUM_VERSION} already installed at ${CHROME_DIR_HOST}/chrome.exe"
+            return 0
         fi
-    done
+        log "Downloading CloakBrowser Windows x64 from ${download_url}..."
+        TMP="$(mktemp -d)"
+        trap 'rm -rf "${TMP}"' EXIT
+        curl -fSL --retry 3 -o "${TMP}/${archive}" "${download_url}"
+        unzip -q -o "${TMP}/${archive}" -d "${CHROME_DIR_HOST}"
+        log "CloakBrowser ready at ${CHROME_DIR_HOST}/chrome.exe"
+        return 0
+    elif [[ "${os_type}" == "Darwin" ]]; then
+        local arch="$(uname -m)"
+        local archive=""
+        case "${arch}" in
+            arm64) archive="cloakbrowser-darwin-arm64.tar.gz" ;;
+            x86_64) archive="cloakbrowser-darwin-x64.tar.gz" ;;
+            *) archive="cloakbrowser-darwin-arm64.tar.gz" ;;
+        esac
+        if [[ -x "${CHROME_DIR_HOST}/chrome" || -d "${CHROME_DIR_HOST}/Chromium.app" ]]; then
+            log "CloakBrowser ${CHROMIUM_VERSION} already installed at ${CHROME_DIR_HOST}"
+            return 0
+        fi
+        local download_url="https://github.com/CloakHQ/cloakbrowser/releases/download/chromium-v${CHROMIUM_VERSION}/${archive}"
+        log "Downloading CloakBrowser macOS (${arch}) from ${download_url}..."
+        TMP="$(mktemp -d)"
+        trap 'rm -rf "${TMP}"' EXIT
+        if curl -fSL --retry 3 -o "${TMP}/${archive}" "${download_url}" 2>/dev/null; then
+            tar -xzf "${TMP}/${archive}" -C "${CLOAK_ROOT}"
+            INNER="$(find "${CLOAK_ROOT}" -mindepth 2 -maxdepth 2 -type d -name 'chromium-*' | head -1 || true)"
+            if [[ -n "${INNER}" && "${INNER}" != "${CHROME_DIR_HOST}" ]]; then
+                mv "${INNER}" "${CHROME_DIR_HOST}"
+            fi
+            log "CloakBrowser ready at ${CHROME_DIR_HOST}"
+        else
+            log "Notice: CloakBrowser macOS release asset was not found for version ${CHROMIUM_VERSION}."
+            log "Please place CloakBrowser in .cloakbrowser/ or set AISTUDIO_BROWSER_EXECUTABLE."
+        fi
+        return 0
+    fi
 
-    log "Notice: Ensure Google Chrome, Chromium, or Microsoft Edge is installed on your host system."
+    log "Notice: Unknown desktop platform ${os_type}. Please run scripts/install-browser.ps1 on Windows or setup-browser.sh on Linux."
 }
 
 # ---------- Main Dispatch ----------

@@ -44,7 +44,7 @@
 
 | Feature | Description |
 |---|---|
-| **Native Gemini API** | Full compatibility with the official `/v1beta/...` specification, supporting Thinking process, Multimodal inputs, bidirectional lossless Function Calling, and Image Generation |
+| **Gemini API Compatibility** | Supports `/v1beta/...` endpoints including Thinking, multimodal inputs, function calling, and image generation |
 | **Dynamic Model Discovery** | Automatically synchronizes and discovers available models from upstream Google AI Studio |
 | **Sticky Account Dispatch** | Maintains account state per model, tracks 429 rate-limit quotas & 403 authorization isolation independently, and resets cooldowns at midnight Pacific Time |
 | **Full Runtime Persistence** | Model usage statistics (`stats.json`) and account 429 cooldown & quota status (`rotator_state.json`) are automatically persisted to disk across restarts |
@@ -96,9 +96,26 @@ Technical reference documentation:
 
 - Python 3.11+
 - [`uv`](https://docs.astral.sh/uv/) package manager (recommended)
-- Chromium / Google Chrome installed on host (Termux installs CloakBrowser via proot container automatically)
+- Browser: Requires [CloakBrowser](https://github.com/CloakHQ/cloakbrowser) for fingerprint cloaking and process isolation (Edge and generic Chrome are not supported)
 
-### Linux / macOS / Windows
+### Windows
+
+```bat
+# 1. Clone repository
+git clone https://github.com/DeconstructedCube/aistudio-api.git
+cd aistudio-api
+
+# 2. Sync dependencies
+uv sync
+
+# 3. Install CloakBrowser (first run only)
+scripts\install-browser.bat
+
+# 4. Start server
+uv run python main.py server --port 8080
+```
+
+### Linux / macOS
 
 ```bash
 # 1. Clone repository
@@ -108,7 +125,10 @@ cd aistudio-api
 # 2. Sync dependencies
 uv sync
 
-# 3. Start server
+# 3. Install CloakBrowser (first run only)
+bash scripts/setup-browser.sh
+
+# 4. Start server
 uv run python3 main.py server --port 8080
 ```
 
@@ -171,7 +191,7 @@ Open `http://localhost:8080` in your browser to access the Web Console.
 | `AISTUDIO_CONFIG_FILE` | string | `config.yaml` | Path to model rules and default tools configuration YAML |
 | `AISTUDIO_PERSIST_STATS` | bool | `true` | Persist request and token usage metrics across service restarts |
 | `AISTUDIO_PERSIST_ROTATOR` | bool | `true` | Persist account 429 rate limit dates & cooldowns across restarts |
-| `AISTUDIO_BROWSER_EXECUTABLE` | string | Auto | Path to Chromium executable |
+| `AISTUDIO_BROWSER_EXECUTABLE` | string | Auto | Path to CloakBrowser executable |
 | `AISTUDIO_BROWSER_PORT` | int | `9222` | Chromium remote debugging port (CDP) |
 | `AISTUDIO_BROWSER_HEADLESS` | bool | `true` | Run Chromium in headless mode |
 | `AISTUDIO_PROOT_NAME` | string | `aistudio-api` | Dedicated proot-distro container name for Termux |

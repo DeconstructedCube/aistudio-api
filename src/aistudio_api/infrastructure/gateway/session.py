@@ -1160,6 +1160,7 @@ class BrowserSession:
             else ("/u/0/" in curr_url or "/u/" not in curr_url)
         )
 
+        discovered_email: str | None = None
         # 仅在页面路由与当前子账号匹配时提取邮箱，防止多账号 Cookie 共享导致的邮箱跨账号串号污染
         if is_on_correct_user:
             discovered_email = await self.extract_account_email(page)
@@ -1174,9 +1175,33 @@ class BrowserSession:
                     )
                 meta["email"] = discovered_email
 
-        expected_email = meta.get("email") or ""
+        expected_email = (meta.get("email") or "").strip().lower()
         if not expected_email:
+            return is_on_correct_user
+
+        # 1. 如果提取到的邮箱与期望邮箱一致（大小写不敏感），直接确认匹配
+        if (
+            discovered_email
+            and discovered_email.strip().lower() == expected_email
+            and is_on_correct_user
+        ):
             return True
+
+        # 2. 如果页面提取到明确不同的邮箱且路由不匹配，严格拦截以防跨账号污染
+        if (
+            discovered_email
+            and discovered_email.strip().lower() != expected_email
+            and not is_on_correct_user
+        ):
+            log.warning(
+                "[account-guard] 页面检测到不同账号 %s (期望 %s, acc_id=%s, u/%s, url=%s)，跳过本次 Cookie 回写以防覆盖",
+                discovered_email,
+                expected_email,
+                account_id,
+                auth_user,
+                curr_url,
+            )
+            return False
 
         is_verified = False
         with suppress(Exception):
@@ -1191,9 +1216,22 @@ class BrowserSession:
             with suppress(Exception):
                 cookies = await page.get_cookies()
                 for c in cookies:
-                    if expected_email in str(c.get("value", "")):
+                    if expected_email in str(c.get("value", "")).lower():
                         is_verified = True
                         break
+
+        # 3. 如果当前处于多账号专属路由 /u/{auth_user}/ 下，且未检测到冲突账号，确认放行
+        if (
+            not is_verified
+            and auth_user != "0"
+            and f"/u/{auth_user}/" in curr_url
+            and (
+                not discovered_email
+                or discovered_email.strip().lower() == expected_email
+            )
+        ):
+            is_verified = True
+
         if is_verified:
             return True
 

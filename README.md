@@ -44,7 +44,7 @@
 
 | 功能模块 | 说明 |
 |---|---|
-| **原生 Gemini 协议** | 完整兼容 `/v1beta/...` 接口规范，支持 Thinking 思维链、Multimodal 多模态、双向无损 Function Calling 工具调用及图片生成 |
+| **Gemini 协议兼容** | 支持 `/v1beta/...` 接口规范，包括 Thinking 思维链、多模态、Function Calling 工具调用及图片生成 |
 | **动态模型发现** | 自动向上游同步可用模型列表，支持 `gemini-3.7-flash`、`gemini-3.8-flash` 等最新模型 |
 | **多账号黏性调度** | 维护账号状态，支持按模型独立记录 429 配额与 403 鉴权异常隔离并在故障时自动切换，每日美西午夜自动重置配额 |
 | **运行信息全面持久化** | 模型调用量、Token 消耗统计 (`stats.json`) 以及账号 429 限额与冷却状态 (`rotator_state.json`) 自动落盘，容器/服务重启不丢失状态 |
@@ -96,9 +96,26 @@
 
 - Python 3.11 及以上版本
 - 推荐安装 [`uv`](https://docs.astral.sh/uv/) 作为包管理工具
-- 宿主系统安装有 Chromium / Google Chrome（Termux 环境通过脚本在 proot 容器内准备）
+- 浏览器环境：使用 [CloakBrowser](https://github.com/CloakHQ/cloakbrowser)（提供指纹伪装与反爬防护，不支持 Edge 或标准 Chrome）
 
-### Linux / macOS / Windows
+### Windows
+
+```bat
+# 1. 克隆代码仓库
+git clone https://github.com/DeconstructedCube/aistudio-api.git
+cd aistudio-api
+
+# 2. 同步依赖
+uv sync
+
+# 3. 安装 CloakBrowser（仅首次需要）
+scripts\install-browser.bat
+
+# 4. 启动服务
+uv run python main.py server --port 8080
+```
+
+### Linux / macOS
 
 ```bash
 # 1. 克隆代码仓库
@@ -108,7 +125,10 @@ cd aistudio-api
 # 2. 同步依赖
 uv sync
 
-# 3. 启动服务
+# 3. 安装 CloakBrowser（仅首次需要）
+bash scripts/setup-browser.sh
+
+# 4. 启动服务
 uv run python3 main.py server --port 8080
 ```
 
@@ -171,7 +191,7 @@ docker compose up -d
 | `AISTUDIO_CONFIG_FILE` | string | `config.yaml` | 模型规则与默认工具配置文件路径 |
 | `AISTUDIO_PERSIST_STATS` | bool | `true` | 是否持久化模型调用与 Token 统计（1=开启，0=关闭） |
 | `AISTUDIO_PERSIST_ROTATOR` | bool | `true` | 是否持久化账号 429 冷却与调度状态（1=开启，0=关闭） |
-| `AISTUDIO_BROWSER_EXECUTABLE` | string | 自动探测 | 自定义 Chromium 可执行文件路径 |
+| `AISTUDIO_BROWSER_EXECUTABLE` | string | 自动探测 | 自定义 CloakBrowser 可执行文件路径 |
 | `AISTUDIO_BROWSER_PORT` | int | `9222` | Chromium 远程调试端口 (CDP) |
 | `AISTUDIO_BROWSER_HEADLESS` | bool | `true` | 是否以无头模式运行 Chromium |
 | `AISTUDIO_PROOT_NAME` | string | `aistudio-api` | Termux 环境下专用的 proot-distro 容器名称 |

@@ -98,7 +98,7 @@ uv run python3 main.py server --port 8080
   - `UP` (pyupgrade Python 3.11+ 语法升级)
   - `SIM` (flake8-simplify 代码精简，强制 `contextlib.suppress` 替代 `try-except-pass`)
   - `PTH` (flake8-use-pathlib 规范使用 Pathlib)
-  - `RUF` (Ruff 专属严格检查)
+  - `RUF` (Ruff 专有规则检查)
   - `ASYNC` (flake8-async 异步编程反模式检查，如 `asyncio.Event` 替代轮询睡眠)
   - `PIE` (flake8-pie 冗余代码消除)
   - `Q` / `RSE` / `RET` (引号、raise 括号与返回值规范)
@@ -166,7 +166,7 @@ uv run python3 main.py server --port 8080
 | **Android 静态检查 (Lint & 代码规范)** | `cd android && ./gradlew :app:lintDebug :app:ktlintCheck` 或 `ktlint "android/app/src/main/java/**/*.kt"` | 0 errors |
 > [!NOTE]
 > **跨平台原生二进制依赖与开发工具**：
-> - `pydantic-core` 等生产核心依赖通过 `uv.lock` 显式注入 TUR 的 prebuilt Android wheel，配合 `setup-env.sh` 生成的项目级本地 `uv.toml`，实现全平台统一通过 `uv sync` 秒级安装且不触发源码构建。
+> - `pydantic-core` 等依赖在 PyPI 上无预编译 Android wheel，而 Termux 的 TUR 源无桌面端 wheel。因此 `uv.lock` 纳入 `.gitignore`：桌面端直接从 PyPI 安装对应 wheel；Termux 端通过 `setup-env.sh` 生成本地 `uv.toml` 使用 TUR 源，避免不同平台的 wheel 源锁定冲突，各平台均直接使用二进制 wheel 避免源码编译。
 > - `ruff` 作为开发阶段的 Lint 工具，在 `pyproject.toml` 的 dev 依赖中配置了平台标记 `ruff>=0.8.0; sys_platform != 'android'`；桌面平台（Linux / macOS / Windows）执行 `uv sync --extra dev` 时直接自 PyPI 下载预编译 wheel。而在 Android Termux 环境下，TUR 并未打包 ruff 的 PyPI wheel，开发者可通过 Termux 原生包管理器 `pkg install -y ruff` 直接获得编译好的 aarch64 native 二进制，`setup-env.sh` / `setup-browser.sh` 会自动建立 `.venv/bin/ruff` 软链以便在虚拟环境中直接调用，普通用户生产运行无需安装。
 
 > [!TIP]
@@ -226,7 +226,7 @@ aistudio-api/
 │   │   └── models.py              # 领域数据结构 (Candidate, ModelOutput 等)
 │   ├── infrastructure/            # 基础设施层
 │   │   ├── account/               # Cookie 解析、会话刷新与凭据持久化 (account_store, cookie_parser)
-│   │   ├── browser/               # 异步 CDP 客户端与 Chromium 进程管理 (cdp_client, browser_engine)
+│   │   ├── browser/               # 异步 CDP 客户端与 CloakBrowser 进程管理 (cdp_client, browser_engine)
 │   │   └── gateway/               # Wire Codec/Parser、流式管道 (streaming, transport)、重放与模型发现
 ├── config.yaml                    # 模型规则与工具默认行为配置 (支持在线热重载)
 ├── main.py                        # 本地统一启动入口

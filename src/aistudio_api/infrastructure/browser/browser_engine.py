@@ -10,7 +10,6 @@ import contextlib
 import hashlib
 import os
 import platform
-import shutil
 import signal
 import socket
 import subprocess
@@ -98,83 +97,20 @@ def find_chromium_executable() -> str:
                     os.access(match, os.X_OK) or platform.system() == "Windows"
                 ):
                     return _resolve_local_chrome(str(match))
-    # 4. Standard binary names in PATH
-    for name in (
-        "google-chrome-stable",
-        "google-chrome",
-        "chromium-browser",
-        "chromium",
-        "chrome",
-        "msedge",
-        "brave-browser",
-        "brave",
-    ):
-        p = shutil.which(name)
-        if p and os.access(p, os.X_OK):
-            return p
+    # 4. In Termux with proot-distro container: check wrapper path
+    if _is_termux():
+        wrapper = _find_wrapper_path()
+        if wrapper:
+            return wrapper
 
-    # 5. Standard system installation paths across platforms
-    sys_paths: list[str] = []
-    sys_name = platform.system()
-    if sys_name == "Darwin":
-        sys_paths.extend(
-            [
-                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-                "/Applications/Chromium.app/Contents/MacOS/Chromium",
-                "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
-                "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-                "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-                str(
-                    Path.home()
-                    / "Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-                ),
-                str(Path.home() / "Applications/Chromium.app/Contents/MacOS/Chromium"),
-            ]
-        )
-    elif sys_name == "Windows":
-        sys_paths.extend(
-            [
-                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                os.path.expandvars(
-                    r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"
-                ),
-                os.path.expandvars(
-                    r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe"
-                ),
-                os.path.expandvars(
-                    r"%PROGRAMFILES(X86)%\Google\Chrome\Application\chrome.exe"
-                ),
-                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-                os.path.expandvars(
-                    r"%PROGRAMFILES(X86)%\Microsoft\Edge\Application\msedge.exe"
-                ),
-            ]
-        )
-    else:
-        # Linux / Docker / Termux
-        sys_paths.extend(
-            [
-                "/data/data/com.termux/files/usr/bin/chromium-browser",
-                "/usr/bin/google-chrome-stable",
-                "/usr/bin/google-chrome",
-                "/usr/bin/chromium",
-                "/usr/bin/chromium-browser",
-                "/snap/bin/chromium",
-                "/usr/local/bin/chrome",
-                "/usr/local/bin/chromium",
-            ]
-        )
-
-    for p in sys_paths:
-        if Path(p).is_file() and (os.access(p, os.X_OK) or sys_name == "Windows"):
-            return p
-
+    # 5. Strictly CloakBrowser only. All fallbacks to Edge/Chrome/Brave/Chromium are removed!
     raise FileNotFoundError(
-        "Could not locate a valid Chromium executable on this system.\n"
-        "Checked: CloakBrowser (.cloakbrowser / ~/.cloakbrowser), PATH, and standard system paths.\n"
-        "Set AISTUDIO_BROWSER_EXECUTABLE environment variable to specify explicit path."
+        "未检测到 CloakBrowser 浏览器。\n"
+        "本项目仅支持 CloakBrowser，不支持 Edge 或标准 Chrome。\n"
+        "请先安装 CloakBrowser：\n"
+        "  - Windows: 运行 scripts\\install-browser.bat\n"
+        "  - Linux / Termux: 运行 bash scripts/setup-browser.sh\n"
+        "若已安装在自定义路径，请设置 AISTUDIO_BROWSER_EXECUTABLE 环境变量。"
     )
 
 
@@ -290,12 +226,54 @@ def _setup_child_pdeathsig() -> None:
             pass
 
 
+def _find_pid_listening_on_port_windows(port: int) -> int | None:
+    """Find the process ID listening on a given TCP port on Windows."""
+    try:
+        out = subprocess.check_output(
+            ["netstat", "-ano", "-p", "tcp"], text=True, errors="ignore"
+        )
+        import re
+
+        pattern = re.compile(
+            rf"^\s*TCP\s+(?:127\.0\.0\.1|0\.0\.0\.0|\[::\]):{port}\s+.*LISTENING\s+(\d+)",
+            re.MULTILINE,
+        )
+        m = pattern.search(out)
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    return None
+
+
 def _is_active_api_server(pid: int) -> bool:
     """Check if a process is a live running AI Studio API server instance."""
     if pid <= 1:
         return False
     if pid in (os.getpid(), os.getppid()):
         return False
+    if platform.system() == "Windows":
+        try:
+            res = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    f"(Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}').CommandLine",
+                ],
+                capture_output=True,
+                text=True,
+                errors="ignore",
+                check=False,
+                timeout=2.0,
+            )
+            cmd = res.stdout.strip()
+            if any(k in cmd for k in ("main.py", "aistudio-api-server", "uvicorn")):
+                return True
+        except Exception:
+            pass
+        return False
+
     try:
         cmdline_path = Path(f"/proc/{pid}/cmdline")
         if cmdline_path.exists():
@@ -342,53 +320,105 @@ def cleanup_stale_chromium(
     parent_pid = os.getppid()
     candidate_pids: set[int] = set()
 
-    proc_dir = Path("/proc")
-    if proc_dir.is_dir():
-        for proc_path in proc_dir.glob("[0-9]*"):
-            try:
-                pid = int(proc_path.name)
-            except ValueError:
-                continue
-            if pid in (cur_pid, parent_pid):
-                continue
+    if platform.system() == "Windows":
+        # 1. Check if the target port is held by any listening process
+        listener_pid = _find_pid_listening_on_port_windows(port)
+        if (
+            listener_pid
+            and listener_pid not in (cur_pid, parent_pid)
+            and listener_pid > 1
+            and not _is_active_api_server(listener_pid)
+        ):
+            candidate_pids.add(listener_pid)
 
-            # Safety check: if parent is a live active API server, NEVER touch it!
-            ppid = 0
-            try:
-                with Path(f"/proc/{pid}/status").open(encoding="utf-8") as sf:
-                    for line in sf:
-                        if line.startswith("PPid:"):
-                            ppid = int(line.split(":", 1)[1].strip())
-                            break
-            except Exception:
-                pass
+        # 2. Check running chrome.exe processes matching port or data dir
+        try:
+            ps_cmd = (
+                "Get-CimInstance Win32_Process -Filter \"Name = 'chrome.exe'\" | "
+                "Select-Object ProcessId, ParentProcessId, CommandLine | "
+                "ConvertTo-Json -Compress"
+            )
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
+                capture_output=True,
+                text=True,
+                errors="ignore",
+                check=False,
+                timeout=3.0,
+            )
+            data_str = res.stdout.strip()
+            if data_str:
+                import json
 
-            if ppid > 1 and _is_active_api_server(ppid):
-                continue
-
-            try:
-                with Path(f"/proc/{pid}/cmdline").open("rb") as cf:
-                    cmd = (
-                        cf.read().decode("utf-8", errors="ignore").replace("\x00", " ")
-                    )
-                match_port = f"--remote-debugging-port={port}" in cmd
-                match_udd = bool(
-                    user_data_dir
-                    and user_data_dir in cmd
-                    and ("chrome" in cmd or "proot" in cmd)
-                )
-                match_orphan_proot = bool(
-                    "proot" in cmd
-                    and ("cloakbrowser" in cmd or "chrome" in cmd)
-                    and ppid == 1
-                )
-                if match_port or match_udd or match_orphan_proot:
-                    candidate_pids.add(pid)
-            except Exception:
-                pass
+                items = json.loads(data_str)
+                if isinstance(items, dict):
+                    items = [items]
+                for it in items:
+                    try:
+                        c_pid = int(it.get("ProcessId", 0))
+                        c_ppid = int(it.get("ParentProcessId", 0))
+                        c_cmd = str(it.get("CommandLine", ""))
+                    except Exception:
+                        continue
+                    if c_pid in (cur_pid, parent_pid) or c_pid <= 1:
+                        continue
+                    if c_ppid > 1 and _is_active_api_server(c_ppid):
+                        continue
+                    if f"--remote-debugging-port={port}" in c_cmd or (
+                        user_data_dir and user_data_dir in c_cmd
+                    ):
+                        candidate_pids.add(c_pid)
+        except Exception as e:
+            log.debug("Windows 进程查询失败: %s", e)
     else:
-        # Non-/proc POSIX fallback (e.g. macOS)
-        if platform.system() != "Windows":
+        proc_dir = Path("/proc")
+        if proc_dir.is_dir():
+            for proc_path in proc_dir.glob("[0-9]*"):
+                try:
+                    pid = int(proc_path.name)
+                except ValueError:
+                    continue
+                if pid in (cur_pid, parent_pid):
+                    continue
+
+                # Safety check: if parent is a live active API server, NEVER touch it!
+                ppid = 0
+                try:
+                    with Path(f"/proc/{pid}/status").open(encoding="utf-8") as sf:
+                        for line in sf:
+                            if line.startswith("PPid:"):
+                                ppid = int(line.split(":", 1)[1].strip())
+                                break
+                except Exception:
+                    pass
+
+                if ppid > 1 and _is_active_api_server(ppid):
+                    continue
+
+                try:
+                    with Path(f"/proc/{pid}/cmdline").open("rb") as cf:
+                        cmd = (
+                            cf.read()
+                            .decode("utf-8", errors="ignore")
+                            .replace("\x00", " ")
+                        )
+                    match_port = f"--remote-debugging-port={port}" in cmd
+                    match_udd = bool(
+                        user_data_dir
+                        and user_data_dir in cmd
+                        and ("chrome" in cmd or "proot" in cmd)
+                    )
+                    match_orphan_proot = bool(
+                        "proot" in cmd
+                        and ("cloakbrowser" in cmd or "chrome" in cmd)
+                        and ppid == 1
+                    )
+                    if match_port or match_udd or match_orphan_proot:
+                        candidate_pids.add(pid)
+                except Exception:
+                    pass
+        else:
+            # Non-/proc POSIX fallback (e.g. macOS)
             try:
                 res = subprocess.run(
                     ["ps", "-eo", "pid,ppid,args"],
@@ -418,7 +448,6 @@ def cleanup_stale_chromium(
                         candidate_pids.add(pid)
             except Exception as e:
                 log.debug("备用进程扫描失败: %s", e)
-
     killed_pids: list[int] = []
     if candidate_pids:
         log.info(
@@ -426,44 +455,56 @@ def cleanup_stale_chromium(
             len(candidate_pids),
             sorted(candidate_pids),
         )
-        # 1. Send SIGTERM to process groups or pids
-        for pid in sorted(candidate_pids):
-            try:
-                pgid = os.getpgid(pid) if hasattr(os, "getpgid") else None
-                if pgid is not None and pgid != os.getpgrp():
-                    os.killpg(pgid, signal.SIGTERM)
+        if platform.system() == "Windows":
+            for pid in sorted(candidate_pids):
+                try:
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(pid)],
+                        capture_output=True,
+                        check=False,
+                    )
+                    killed_pids.append(pid)
+                except Exception as e:
+                    log.debug("Windows taskkill 终止 PID %d 失败: %s", pid, e)
+        else:
+            # 1. Send SIGTERM to process groups or pids
+            for pid in sorted(candidate_pids):
+                try:
+                    pgid = os.getpgid(pid) if hasattr(os, "getpgid") else None
+                    if pgid is not None and pgid != os.getpgrp():
+                        os.killpg(pgid, signal.SIGTERM)
+                    else:
+                        os.kill(pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                except Exception as e:
+                    log.debug("向 PID %d 发送 SIGTERM 失败: %s", pid, e)
+
+            # 2. Wait up to 1.0s for graceful shutdown
+            deadline = time.time() + 1.0
+            while time.time() < deadline:
+                if Path("/proc").is_dir():
+                    alive = [p for p in candidate_pids if Path(f"/proc/{p}").exists()]
                 else:
-                    os.kill(pid, signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                pass
-            except Exception as e:
-                log.debug("向 PID %d 发送 SIGTERM 失败: %s", pid, e)
+                    alive = []
+                if not alive:
+                    break
+                time.sleep(0.1)
 
-        # 2. Wait up to 1.0s for graceful shutdown
-        deadline = time.time() + 1.0
-        while time.time() < deadline:
-            if Path("/proc").is_dir():
-                alive = [p for p in candidate_pids if Path(f"/proc/{p}").exists()]
-            else:
-                alive = []
-            if not alive:
-                break
-            time.sleep(0.1)
-
-        # 3. Force SIGKILL any remaining candidates
-        for pid in sorted(candidate_pids):
-            try:
-                pgid = os.getpgid(pid) if hasattr(os, "getpgid") else None
-                if pgid is not None and pgid != os.getpgrp():
-                    os.killpg(pgid, signal.SIGKILL)
-                else:
-                    os.kill(pid, signal.SIGKILL)
-                killed_pids.append(pid)
-            except (ProcessLookupError, PermissionError):
-                pass
-            except Exception as e:
-                log.debug("向 PID %d 发送 SIGKILL 失败: %s", pid, e)
-
+            # 3. Force SIGKILL any remaining candidates
+            sig_kill = getattr(signal, "SIGKILL", signal.SIGTERM)
+            for pid in sorted(candidate_pids):
+                try:
+                    pgid = os.getpgid(pid) if hasattr(os, "getpgid") else None
+                    if pgid is not None and pgid != os.getpgrp():
+                        os.killpg(pgid, sig_kill)
+                    else:
+                        os.kill(pid, sig_kill)
+                    killed_pids.append(pid)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                except Exception as e:
+                    log.debug("向 PID %d 发送 SIGKILL 失败: %s", pid, e)
     # 4. Clean up stale Chromium lock files in user_data_dir
     if user_data_dir:
         udd_path = Path(user_data_dir)
@@ -489,6 +530,91 @@ def cleanup_stale_chromium(
             time.sleep(0.1)
 
     return killed_pids
+
+
+def _create_windows_job_object() -> int | None:
+    """Create a Windows Job Object configured to kill all assigned processes on job close."""
+    if platform.system() != "Windows":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_uint64),
+                ("WriteOperationCount", ctypes.c_uint64),
+                ("OtherOperationCount", ctypes.c_uint64),
+                ("ReadTransferCount", ctypes.c_uint64),
+                ("WriteTransferCount", ctypes.c_uint64),
+                ("OtherTransferCount", ctypes.c_uint64),
+            ]
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryLimit", ctypes.c_size_t),
+                ("PeakJobMemoryLimit", ctypes.c_size_t),
+            ]
+
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        JobObjectExtendedLimitInformation = 9
+
+        win_dll = getattr(ctypes, "WinDLL", None)
+        if win_dll is None:
+            return None
+        kernel32 = win_dll("kernel32", use_last_error=True)
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        ok = kernel32.SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        if not ok:
+            kernel32.CloseHandle(job)
+            return None
+        return int(job)
+    except Exception as e:
+        log.debug("创建 Windows Job Object 失败: %s", e)
+        return None
+
+
+def _assign_process_to_job(job_handle: int | None, proc_handle: int) -> bool:
+    """Assign child process to Windows Job Object for lifecycle watchdog protection."""
+    if not job_handle or platform.system() != "Windows":
+        return False
+    try:
+        import ctypes
+
+        win_dll = getattr(ctypes, "WinDLL", None)
+        if win_dll is None:
+            return False
+        kernel32 = win_dll("kernel32", use_last_error=True)
+        return bool(kernel32.AssignProcessToJobObject(job_handle, proc_handle))
+    except Exception as e:
+        log.debug("将进程分配至 Windows Job Object 失败: %s", e)
+        return False
 
 
 def _spawn_process_watchdog(
@@ -571,7 +697,34 @@ def install_process_cleanup_handlers() -> None:
 
     atexit.register(_cleanup_all_chromium)
 
-    if platform.system() != "Windows":
+    if platform.system() == "Windows":
+        sigbreak = getattr(signal, "SIGBREAK", None)
+        signals_to_hook = [signal.SIGINT]
+        if sigbreak is not None:
+            signals_to_hook.append(sigbreak)
+        for sig in signals_to_hook:
+            try:
+                prev_handler = signal.getsignal(sig)
+
+                def _make_win_handler(s: signal.Signals, prev: object):
+                    def _handler(signum: int, frame: object) -> None:
+                        _cleanup_all_chromium()
+                        if callable(prev) and prev not in (
+                            signal.SIG_IGN,
+                            signal.SIG_DFL,
+                        ):
+                            prev(signum, frame)
+                        elif signum == signal.SIGINT:
+                            raise KeyboardInterrupt
+                        else:
+                            sys.exit(128 + signum)
+
+                    return _handler
+
+                signal.signal(sig, _make_win_handler(sig, prev_handler))
+            except (ValueError, AttributeError, TypeError):
+                pass
+    else:
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             try:
                 prev_handler = signal.getsignal(sig)
@@ -608,12 +761,14 @@ class ChromiumProcess:
         watcher: subprocess.Popen[bytes] | None = None,
         pipe_w: int | None = None,
         pgid: int | None = None,
+        job: int | None = None,
     ):
         self.process = process
         self.port = port
         self.user_data_dir = user_data_dir
         self.watcher = watcher
         self.pipe_w = pipe_w
+        self.job = job
         try:
             self.pgid = pgid or (
                 os.getpgid(process.pid) if hasattr(os, "getpgid") else None
@@ -644,6 +799,19 @@ class ChromiumProcess:
                     self.watcher.kill()
             self.watcher = None
 
+        # Close Windows Job Object if present (kills job processes on handle close)
+        if self.job is not None:
+            try:
+                import ctypes
+
+                win_dll = getattr(ctypes, "WinDLL", None)
+                if win_dll is not None:
+                    kernel32 = win_dll("kernel32", use_last_error=True)
+                    kernel32.CloseHandle(self.job)
+            except Exception:
+                pass
+            self.job = None
+
         if self.process.poll() is not None:
             return
 
@@ -656,6 +824,7 @@ class ChromiumProcess:
                     subprocess.run(
                         ["taskkill", "/F", "/T", "/PID", str(self.process.pid)],
                         capture_output=True,
+                        check=False,
                     )
                 except Exception:
                     self.process.kill()
@@ -681,9 +850,10 @@ class ChromiumProcess:
         try:
             self.process.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
+            sig_kill = getattr(signal, "SIGKILL", signal.SIGTERM)
             if pgid is not None and pgid != os.getpgrp():
                 with contextlib.suppress(ProcessLookupError, PermissionError):
-                    os.killpg(pgid, signal.SIGKILL)
+                    os.killpg(pgid, sig_kill)
             with contextlib.suppress(ProcessLookupError, PermissionError):
                 self.process.kill()
             with contextlib.suppress(Exception):
@@ -719,7 +889,7 @@ def launch_chromium_process(
         extra_args=extra_args,
     )
     cmd = [executable, *args]
-    log.info("正在启动 Chromium 浏览器进程: %s (调试端口 %d)", executable, port)
+    log.info("正在启动 CloakBrowser 进程: %s (调试端口 %d)", executable, port)
 
     preexec = _setup_child_pdeathsig if platform.system() != "Windows" else None
     proc = subprocess.Popen(
@@ -729,6 +899,13 @@ def launch_chromium_process(
         start_new_session=True,
         preexec_fn=preexec,
     )
+
+    job = None
+    if platform.system() == "Windows":
+        job = _create_windows_job_object()
+        proc_handle = getattr(proc, "_handle", None)
+        if job and proc_handle:
+            _assign_process_to_job(job, int(proc_handle))
 
     pgid = None
     with contextlib.suppress(Exception):
@@ -742,4 +919,5 @@ def launch_chromium_process(
         watcher=watcher,
         pipe_w=pipe_w,
         pgid=pgid,
+        job=job,
     )

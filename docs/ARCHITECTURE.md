@@ -58,7 +58,7 @@ flowchart TD
         end
         subgraph BrowserSub ["浏览器与 CDP 通信 (browser/)"]
             CDPClient["cdp_client.py<br/>纯 Python 异步 WebSocket CDP 客户端"]
-            BrowserEngine["browser_engine.py<br/>跨平台 Chromium 探测与进程管理"]
+            BrowserEngine["browser_engine.py<br/>CloakBrowser 探测、Windows Job Object 与进程管理"]
             Scripts["scripts.py<br/>Fetch + ReadableStream 与 DOM GC 脚本加载"]
         end
         subgraph AccountSub ["账号凭据与持久化 (account/)"]
@@ -99,7 +99,7 @@ flowchart TD
 
 | 文件 | 核心职责 |
 |---|---|
-| `chat_service.py` | 将客户端提交的 Gemini 标准请求转换为内部通用结构，内存处理 Base64 媒体、系统提示与具备 description/enum 全元数据的无损工具声明 |
+| `chat_service.py` | 将客户端提交的 Gemini 请求转换为内部结构，处理 Base64 媒体、系统提示与工具参数声明 |
 | `account_rotator.py` | 负责多账号的 Sticky 黏性调度，按模型维护 429 限流与 403 鉴权异常隔离状态，每日美西午夜重置 |
 | `account_orchestrator.py` | 提供全局防雪崩互斥锁（`_switch_lock`），在并发 429 与 403 异常时实现安全有序故障转移切号与单账号在位自愈 |
 | `account_service.py` | 账号领域用例（Cookie 保存、批量探活导入、凭据激活）封装，杜绝路由层穿透访问存储私有属性 |
@@ -217,8 +217,8 @@ sequenceDiagram
 | 平台 | 运行模式 | 浏览器后端 | 内存基准 |
 |---|---|---|---|
 | **Android (Termux)** | `proot-distro` Linux 容器隔离运行 | CloakBrowser (aarch64) | 约 350 - 450 MB PSS（建议空闲 RAM ≥ 1 GB） |
-| **Linux (x86_64 / arm64)** | 原生宿主运行 | 系统 Chrome / Chromium / CloakBrowser | 约 250 - 350 MB PSS |
-| **macOS (Apple Silicon / Intel)** | 原生宿主运行 | Google Chrome / Chromium / Edge | 约 250 - 350 MB |
-| **Windows (x64)** | 原生宿主运行 | Chrome / Edge | 约 280 - 380 MB |
-| **Docker 容器** | Debian 基础镜像 | 容器内 headless Chromium | 约 250 - 350 MB |
-> 依赖管理推荐使用 `uv`。在 Android Termux 环境下定向适配预编译 wheel，在 Linux/macOS/Windows 下解析官方 wheel，保障全平台构建的一致性与稳定性。
+| **Linux (x86_64 / arm64)** | 原生宿主运行 | CloakBrowser (x86_64 / arm64) | 约 250 - 350 MB PSS |
+| **macOS (Apple Silicon / Intel)** | 原生宿主运行 | CloakBrowser | 约 250 - 350 MB |
+| **Windows (x64)** | 原生宿主运行 (Job Object 进程管理) | CloakBrowser (x64) | 约 280 - 380 MB |
+| **Docker 容器** | Debian 基础镜像 | 容器内 CloakBrowser | 约 250 - 350 MB |
+> 依赖管理使用 `uv`。由于 PyPI 官方未提供 Android 预编译 wheel，而 Termux 的 TUR 源缺少桌面端 wheel，因此 `uv.lock` 不纳入版本控制：桌面端直接从 PyPI 安装对应 wheel；Termux 环境通过本地 `uv.toml` 使用 TUR 源，避免不同平台的 wheel 源锁定冲突。
