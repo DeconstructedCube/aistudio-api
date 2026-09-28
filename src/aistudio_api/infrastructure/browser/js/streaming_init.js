@@ -51,7 +51,7 @@
             if (window.__streams) delete window.__streams[rid];
             if (window.__stream_abort) delete window.__stream_abort[rid];
         } catch (e) {}
-
+    }
     const doAbort = function() {
         cleanup();
         if (state.reader) {
