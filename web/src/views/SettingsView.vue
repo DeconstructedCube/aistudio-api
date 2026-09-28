@@ -64,13 +64,13 @@ onMounted(() => {
       <div class="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-xs">
         <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
           <Cpu class="w-4 h-4 text-emerald-600" />
-          <span>快照与缓存控制</span>
+          <span>流式响应超时</span>
         </div>
         <div class="text-base font-bold text-gray-900 font-mono">
-          TTL: {{ config?.snapshot_cache_ttl || 3600 }}s
+          {{ config?.timeout_stream || 120 }}s
         </div>
         <div class="text-[11px] text-gray-400 mt-1">
-          BotGuard 快照缓存有效期
+          单次流式生成最大等待时间
         </div>
       </div>
 

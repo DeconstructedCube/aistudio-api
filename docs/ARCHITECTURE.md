@@ -43,24 +43,28 @@ flowchart TD
     end
 
     subgraph InfraLayer ["4. Infrastructure 基础设施层"]
-        subgraph GatewaySub ["协议网关与编解码"]
+        subgraph GatewaySub ["协议网关与编解码 (gateway/)"]
             Client["client.py<br/>AIStudioClient 统一门面"]
-            CaptureSvc["capture.py<br/>单例模板捕获 (RequestCaptureService)"]
+            Session["session.py<br/>BrowserSession 会话管理与快照生成"]
+            CaptureSvc["capture.py<br/>模板捕获与单例管理"]
             WireCodec["wire_codec.py<br/>Protobuf-JSON 请求构造与重写"]
             WireParser["wire_parser.py<br/>Protobuf-JSON 响应解析器"]
+            StreamParser["stream_parser.py<br/>增量流式 JSON 状态机解析器"]
             StreamingGateway["streaming.py<br/>增量 SSE 流式管道调度"]
             Transport["transport.py<br/>CDP Native Binding 推送传输与反压"]
+            ReplaySvc["replay.py<br/>页面内 XHR 重放服务"]
+            ModelDisc["model_discovery.py<br/>动态模型发现与元数据获取"]
             ModelDefaults["model_defaults.py<br/>配置解析与 mtime 内存缓存"]
         end
-        subgraph BrowserSub ["浏览器与 CDP 通信"]
-            BrowserSession["session.py<br/>单实例会话与锁管理"]
+        subgraph BrowserSub ["浏览器与 CDP 通信 (browser/)"]
             CDPClient["cdp_client.py<br/>纯 Python 异步 WebSocket CDP 客户端"]
             BrowserEngine["browser_engine.py<br/>跨平台 Chromium 探测与进程管理"]
-            Scripts["scripts.py<br/>Fetch + ReadableStream 与 DOM GC 脚本"]
+            Scripts["scripts.py<br/>Fetch + ReadableStream 与 DOM GC 脚本加载"]
         end
-        subgraph StorageSub ["持久化与缓存"]
+        subgraph AccountSub ["账号凭据与持久化 (account/)"]
             AccountStore["account_store.py<br/>原子紧凑 JSON 文件凭据库"]
-            SnapshotCache["snapshot_cache.py<br/>BotGuard 快照内存缓存 (TTL+LRU)"]
+            CookieParser["cookie_parser.py<br/>Cookie 解析、Hash 计算与探活"]
+            CookieRefresher["cookie_refresher.py<br/>Cookie 格式整理与会话刷新"]
         end
     end
 
@@ -77,7 +81,6 @@ flowchart TD
     BrowserSub --> Upstream
     GatewaySub --> Upstream
 ```
-
 ---
 
 ## 2. 核心模块与职责划分
@@ -113,21 +116,25 @@ flowchart TD
 
 - **浏览器与 CDP 子系统 (`browser/`)**：
   - `cdp_client.py`：基于纯 Python 异步 WebSocket 的 Chrome DevTools Protocol 客户端，支持网络层黑名单拦截与自动清理监听器。
-  - `browser_engine.py`：负责 Chromium 跨平台路径探测，启用 `--max-old-space-size=128 --expose-gc` 进行严格内存压降。
-  - `scripts.py`：浏览器自动化脚本加载器，将注入脚本从 Python 源码完全剥离至 `js/*.js` 独立管理。
-  - `js/`：独立 JavaScript 模块库，包含 `install_hooks.js`（快照挂载）、`streaming_init.js`（Fetch+ReadableStream 绑定推送）、`stream_cleanup.js`、`dialog_cleanup.js`、`dom_gc_cleanup.js` 等，支持静态语法检查与独立维护。
+  - `browser_engine.py`：负责 Chromium 跨平台路径探测，配置进程启动参数（如 `--max-old-space-size=128 --expose-gc` 控制内存占用）。
+  - `scripts.py`：浏览器自动化脚本加载器，将注入脚本从 Python 源码剥离至 `js/*.js` 独立管理。
+  - `js/`：独立 JavaScript 模块库，包含 `install_hooks.js`、`streaming_init.js`、`stream_cleanup.js`、`dialog_cleanup.js`、`dom_gc_cleanup.js` 等，支持静态语法检查与独立维护。
 - **网关与编解码子系统 (`gateway/`)**：
-  - `client.py`：`AIStudioClient` 网关统一门面，组装会话、模板捕获、快照缓存与流式生成。
-  - `transport.py`：纯 CDP 原生 Binding (`__aistudio_stream_push__`) 实时事件驱动流式管道，消除冗余轮询与时间竞争，辅以有界异步队列反压控制与 Python 端 SAPISIDHASH 鉴权注入。
+  - `client.py`：`AIStudioClient` 网关统一门面，组装会话、模板捕获、请求重放与流式生成。
+  - `session.py`：`BrowserSession` 会话管理器，负责页面导航、请求拦截、保持 BotGuard 服务运行时，并通过 `_snapshot_lock` 串行生成单次请求快照签名。
+  - `transport.py`：基于 CDP 原生 Binding (`__aistudio_stream_push__`) 的实时事件驱动流式管道，消除冗余轮询，辅以有界异步队列反压控制与 Python 端 SAPISIDHASH 鉴权注入。
   - `wire_codec.py`：负责 Google 内部 Protobuf-over-JSON 数组结构构造与请求重写。
-  - `wire_parser.py`：从领域模型剥离出的纯粹 Protobuf-over-JSON 响应解析器，防范 JSPB `[parts, role]` 结构混淆，精准解包 Struct 字典与 ListValue 数组并还原布尔压缩值，将上游分块与使用量无损转换为领域对象。
-  - `capture.py`：集中统一的请求模板单例缓存管理（Single Source of Truth）。
+  - `wire_parser.py`：Protobuf-over-JSON 响应解析器，防范 JSPB `[parts, role]` 结构混淆，解包 Struct 字典与 ListValue 数组并还原布尔压缩值。
+  - `stream_parser.py`：增量式流式 JSON 状态机解析器，负责去除 XSSI 前缀（`)]}'`）并在流式传输中按深度截取解析完整分块。
+  - `capture.py`：集中统一的请求模板单例缓存管理。
+  - `replay.py`：请求重放服务，在页面上下文内执行注入请求并支持 HTTP 降级。
   - `streaming.py`：流式生成编排与异常转换网关。
+  - `model_discovery.py`：双通道模型列表探测（浏览器内 XHR 与外部 HTTP RPC），提供本地默认列表保底。
   - `model_defaults.py`：模型规则解析、工具默认注入及基于文件 mtime 的内存缓存。
-- **凭据与存储子系统 (`account/` & `cache/`)**：
-  - `account_store.py`：基于文件系统的原子持久化凭据库（紧凑 JSON 格式，避免无效磁盘刷写）。
-  - `snapshot_cache.py`：基于 TTL 与 LRU 的 BotGuard 快照内存缓存。
----
+- **账号与持久化子系统 (`account/`)**：
+  - `account_store.py`：基于文件系统的原子持久化凭据库（写入临时文件后 `os.replace` 原子替换，避免写入损坏）。
+  - `cookie_parser.py`：支持 JSON、Netscape 与 Header 格式 Cookie 解析，计算 SAPISIDHASH 签名，过滤环境易腐凭据，提供多账号递归探活（`u/0`, `u/1` 等）。
+  - `cookie_refresher.py`：浏览器凭据格式规整与会话探活刷新。
 
 ## 3. 请求生命周期与执行时序
 
@@ -189,7 +196,8 @@ sequenceDiagram
 
 - 全局维持 **单个受控 Chromium 进程**，避免多实例多进程导致的内存膨胀。
 - 启动限制参数：`--renderer-process-limit=1`、`--js-flags=--max-old-space-size=128 --expose-gc`、`--disable-gpu`。
-- 并发请求通过 CDP 客户端在同一个浏览器页面上下文内以轻量 `Fetch + ReadableStream` 执行，并由 `DOM_GC_CLEANUP_JS` 与 V8 原生垃圾回收保持极致内存水位。
+- 并发请求通过 CDP 客户端在同一个浏览器页面上下文内以轻量 `Fetch + ReadableStream` 执行，并由 `DOM_GC_CLEANUP_JS` 与 V8 原生垃圾回收控制内存占用。
+
 ### 4.2 模型独立限流、403 鉴权隔离与 Sticky 调度
 
 - **模型级配额隔离**：各账号针对不同模型（如 `gemini-3.7-flash`、`gemini-3.8-flash`）的 429 状态独立记录，单模型额度耗尽不影响其他模型的正常调用。
@@ -202,8 +210,7 @@ sequenceDiagram
 当多个并发协程同时遭遇 429 限流或 403 权限异常时：
 1. 率先获得 `_switch_lock` 的协程执行实质性切号与页面上下文刷新；
 2. 后续排队获得锁的协程通过双重检查（Double-Checked Locking），识别到账号已被切换至健康账号且对当前模型可用，直接复用重试，避免并发异常导致多次无谓切号；
-3. 若为单账号或备用账号全部耗尽时，系统自动对当前账号触发在位强制刷新（In-Place Refresh），彻底清除快照/模板缓存并重新激活会话握手 BotGuard 实现自愈。
----
+3. 若为单账号或备用账号全部耗尽时，系统自动对当前账号触发在位强制刷新（In-Place Refresh），清除模板缓存并重新激活会话握手 BotGuard 实现自愈。
 
 ## 5. 跨平台支持与依赖隔离
 

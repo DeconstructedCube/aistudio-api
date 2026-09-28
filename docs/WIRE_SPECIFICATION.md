@@ -207,11 +207,9 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 | **`21`** | Field 22 | `minItems` | `int` | 数组最小元素数 |
 | **`22`** | Field 23 | `propertyOrdering` | `list[str]` | 属性在 UI / Prompt 中呈现的确定性声明顺序 |
 
-> [!CAUTION]
-> **Schema Proto 边界硬约束 (No Indices Beyond 22)**：
-> 通过对 AI Studio 前端 Bundle 进行 AST 深度遍历（`_.mhb = new Set(...)`），Google Schema Proto 字段全集**严格终止于 Field 23 (`propertyOrdering`，数组下标 22)**。
-> 原先推测的 `title` (Field 24) 与 `default` (Field 25) 在 Google 官方 Schema Proto 中**根本不存在**；向数组填充下标 23 或 24 会注入未知 Proto 字段，导致 Google protojson 服务端报 `HTTP 400: Request contains an invalid argument`（或 `Cannot find field`）直接阻断请求！
-
+> [!NOTE]
+> **Schema 字段边界说明**：
+> 根据 AI Studio 前端 Bundle 逆向提取的 Schema Proto 字段集（`_.mhb = new Set(...)`），定义范围截止于 Field 23（`propertyOrdering`，数组下标 22）。早期推测的 `title` (Field 24) 与 `default` (Field 25) 并不存在于 Google Schema Proto 中；向数组注入下标 23 或 24 会被服务端识别为未知字段并返回 `HTTP 400: Request contains an invalid argument`。
 MakerSuite 协议无独立顶层工具控制字段，Gemini API 的 `toolConfig` 在网关层按语义映射：
 
 | 模式 (Mode) | 语义说明 | 网关处理策略 |
@@ -324,16 +322,15 @@ AI Studio Web 核心过滤数组：
 
 ---
 
-## 8. 前端逆向新特性与高价值发现
+## 8. 前端逆向未公开特性参考
 
-通过对 AI Studio 最新前端代码包（`m=_b.js`）的 AST 深度逆向，发现如下具有高挖掘价值的协议特性与未公开接口：
-
+通过对 AI Studio 前端代码包（`m=_b.js`）的 AST 逆向分析，整理以下协议特性与未公开接口参考：
 1. **原生 MCP (Model Context Protocol) 支持**：
    前端 `toolType` 解析中内置 `mcp_server_tool_call`（枚举代码 `6`），表明 Google 正在或已在 AI Studio 底层协议中预留了连接本地/远程 MCP Server 的标准工具通道。
 2. **原生文件检索工具 (`file_search`)**：
    工具分支代码中存在 `case 8: return "file_search"` 与 `file_search_call`，区别于传统的代码执行与普通检索，属于针对多文档的大规模知识库检索能力。
 3. **语音自定义词汇表 (`customVocabulary`)**：
-   GenerationConfig 字段 32（`_.cu` / Field 32）下支持向语音端点下发专属专业术语、专有名词与人名词典，显著提升高精度音频转录/生成的准确度。
+   GenerationConfig 字段 32（`_.cu` / Field 32）下支持向语音端点下发专属专业术语、专有名词与人名词典，用于提升音频转录与识别精度。
 4. **音频高级控制标记**：
    - `wordTimestamps`：字级别（Word-level）输出时间戳；
    - `speakerDiarization`：多说话人角色分离与标签标记；
@@ -349,7 +346,7 @@ AI Studio Web 核心过滤数组：
    在 `dwa` 反序列化器中，`BoolValue` 字段（Field 4）常以整数 `0` 和 `1` 传递以减少传输体积，Python 网关端必须通过 `value[3] in (0, 1)` 强制还原为 `bool`。
 2. **Repeated 容器单层扁平化边界**：
    在 `_decode_wire_list` 中，Repeated 字段只允许剥离一层外层数组包装（`len == 1 and not _is_wire_value`），一旦内层为 `_is_wire_value`（以 `None` 或 `0` 开头的 JSPB 数组），必须停止拆包，否则单元素列表（如包含一个问题对象的 `ask` 工具）会被错误展开成 5 元素数组，导致首部填充 4 个 `None`。
-3. **Schema 元数据无损注入与边界安全**：
-   下发给 MakerSuite 的 `tools` 必须完整保留字段的 `description` (下标 2) 与 `enum` (下标 4)，否则模型在生成调用参数时失去参数语义与合法枚举选项，极易造成格式错误或参数幻觉。同时参数 Schema 数组下标严格以 `22` (`propertyOrdering`) 为上限，绝不可注入不存在的字段（如 `title` / `default`）。
+3. **Schema 元数据注入与字段边界**：
+   下发给 MakerSuite 的 `tools` 需保留字段的 `description` (下标 2) 与 `enum` (下标 4)，以保障模型获取参数语义与合法枚举选项。同时参数 Schema 数组下标上限为 `22` (`propertyOrdering`)，不包含 `title` 与 `default` 字段。
 4. **客户端 Schema 字段多态解包 (`parametersJsonSchema`)**：
-   现代官方 SDK（如 `@google/genai`）及 OMP 代理在生成 Gemini 工具规范时，默认将完整参数挂载在 `parametersJsonSchema` 字段下而非历史的 `parameters`。网关层必须兼容多态字段提取，杜绝 Schema 丢失导致的空参调用（如 `read({})`）。
+   官方 SDK（如 `@google/genai`）在生成 Gemini 工具规范时，默认将参数挂载在 `parametersJsonSchema` 字段下。网关层兼容该多态字段提取，保障参数结构完整转换。

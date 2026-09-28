@@ -247,11 +247,8 @@ class Settings:
     api_keys: frozenset[str] = frozenset()
     timeout_replay: int = int(os.getenv("AISTUDIO_TIMEOUT_REPLAY", "120"))
     timeout_stream: int = int(os.getenv("AISTUDIO_TIMEOUT_STREAM", "120"))
-    timeout_capture: int = int(os.getenv("AISTUDIO_TIMEOUT_CAPTURE", "30"))
-    snapshot_cache_ttl: int = int(os.getenv("AISTUDIO_SNAPSHOT_CACHE_TTL", "900"))
     timezone: str = resolve_timezone()
     locale: str = resolve_locale()
-    snapshot_cache_max: int = int(os.getenv("AISTUDIO_SNAPSHOT_CACHE_MAX", "100"))
     dump_raw_response: bool = os.getenv("AISTUDIO_DUMP_RAW_RESPONSE", "0") in (
         "1",
         "true",
@@ -267,7 +264,6 @@ class Settings:
     config_file: str = str(resolve_config_file())
     persist_stats: bool = _load_bool_env("AISTUDIO_PERSIST_STATS", default=True)
     persist_rotator: bool = _load_bool_env("AISTUDIO_PERSIST_ROTATOR", default=True)
-    account_max_retries: int = int(os.getenv("AISTUDIO_ACCOUNT_MAX_RETRIES", "3"))
     dump_requests: bool = _load_dump_requests_env()
     dump_to_file: bool = _load_dump_to_file_env()
     dump_dir: str = os.getenv("AISTUDIO_DUMP_DIR", str(_PROJECT_ROOT / "dumps"))

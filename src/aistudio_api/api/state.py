@@ -37,7 +37,6 @@ class ModelStatsItem:
 class RuntimeState:
     client: AIStudioClient | None = None
     browser_port: int = 9222
-    snapshot_cache: object = None
     account_service: AccountService | None = None
     rotator: AccountRotator | None = None
     model_stats: dict[str, ModelStatsItem] = field(

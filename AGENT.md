@@ -69,9 +69,9 @@ uv run python3 main.py server --port 8080
 | `proot-distro login: container 'aistudio-api' is missing` | 容器尚未创建或被改名 | 运行安装脚本创建容器，或通过 `AISTUDIO_PROOT_NAME` 指定现有容器 |
 | `pydantic-core` 报 `GLIBC_X.Y not found` | 使用了系统 pip 安装而非 `uv` | 清理 `.venv/` 后重新执行 `uv sync` |
 
-### 2.5 临时文件与目录规范 (Termux 致命陷阱)
+### 2.5 临时文件与目录规范 (Termux)
 
-- **绝对没有系统 `/tmp`**：Android Termux 平台下**不存在**标准的 `/tmp` 目录！在代码、测试、脚本或临时分析中**严禁硬编码 `/tmp/`**，否则将直接抛出 `FileNotFoundError: [Errno 2] No such file or directory: '/tmp'`。
+- **避免硬编码 `/tmp`**：Android Termux 环境中不存在系统级 `/tmp` 目录。在代码、测试、脚本或临时分析中严禁硬编码 `/tmp/`，否则会引发 `FileNotFoundError: [Errno 2] No such file or directory: '/tmp'`。
 - **统一使用 `tempfile` / `$TMPDIR`**：所有临时目录或文件操作必须通过 `tempfile.gettempdir()` 或 `tempfile.mkdtemp()` 创建（自动安全解析至 `$TMPDIR` 即 `/data/data/com.termux/files/usr/tmp`），并在操作完成后通过 `try...finally` 与 `shutil.rmtree` 及时清理。
 ---
 
@@ -156,9 +156,9 @@ uv run python3 main.py server --port 8080
 | 工具 / 阶段 | 命令 | 判定标准 |
 |---|---|---|
 | **Python 代码风格与 Lint** | `uv run ruff check .` | 0 errors |
-| **Python 代码格式化** | `uv run ruff format --check .` | 71 files already formatted |
+| **Python 代码格式化** | `uv run ruff format --check .` | 72 files already formatted |
 | **Python 类型检查** | `bun x pyright src tests` | 0 errors |
-| **Python 单元测试** | `uv run pytest` | 全部通过 (182 passed) |
+| **Python 单元测试** | `uv run pytest` | 全部通过 (191 passed) |
 | **浏览器 JS 语法校验** | `for f in src/aistudio_api/infrastructure/browser/js/*.js; do bun build "$f" --no-bundle >/dev/null; done` | 0 errors |
 | **前端代码规范** | `cd web && bun run lint` | 0 errors, 0 warnings |
 | **前端类型检查** | `cd web && bun run type-check` | 0 errors |
@@ -181,7 +181,7 @@ uv run python3 main.py server --port 8080
 > 4. **鉴权故障快速隔离与自愈**：当遇到 `The caller does not have permission` (403) 时，立即将当前账号置入 `auth_cooldown` 并快速故障转移至健康账号；单账号或备用号耗尽时自动触发在位强制刷新与 BotGuard 重握手自愈。
 > 5. **无全局 DOM 污染**：页面内 JavaScript 交互使用局部闭包 `Promise` 返回数据，不在 `window` 对象上遗留全局共享状态。
 > 6. **Cookie 智能精简与天然协商**：外部导入 Cookie 时自动过滤旧设备或跨 IP 绑定的易腐败凭据（`OSID`、`__Secure-OSID`、`SIDCC` 及 `_ga` 等追踪标记），保留核心认证项（`SID`、`SAPISID`、`1PSIDTS`）。浏览器访问 AI Studio 时自动协商出绑定当前网络/TLS 的全新有效 `OSID`，杜绝 403 权限拒绝。
-> 7. **真实环境伪装与低内存协同**：保留 `--renderer-process-limit=1`、`--in-process-gpu` 与 128MB V8 内存限制以保障 Android 低 RAM 运行；移除 `--disable-software-rasterizer` 并启用 `--use-gl=angle --use-angle=swiftshader` 恢复软件 WebGL 上下文，保留 `--mute-audio` 并移除 `--disable-audio` 保护 AudioContext；统一注入 `--fingerprint-platform=windows` 伪装至最稳固的 Windows 桌面指纹池，并通过原生 `--fingerprint-timezone` 与 Wire 协议层保持时区/位置严格一致。
+> 7. **真实环境伪装与低内存协同**：保留 `--renderer-process-limit=1`、`--in-process-gpu` 与 128MB V8 内存限制以保障 Android 低 RAM 运行；移除 `--disable-software-rasterizer` 并启用 `--use-gl=angle --use-angle=swiftshader` 恢复软件 WebGL 上下文，保留 `--mute-audio` 并移除 `--disable-audio` 保护 AudioContext；统一注入 `--fingerprint-platform=windows` 伪装为 Windows 桌面环境，并通过原生 `--fingerprint-timezone` 与 Wire 协议层保持时区/位置严格一致。
 
 ## 5. 代码结构索引
 
@@ -225,10 +225,9 @@ aistudio-api/
 │   │   ├── errors.py              # 业务异常定义 (AuthError, UsageLimitExceeded 等)
 │   │   └── models.py              # 领域数据结构 (Candidate, ModelOutput 等)
 │   ├── infrastructure/            # 基础设施层
-│   │   ├── account/               # Cookie 解析与凭据持久化 (account_store)
-│   │   ├── browser/               # 异步 CDP 客户端与 Chromium 进程管理
-│   │   ├── cache/                 # 内存快照与元数据缓存
-│   │   └── gateway/               # Wire Codec/Parser、传输层 (transport) 与流式网关
+│   │   ├── account/               # Cookie 解析、会话刷新与凭据持久化 (account_store, cookie_parser)
+│   │   ├── browser/               # 异步 CDP 客户端与 Chromium 进程管理 (cdp_client, browser_engine)
+│   │   └── gateway/               # Wire Codec/Parser、流式管道 (streaming, transport)、重放与模型发现
 ├── config.yaml                    # 模型规则与工具默认行为配置 (支持在线热重载)
 ├── main.py                        # 本地统一启动入口
 └── tests/                        # 单元测试套件 (模块化轻量架构，全量通过 <5s)

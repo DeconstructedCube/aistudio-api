@@ -174,7 +174,6 @@ Open `http://localhost:8080` in your browser to access the Web Console.
 | `AISTUDIO_BROWSER_EXECUTABLE` | string | Auto | Path to Chromium executable |
 | `AISTUDIO_BROWSER_PORT` | int | `9222` | Chromium remote debugging port (CDP) |
 | `AISTUDIO_BROWSER_HEADLESS` | bool | `true` | Run Chromium in headless mode |
-| `AISTUDIO_SNAPSHOT_CACHE_TTL` | int | `3600` | BotGuard snapshot cache TTL in seconds |
 | `AISTUDIO_PROOT_NAME` | string | `aistudio-api` | Dedicated proot-distro container name for Termux |
 | `AISTUDIO_DEFAULT_TEXT_MODEL` | string | `gemini-3.7-flash` | Default text model |
 | `AISTUDIO_DEFAULT_IMAGE_MODEL` | string | `gemini-3.1-flash-image-preview` | Default image generation model |
