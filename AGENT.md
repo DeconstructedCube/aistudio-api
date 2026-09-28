@@ -21,8 +21,9 @@
 - **原生 Gemini 协议专一性**：服务于 Gemini 官方 API 规范（包含 thinking、multimodal、image-generation、function calling 等），不引入额外的跨厂商协议转译层。
 - **轻量 CDP 驱动**：使用纯 Python 异步 WebSocket 直连 Chrome DevTools Protocol（CDP），不依赖 Node.js、Playwright 或 Selenium。
 - **浏览器内 XHR Replay**：在 MakerSuite 页面上下文中执行携带 `withCredentials = true` 的异步 XHR 请求，天然复用完整的 Cookie 会话、BotGuard 快照与环境指纹。
-
----
+- **代码即地面真理（Code as Ground Truth）**：通过全量测试验证的代码是系统最终的事实标准。当技术规范文档与真实代码逻辑出现分歧时，**一律以代码为准**，严禁劣化生产代码去迎合陈旧文档，并在重构过程中顺手同步修正完善文档。
+- **优化事实优先，严禁过度迎合测试（Fact & Architecture over Brittle Tests）**：系统架构整洁性、高内聚低耦合与防御边界是最高优先级。严禁为了迁就强耦合了私有变量（如内部字典 `rotator._stats`）的脆弱 mock 测试而妥协生产架构设计；遇冲突时应重构测试使其对齐公共领域契约，坚决消除抽象泄露（Abstraction Leak）。
+- **协议逆向规范常量化（Specification Constants & No Magic Numbers）**：Protobuf-over-JSON 逆向数组索引或魔数必须有据可查，统一提取为具备语义的规范常量（如 `WIRE_PART_*`、`WIRE_USAGE_*`），并附带对应 `docs/WIRE_SPECIFICATION.md` 章节交叉引用，杜绝裸数字直接散落业务逻辑中。
 
 ## 2. 运行时与环境约束 (Termux)
 
@@ -140,10 +141,13 @@ uv run python3 main.py server --port 8080
    - 严禁为了“显得工作量大”而添加冗余胶水层、无用抽象、过度包装或形式主义样板文档，保持代码与文档精炼干脆。
 7. **交付前全量审查完整 diff（Review Full Diff）**：
    - 每次提交或报告完成前，**必须完整查看整个 `git diff`（不带行数折叠与省略）**，逐行确认所有改动准确无误、没有残留调试代码或意外破损。
-   - 确保 `uv run ruff check .`、`uv run pyright` 和 `uv run pytest` 全部零报错通过后再行提交并推送。
-8. **大型嵌入脚本独立管理与 Write 习惯**：
-   - 浏览器端执行的大型复杂 JavaScript 逻辑（如流式注入、DOM GC、鉴权探活等）必须**独立提取为 `src/aistudio_api/infrastructure/browser/js/*.js` 独立文件**，由 `scripts.py` 在模块加载时读取，便于 JS 语法检查与独立维护。
-   - 新建文件、全量重构或脚本提取优先使用 `write` 工具进行整文件原子覆写；局部微创修改使用 `edit`。
+   - 确保 `uv run ruff check .`、`bun x pyright` 和 `uv run pytest` 全部零报错通过后再行提交。
+8. **微创编辑优先与 Diff 审计守则（Prefer Edit & Mandatory Diff Inspection）**：
+   - 局部功能调整或代码重构**一律优先使用精准微创的 `edit`**，避免全文件重写引入非预期的代码格式漂移与无关变动。
+   - 仅在新建文件、大型嵌入脚本提取（`src/.../js/*.js`）或结构彻底颠覆时使用 `write`。**使用 `write` 进行文件覆盖后，必须在第一时间执行 `git diff` 进行全量逐行审计**，确保无意外功能遗漏、截断或回退。
+9. **零 Shim 容忍与干净重构（Clean Cutover Refactoring）**：
+   - 重构内部函数或类方法签名时，必须实施**一步到位的原子切换（Atomic Cutover）**。
+   - **严禁保留 `@deprecated` 向下兼容存根、无意义的历史 shim 别名包装或 `_unused_*` 废弃形参**；全库一次性完整迁移所有调用方和对应测试断言。
 
 ### 3.4 自动化检查命令与执行守则
 
@@ -173,12 +177,11 @@ uv run python3 main.py server --port 8080
 > [!IMPORTANT]
 > 1. **原子化文件持久化**：所有持久化文件（`registry.json`、`auth.json`、`meta.json` 等）操作必须使用 `account_store._atomic_write_json`（写入临时文件后通过 `os.replace` 原子替换），防止并发写入截断。
 > 2. **账号切换排干机制**：切换账号时通过 `BrowserSession.request_scope()` 追踪在途请求，等待进行中的流式请求完成后再清理上下文。
-> 3. **缓存与模板隔离**：账号切换、429 限流或 403 鉴权重试时，调用 `clear_snapshot_cache()` 与 `capture_service.clear_templates()`，避免跨账号复用 BotGuard 快照或请求模板。
+> 3. **缓存与模板隔离**：账号切换、429 限流或 403 鉴权重试时，调用 `client.clear_templates()`，避免跨账号复用请求模板。快照签名按每次请求哈希实时生成，绝不跨请求共享。
 > 4. **鉴权故障快速隔离与自愈**：当遇到 `The caller does not have permission` (403) 时，立即将当前账号置入 `auth_cooldown` 并快速故障转移至健康账号；单账号或备用号耗尽时自动触发在位强制刷新与 BotGuard 重握手自愈。
 > 5. **无全局 DOM 污染**：页面内 JavaScript 交互使用局部闭包 `Promise` 返回数据，不在 `window` 对象上遗留全局共享状态。
 > 6. **Cookie 智能精简与天然协商**：外部导入 Cookie 时自动过滤旧设备或跨 IP 绑定的易腐败凭据（`OSID`、`__Secure-OSID`、`SIDCC` 及 `_ga` 等追踪标记），保留核心认证项（`SID`、`SAPISID`、`1PSIDTS`）。浏览器访问 AI Studio 时自动协商出绑定当前网络/TLS 的全新有效 `OSID`，杜绝 403 权限拒绝。
 > 7. **真实环境伪装与低内存协同**：保留 `--renderer-process-limit=1`、`--in-process-gpu` 与 128MB V8 内存限制以保障 Android 低 RAM 运行；移除 `--disable-software-rasterizer` 并启用 `--use-gl=angle --use-angle=swiftshader` 恢复软件 WebGL 上下文，保留 `--mute-audio` 并移除 `--disable-audio` 保护 AudioContext；统一注入 `--fingerprint-platform=windows` 伪装至最稳固的 Windows 桌面指纹池，并通过原生 `--fingerprint-timezone` 与 Wire 协议层保持时区/位置严格一致。
----
 
 ## 5. 代码结构索引
 

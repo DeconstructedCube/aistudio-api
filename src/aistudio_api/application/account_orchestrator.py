@@ -21,6 +21,19 @@ async def try_switch_account(
     is_session_expired: bool = False,
 ) -> bool:
     """尝试切换到下一个对目标 model 可用的账号。防止并发级联切号。"""
+    # 乐观快速预检：若无需记录永久失效/短时隔离，且当前活跃账号已被并发请求切换至健康状态，直接免锁复用
+    if failed_account_id and not is_session_expired and not is_auth_error:
+        rotator = runtime_state.rotator
+        account_service = runtime_state.account_service
+        if rotator is not None and account_service is not None:
+            cur_active = account_service.get_active_account()
+            if (
+                cur_active
+                and cur_active.id != failed_account_id
+                and rotator.is_account_available(cur_active.id, model=model)
+            ):
+                return True
+
     async with _switch_lock:
         rotator = runtime_state.rotator
         account_service = runtime_state.account_service
@@ -43,15 +56,18 @@ async def try_switch_account(
         elif failed_account_id and is_auth_error:
             rotator.record_auth_error(failed_account_id, model=model)
         # 双重检查：如果已经由并发协程切换到了新账号，且新账号对当前 model 可用，则直接复用
-        if failed_account_id and current_id and current_id != failed_account_id:
-            stats = rotator._stats.get(current_id)
-            if stats and stats.is_available(model):
-                logger.info(
-                    "已有并发请求完成切号，直接复用当前健康账号: %s (model=%s)",
-                    current_id,
-                    model,
-                )
-                return True
+        if (
+            failed_account_id
+            and current_id
+            and current_id != failed_account_id
+            and rotator.is_account_available(current_id, model=model)
+        ):
+            logger.info(
+                "已有并发请求完成切号，直接复用当前健康账号: %s (model=%s)",
+                current_id,
+                model,
+            )
+            return True
 
         next_account = await rotator.get_next_account(
             model=model,
@@ -71,9 +87,6 @@ async def try_switch_account(
             result = await account_service.activate_account(
                 next_account.id,
                 client._session,
-                None,
-                None,
-                keep_snapshot_cache=False,
             )
             return result is not None
 
@@ -94,14 +107,10 @@ async def try_switch_account(
             result = await account_service.activate_account(
                 current_id,
                 client._session,
-                None,
-                None,
-                keep_snapshot_cache=False,
             )
             return result is not None
 
-        stats = rotator._stats.get(current_id)
-        return bool(stats and stats.is_available(model))
+        return bool(current_id and rotator.is_account_available(current_id, model=model))
 
 
 async def ensure_active_account(attempt: int, model: str | None = None) -> None:
@@ -113,11 +122,9 @@ async def ensure_active_account(attempt: int, model: str | None = None) -> None:
     current = account_svc.get_active_account() if account_svc else None
     if not current:
         await try_switch_account(model=model)
-    elif rotator and model:
-        stats = rotator._stats.get(current.id)
-        if stats and not stats.is_available(model):
-            # 当前账号对该模型已限流，提前切号
-            await try_switch_account(model=model, failed_account_id=current.id)
+    elif rotator and model and not rotator.is_account_available(current.id, model=model):
+        # 当前账号对该模型已限流，提前切号
+        await try_switch_account(model=model, failed_account_id=current.id)
 
 
 def record_rotator_event(

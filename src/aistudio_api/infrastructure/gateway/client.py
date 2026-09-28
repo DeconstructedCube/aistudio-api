@@ -84,9 +84,6 @@ class AIStudioClient:
         if getattr(self, "_capture_service", None) is not None:
             self._capture_service.clear_templates()
 
-    def clear_snapshot_cache(self) -> None:
-        """兼容历史接口：清除模板缓存（快照签名按请求实时生成，已无快照缓存）。"""
-        self.clear_templates()
 
     async def close(self) -> None:
         """关闭浏览器后端。"""

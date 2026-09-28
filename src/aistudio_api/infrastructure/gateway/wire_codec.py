@@ -10,6 +10,16 @@ from pathlib import Path
 from aistudio_api.config import DEFAULT_TEXT_MODEL, settings
 
 from .model_defaults import resolve_model_defaults
+from .wire_parser import (
+    WIRE_PART_FILE_DATA_INDEX,
+    WIRE_PART_FUNCTION_CALL_ALT_INDEX,
+    WIRE_PART_FUNCTION_CALL_INDEX,
+    WIRE_PART_FUNCTION_RESPONSE_ALT_INDEX,
+    WIRE_PART_FUNCTION_RESPONSE_INDEX,
+    WIRE_PART_INLINE_DATA_INDEX,
+    WIRE_PART_TEXT_INDEX,
+    WIRE_PART_THOUGHT_SIGNATURE_INDEX,
+)
 from .wire_types import (
     AistudioContent,
     AistudioGenerationConfig,
@@ -370,25 +380,34 @@ class AistudioWireCodec:
     def _decode_part(self, raw_part) -> AistudioPart:
         if (
             isinstance(raw_part, list)
-            and len(raw_part) > 5
-            and isinstance(raw_part[5], list)
-            and len(raw_part[5]) >= 1
-            and isinstance(raw_part[5][0], str)
+            and len(raw_part) > WIRE_PART_FILE_DATA_INDEX
+            and isinstance(raw_part[WIRE_PART_FILE_DATA_INDEX], list)
+            and len(raw_part[WIRE_PART_FILE_DATA_INDEX]) >= 1
+            and isinstance(raw_part[WIRE_PART_FILE_DATA_INDEX][0], str)
         ):
-            return AistudioPart(file_id=raw_part[5][0])
+            return AistudioPart(file_id=raw_part[WIRE_PART_FILE_DATA_INDEX][0])
         if (
             isinstance(raw_part, list)
-            and len(raw_part) > 2
-            and isinstance(raw_part[2], list)
-            and len(raw_part[2]) >= 2
+            and len(raw_part) > WIRE_PART_INLINE_DATA_INDEX
+            and isinstance(raw_part[WIRE_PART_INLINE_DATA_INDEX], list)
+            and len(raw_part[WIRE_PART_INLINE_DATA_INDEX]) >= 2
         ):
-            return AistudioPart(inline_data=(raw_part[2][0], raw_part[2][1]))
+            return AistudioPart(
+                inline_data=(
+                    raw_part[WIRE_PART_INLINE_DATA_INDEX][0],
+                    raw_part[WIRE_PART_INLINE_DATA_INDEX][1],
+                )
+            )
         if isinstance(raw_part, list):
             raw_function_call = None
-            if len(raw_part) > 10 and isinstance(raw_part[10], list):
-                raw_function_call = raw_part[10]
-            elif len(raw_part) > 3 and isinstance(raw_part[3], list):
-                raw_function_call = raw_part[3]
+            if len(raw_part) > WIRE_PART_FUNCTION_CALL_ALT_INDEX and isinstance(
+                raw_part[WIRE_PART_FUNCTION_CALL_ALT_INDEX], list
+            ):
+                raw_function_call = raw_part[WIRE_PART_FUNCTION_CALL_ALT_INDEX]
+            elif len(raw_part) > WIRE_PART_FUNCTION_CALL_INDEX and isinstance(
+                raw_part[WIRE_PART_FUNCTION_CALL_INDEX], list
+            ):
+                raw_function_call = raw_part[WIRE_PART_FUNCTION_CALL_INDEX]
             if raw_function_call is not None:
                 name = (
                     raw_function_call[0]
@@ -403,8 +422,9 @@ class AistudioWireCodec:
                     else None
                 )
                 signature = (
-                    raw_part[14]
-                    if len(raw_part) > 14 and isinstance(raw_part[14], str)
+                    raw_part[WIRE_PART_THOUGHT_SIGNATURE_INDEX]
+                    if len(raw_part) > WIRE_PART_THOUGHT_SIGNATURE_INDEX
+                    and isinstance(raw_part[WIRE_PART_THOUGHT_SIGNATURE_INDEX], str)
                     else None
                 )
                 function_call = (name, args, call_id) if call_id else (name, args)
@@ -412,13 +432,20 @@ class AistudioWireCodec:
                     function_call=function_call, thought_signature=signature
                 )
         if isinstance(raw_part, list) and (
-            (len(raw_part) > 11 and isinstance(raw_part[11], list))
-            or (len(raw_part) > 4 and isinstance(raw_part[4], list))
+            (
+                len(raw_part) > WIRE_PART_FUNCTION_RESPONSE_ALT_INDEX
+                and isinstance(raw_part[WIRE_PART_FUNCTION_RESPONSE_ALT_INDEX], list)
+            )
+            or (
+                len(raw_part) > WIRE_PART_FUNCTION_RESPONSE_INDEX
+                and isinstance(raw_part[WIRE_PART_FUNCTION_RESPONSE_INDEX], list)
+            )
         ):
             raw_function_response = (
-                raw_part[11]
-                if len(raw_part) > 11 and isinstance(raw_part[11], list)
-                else raw_part[4]
+                raw_part[WIRE_PART_FUNCTION_RESPONSE_ALT_INDEX]
+                if len(raw_part) > WIRE_PART_FUNCTION_RESPONSE_ALT_INDEX
+                and isinstance(raw_part[WIRE_PART_FUNCTION_RESPONSE_ALT_INDEX], list)
+                else raw_part[WIRE_PART_FUNCTION_RESPONSE_INDEX]
             )
             name = (
                 raw_function_response[0]
@@ -429,8 +456,8 @@ class AistudioWireCodec:
                 raw_function_response[1] if len(raw_function_response) > 1 else {}
             )
             return AistudioPart(function_response=(name, response))
-        if isinstance(raw_part, list) and len(raw_part) > 1:
-            return AistudioPart(text=raw_part[1])
+        if isinstance(raw_part, list) and len(raw_part) > WIRE_PART_TEXT_INDEX:
+            return AistudioPart(text=raw_part[WIRE_PART_TEXT_INDEX])
         return AistudioPart()
 
     def _decode_system_instruction(self, raw_instruction) -> AistudioContent | None:

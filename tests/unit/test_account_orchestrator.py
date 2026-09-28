@@ -50,10 +50,8 @@ async def test_try_switch_account_double_check_reuse():
     )
     mock_service.get_active_account = MagicMock(return_value=active_acc)
 
-    # acc_2 is available
-    mock_stats = MagicMock()
-    mock_stats.is_available = MagicMock(return_value=True)
-    mock_rotator._stats = {"acc_2": mock_stats}
+    # acc_2 is available for target model
+    mock_rotator.is_account_available = MagicMock(return_value=True)
 
     orig_rotator = runtime_state.rotator
     orig_service = runtime_state.account_service
@@ -89,9 +87,7 @@ async def test_ensure_active_account_early_switch():
     mock_service.get_active_account = MagicMock(return_value=active_acc)
 
     # acc_1 is NOT available for this model
-    mock_stats = MagicMock()
-    mock_stats.is_available = MagicMock(return_value=False)
-    mock_rotator._stats = {"acc_1": mock_stats}
+    mock_rotator.is_account_available = MagicMock(return_value=False)
 
     orig_rotator = runtime_state.rotator
     orig_service = runtime_state.account_service
@@ -104,10 +100,11 @@ async def test_ensure_active_account_early_switch():
         await ensure_active_account(attempt=1, model="gemini-2.5-flash")
 
         # attempt == 0 with unavailable model calls try_switch_account
-        # mock try_switch_account by checking that rotator stats was checked
-        mock_stats.is_available.assert_not_called()
+        mock_rotator.is_account_available.assert_not_called()
         await ensure_active_account(attempt=0, model="gemini-2.5-flash")
-        mock_stats.is_available.assert_called_with("gemini-2.5-flash")
+        mock_rotator.is_account_available.assert_called_with(
+            "acc_1", model="gemini-2.5-flash"
+        )
     finally:
         runtime_state.rotator = orig_rotator
         runtime_state.account_service = orig_service
@@ -195,9 +192,6 @@ async def test_try_switch_account_single_account_recovery():
         mock_service.activate_account.assert_called_once_with(
             "acc_1",
             mock_client._session,
-            None,
-            None,
-            keep_snapshot_cache=False,
         )
     finally:
         runtime_state.rotator = orig_rotator
@@ -299,9 +293,6 @@ async def test_try_switch_account_session_expired_switches_to_healthy_account():
         mock_service.activate_account.assert_called_once_with(
             "acc_2",
             mock_client._session,
-            None,
-            None,
-            keep_snapshot_cache=False,
         )
     finally:
         runtime_state.rotator = orig_rotator

@@ -480,6 +480,13 @@ class AccountRotator:
             }
         return result
 
+    def is_account_available(
+        self, account_id: str, model: str | None = None
+    ) -> bool:
+        """检查指定账号在特定模型下是否健康可用。"""
+        stats = self._stats.get(account_id)
+        return bool(stats and stats.is_available(model))
+
     def _get_available_accounts(
         self, model: str | None = None, *, ignore_auth_cooldown: bool = False
     ) -> list[tuple[AccountMeta, AccountStats]]:

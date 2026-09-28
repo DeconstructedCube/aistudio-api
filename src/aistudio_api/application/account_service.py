@@ -45,9 +45,6 @@ class AccountService:
         self,
         account_id: str,
         browser_session: BrowserSession,
-        _unused_snapshot_cache: object = None,
-        _unused_lock: object = None,
-        keep_snapshot_cache: bool = False,
     ) -> AccountMeta | None:
         """切换到指定账号。"""
         account = self._store.get_account(account_id)
@@ -63,12 +60,11 @@ class AccountService:
                 return None
 
             self._store.set_active_account(account_id)
-            if not keep_snapshot_cache:
-                from aistudio_api.api.state import runtime_state
+            from aistudio_api.api.state import runtime_state
 
-                if runtime_state.client is not None:
-                    runtime_state.client.clear_templates()
-                logger.info("已清除模板缓存")
+            if runtime_state.client is not None:
+                runtime_state.client.clear_templates()
+            logger.info("已清除模板缓存")
 
             await browser_session.switch_auth(str(auth_path))
             await browser_session.ensure_botguard_service()
