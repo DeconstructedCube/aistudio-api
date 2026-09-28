@@ -114,6 +114,8 @@ def to_gemini_parts(
             raw_val = function_call.get("raw")
             if isinstance(raw_val, list) and len(raw_val) > 1:
                 payload.args = raw_val[1]
+        if payload.args is None:
+            payload.args = {}
         fc_id = function_call.get("call_id") or function_call.get("id")
         if fc_id:
             payload.id = str(fc_id)

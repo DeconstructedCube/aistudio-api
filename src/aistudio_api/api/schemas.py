@@ -19,13 +19,18 @@ class GeminiFileData(BaseModel):
 
 class GeminiFunctionCall(BaseModel):
     name: str
-    args: dict[str, object] | list[object] | object | None = None
+    args: dict[str, object] | list[object] | object | None = Field(
+        default=None, validation_alias=AliasChoices("args", "arguments")
+    )
     id: str | None = None
 
 
 class GeminiFunctionResponse(BaseModel):
     name: str
-    response: dict[str, object] | list[object] | object | None = None
+    response: dict[str, object] | list[object] | object | None = Field(
+        default=None,
+        validation_alias=AliasChoices("response", "content", "output"),
+    )
     id: str | None = None
 
 

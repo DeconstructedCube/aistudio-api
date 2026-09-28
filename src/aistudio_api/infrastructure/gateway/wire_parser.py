@@ -33,8 +33,12 @@ WIRE_PART_EXECUTABLE_CODE_INDEX = 8  # Field 9 code execution script string
 WIRE_PART_CODE_EXECUTION_RESULT_INDEX = 9  # Field 10 code execution output string
 WIRE_PART_THOUGHT_FLAG_INDEX = 10  # Field 11 boolean thought flag (primary)
 WIRE_PART_FUNCTION_CALL_ALT_INDEX = 10  # Field 11 function call alternative slot
-WIRE_PART_FUNCTION_RESPONSE_ALT_INDEX = 11  # Field 12 function response alternative slot
-WIRE_PART_THOUGHT_ALT_FLAG_INDEX = 12  # Field 13 integer 1 thought flag (AI Studio variant)
+WIRE_PART_FUNCTION_RESPONSE_ALT_INDEX = (
+    11  # Field 12 function response alternative slot
+)
+WIRE_PART_THOUGHT_ALT_FLAG_INDEX = (
+    12  # Field 13 integer 1 thought flag (AI Studio variant)
+)
 WIRE_PART_THOUGHT_SIGNATURE_INDEX = 14  # Field 15 thought cryptographic signature token
 
 # UsageMetadata indexes inside chunk[2] (WIRE_SPECIFICATION.md §7.3)
@@ -268,6 +272,9 @@ def _decode_wire_struct(raw_struct: object) -> dict[str, object]:
     if not isinstance(raw_struct, list) or not raw_struct:
         return {}
 
+    # Single unboxed key-value pair [key, wire_value]
+    if len(raw_struct) >= 2 and isinstance(raw_struct[0], str):
+        return {raw_struct[0]: _decode_wire_value(raw_struct[1])}
     entries: object = raw_struct
     while (
         isinstance(entries, list)
@@ -395,9 +402,7 @@ def parse_chunk_usage(chunk: object) -> dict[str, object]:
     if not isinstance(chunk, list):
         return {}
     return parse_usage_metadata(
-        chunk[WIRE_CHUNK_USAGE_INDEX]
-        if len(chunk) > WIRE_CHUNK_USAGE_INDEX
-        else None
+        chunk[WIRE_CHUNK_USAGE_INDEX] if len(chunk) > WIRE_CHUNK_USAGE_INDEX else None
     )
 
 

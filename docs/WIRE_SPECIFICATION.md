@@ -179,11 +179,11 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 
 ### 6.3 结构化 Schema 完整逆向编码表
 
-针对自定义函数声明（Function Declarations）与结构化输出（Response Schema），根据 AI Studio 前端 JS 核心反编译（`_.nm` 与 `dwa`）提取的完整 Protobuf-over-JSON 字段索引如下：
+针对自定义函数声明（Function Declarations）与结构化输出（Response Schema），根据 AI Studio 前端 JS 核心反编译（`_.nm`、`dwa` 与 AST 导出的字段全集 `_.mhb`）提取的完整 Protobuf-over-JSON 字段索引如下：
 
 | 数组索引 | Proto 字段号 | 字段名 (Property) | 类型 | 说明与编码规范 |
 |---|---|---|---|---|
-| **`0`** | Field 1 | `type` | `int` | `1`=string, `2`=number, `3`=integer, `4`=boolean, `5`=array, `6`=object, `7`=null |
+| **`0`** | Field 1 | `type` | `int` | **严格限制取值 `1..6`**：`1`=string, `2`=number, `3`=integer, `4`=boolean, `5`=array, `6`=object。**严禁赋值为 `0` (`TYPE_UNSPECIFIED`)**，否则上游直接抛出 `HTTP 400: Request contains an invalid argument`（前端 `dwa()` 报 `Invalid "type" 0`） |
 | **`1`** | Field 2 | `format` | `string` | 格式修饰符（如 `"date-time"`, `"int64"`） |
 | **`2`** | Field 3 | `description` | `string` | **字段语义描述**（向模型传达业务逻辑的关键元数据） |
 | **`3`** | Field 4 | `nullable` | `bool` | 是否允许为 null |
@@ -206,9 +206,11 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 | **`20`** | Field 21 | `maxItems` | `int` | 数组最大元素数 |
 | **`21`** | Field 22 | `minItems` | `int` | 数组最小元素数 |
 | **`22`** | Field 23 | `propertyOrdering` | `list[str]` | 属性在 UI / Prompt 中呈现的确定性声明顺序 |
-| **`23`** | Field 24 | `title` | `string` | Schema 标题 / 类名标识 |
-| **`24`** | Field 25 | `default` | `list` | 字段默认值（google.protobuf.Value 编码） |
-### 6.4 工具控制模式 (ToolConfig)
+
+> [!CAUTION]
+> **Schema Proto 边界硬约束 (No Indices Beyond 22)**：
+> 通过对 AI Studio 前端 Bundle 进行 AST 深度遍历（`_.mhb = new Set(...)`），Google Schema Proto 字段全集**严格终止于 Field 23 (`propertyOrdering`，数组下标 22)**。
+> 原先推测的 `title` (Field 24) 与 `default` (Field 25) 在 Google 官方 Schema Proto 中**根本不存在**；向数组填充下标 23 或 24 会注入未知 Proto 字段，导致 Google protojson 服务端报 `HTTP 400: Request contains an invalid argument`（或 `Cannot find field`）直接阻断请求！
 
 MakerSuite 协议无独立顶层工具控制字段，Gemini API 的 `toolConfig` 在网关层按语义映射：
 
@@ -347,5 +349,7 @@ AI Studio Web 核心过滤数组：
    在 `dwa` 反序列化器中，`BoolValue` 字段（Field 4）常以整数 `0` 和 `1` 传递以减少传输体积，Python 网关端必须通过 `value[3] in (0, 1)` 强制还原为 `bool`。
 2. **Repeated 容器单层扁平化边界**：
    在 `_decode_wire_list` 中，Repeated 字段只允许剥离一层外层数组包装（`len == 1 and not _is_wire_value`），一旦内层为 `_is_wire_value`（以 `None` 或 `0` 开头的 JSPB 数组），必须停止拆包，否则单元素列表（如包含一个问题对象的 `ask` 工具）会被错误展开成 5 元素数组，导致首部填充 4 个 `None`。
-3. **Schema 元数据无损注入**：
-   下发给 MakerSuite 的 `tools` 必须完整保留字段的 `description` (下标 2) 与 `enum` (下标 4)，否则模型在生成调用参数时失去参数语义与合法枚举选项，极易造成格式错误或参数幻觉。
+3. **Schema 元数据无损注入与边界安全**：
+   下发给 MakerSuite 的 `tools` 必须完整保留字段的 `description` (下标 2) 与 `enum` (下标 4)，否则模型在生成调用参数时失去参数语义与合法枚举选项，极易造成格式错误或参数幻觉。同时参数 Schema 数组下标严格以 `22` (`propertyOrdering`) 为上限，绝不可注入不存在的字段（如 `title` / `default`）。
+4. **客户端 Schema 字段多态解包 (`parametersJsonSchema`)**：
+   现代官方 SDK（如 `@google/genai`）及 OMP 代理在生成 Gemini 工具规范时，默认将完整参数挂载在 `parametersJsonSchema` 字段下而非历史的 `parameters`。网关层必须兼容多态字段提取，杜绝 Schema 丢失导致的空参调用（如 `read({})`）。

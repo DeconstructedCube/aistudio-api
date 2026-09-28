@@ -110,7 +110,9 @@ async def try_switch_account(
             )
             return result is not None
 
-        return bool(current_id and rotator.is_account_available(current_id, model=model))
+        return bool(
+            current_id and rotator.is_account_available(current_id, model=model)
+        )
 
 
 async def ensure_active_account(attempt: int, model: str | None = None) -> None:
@@ -122,7 +124,9 @@ async def ensure_active_account(attempt: int, model: str | None = None) -> None:
     current = account_svc.get_active_account() if account_svc else None
     if not current:
         await try_switch_account(model=model)
-    elif rotator and model and not rotator.is_account_available(current.id, model=model):
+    elif (
+        rotator and model and not rotator.is_account_available(current.id, model=model)
+    ):
         # 当前账号对该模型已限流，提前切号
         await try_switch_account(model=model, failed_account_id=current.id)
 

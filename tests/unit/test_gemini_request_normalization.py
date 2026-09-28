@@ -555,8 +555,9 @@ def test_encode_schema_to_wire_lossless_metadata():
     assert wire[8] == 1  # Field 9: minProperties
     assert wire[9] == 10  # Field 10: maxProperties
     assert wire[22] == ["op", "count", "items", "options"]  # Field 23: propertyOrdering
-    assert wire[23] == "TaskPayload"  # Field 24: title
-
+    assert (
+        len(wire) <= 23
+    )  # Google Schema proto strictly terminates at index 22 (Field 23)
     # Properties checks
     assert isinstance(wire[6], list)
     props: dict[str, object] = {
@@ -578,8 +579,7 @@ def test_encode_schema_to_wire_lossless_metadata():
     assert count_wire[2] == "Number of items"
     assert count_wire[10] == 1  # minimum
     assert count_wire[11] == 100  # maximum
-    assert count_wire[24] == [None, 1]  # default Value node for integer 1
-
+    assert len(count_wire) <= 23  # Google Schema proto strictly terminates at index 22
     # items property
     items_wire = props["items"]
     assert isinstance(items_wire, list)
@@ -606,3 +606,194 @@ def test_encode_schema_to_wire_lossless_metadata():
     assert isinstance(second_sub, list)
     assert second_sub[0] == 4  # boolean
     assert second_sub[2] == "Bool option"
+
+
+def test_normalize_gemini_request_parameters_json_schema_for_omp_tools():
+    """Verify OMP tools (read, glob, todo) with parametersJsonSchema are fully encoded into wire tools."""
+    read_decl = {
+        "name": "read",
+        "description": "Use `read` for static web; browser only if needed.",
+        "parametersJsonSchema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Local path, internal URI, or URL; selectors inline.",
+                }
+            },
+            "required": ["path"],
+        },
+    }
+    glob_decl = {
+        "name": "glob",
+        "description": "Glob files/dirs: ;;-separated paths or internal URLs.",
+        "parametersJsonSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "hidden": {"type": "boolean"},
+                "gitignore": {"type": "boolean"},
+                "limit": {"type": "number"},
+            },
+            "propertyOrdering": ["path", "hidden", "gitignore", "limit"],
+        },
+    }
+    todo_decl = {
+        "name": "todo",
+        "description": "Tasks identified by verbatim content.",
+        "parametersJsonSchema": {
+            "type": "object",
+            "properties": {
+                "op": {
+                    "enum": [
+                        "init",
+                        "start",
+                        "done",
+                        "rm",
+                        "drop",
+                        "block",
+                        "unblock",
+                        "append",
+                        "view",
+                    ],
+                    "type": "string",
+                },
+                "list": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "phase": {"type": "string"},
+                            "items": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "{minItems: 1}",
+                            },
+                        },
+                        "required": ["phase", "items"],
+                        "propertyOrdering": ["phase", "items"],
+                    },
+                    "description": "phases for init",
+                },
+                "task": {
+                    "type": "string",
+                    "description": "verbatim task content",
+                },
+                "phase": {"type": "string"},
+                "items": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "tasks for flat init or append",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "blocker note for block",
+                },
+            },
+            "required": ["op"],
+            "propertyOrdering": [
+                "op",
+                "list",
+                "task",
+                "phase",
+                "items",
+                "reason",
+            ],
+        },
+    }
+
+    req = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "inspect tools"}]}],
+            "tools": [
+                {
+                    "functionDeclarations": [read_decl, glob_decl, todo_decl],
+                }
+            ],
+        }
+    )
+
+    normalized = normalize_gemini_request(req, "models/gemini-3.7-flash")
+    assert normalized.tools is not None
+    assert len(normalized.tools) == 1
+    # Function declarations tool is at index 1
+    decls = normalized.tools[0][1]
+    assert isinstance(decls, list)
+    assert len(decls) == 3
+
+    # 1. READ tool wire validation
+    read_wire = decls[0]
+    assert read_wire[0] == "read"
+    assert "Use `read`" in str(read_wire[1])
+    read_params = read_wire[2]
+    assert isinstance(read_params, list)
+    assert read_params[0] == 6  # OBJECT (never 0)
+    assert len(read_params) <= 23  # Never exceeds index 22
+    assert read_params[6] == [
+        ["path", [1, None, "Local path, internal URI, or URL; selectors inline."]]
+    ]
+    assert read_params[7] == ["path"]  # required
+
+    # 2. GLOB tool wire validation
+    glob_wire = decls[1]
+    assert glob_wire[0] == "glob"
+    glob_params = glob_wire[2]
+    assert isinstance(glob_params, list)
+    assert glob_params[0] == 6  # OBJECT (never 0)
+    assert len(glob_params) <= 23  # Never exceeds index 22
+    glob_props = {item[0]: item[1] for item in glob_params[6]}
+    assert glob_props["path"][0] == 1  # string
+    assert glob_props["hidden"][0] == 4  # boolean
+    assert glob_props["gitignore"][0] == 4  # boolean
+    assert glob_props["limit"][0] == 2  # number
+    assert glob_params[22] == [
+        "path",
+        "hidden",
+        "gitignore",
+        "limit",
+    ]  # propertyOrdering
+
+    # 3. TODO tool wire validation
+    todo_wire = decls[2]
+    assert todo_wire[0] == "todo"
+    todo_params = todo_wire[2]
+    assert isinstance(todo_params, list)
+    assert todo_params[0] == 6  # OBJECT (never 0)
+    assert len(todo_params) <= 23  # Never exceeds index 22
+    assert todo_params[7] == ["op"]  # required
+    todo_props = {item[0]: item[1] for item in todo_params[6]}
+    # op has enum
+    assert todo_props["op"][0] == 1
+    assert todo_props["op"][4] == [
+        "init",
+        "start",
+        "done",
+        "rm",
+        "drop",
+        "block",
+        "unblock",
+        "append",
+        "view",
+    ]
+    # list has items schema with phase & items
+    assert todo_props["list"][0] == 5  # array
+    list_item_schema = todo_props["list"][5]
+    assert list_item_schema[0] == 6  # object
+    assert list_item_schema[7] == ["phase", "items"]  # required
+    # propertyOrdering
+    assert todo_params[22] == [
+        "op",
+        "list",
+        "task",
+        "phase",
+        "items",
+        "reason",
+    ]
+
+
+def test_unboxed_single_pair_decoding():
+    """Verify _decode_wire_struct handles single unboxed key-value pairs."""
+    from aistudio_api.infrastructure.gateway.wire_parser import _decode_wire_struct
+
+    unboxed = ["path", [None, None, "test.txt"]]
+    assert _decode_wire_struct(unboxed) == {"path": "test.txt"}

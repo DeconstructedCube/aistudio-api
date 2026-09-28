@@ -84,7 +84,6 @@ class AIStudioClient:
         if getattr(self, "_capture_service", None) is not None:
             self._capture_service.clear_templates()
 
-
     async def close(self) -> None:
         """关闭浏览器后端。"""
         if self._session is not None:
