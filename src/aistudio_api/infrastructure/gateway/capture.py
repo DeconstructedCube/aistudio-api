@@ -94,7 +94,7 @@ class RequestCaptureService:
             snapshot=snapshot,
         )
         captured = CapturedRequest(
-            url=template.url, headers=template.headers, body=body
+            url=template.url, headers=dict(template.headers), body=body
         )
         logger.info(
             "Hook 拦截成功: model=%s, snapshot=%s chars, body=%s chars",

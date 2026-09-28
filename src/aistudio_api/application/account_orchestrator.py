@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from aistudio_api.api.state import runtime_state
 from aistudio_api.infrastructure.utils.logger import get_logger
@@ -10,7 +11,21 @@ from aistudio_api.infrastructure.utils.logger import get_logger
 logger = get_logger("orchestrator")
 MAX_RETRIES = 5
 
-_switch_lock = asyncio.Lock()
+_switch_lock: asyncio.Lock | None = None
+_switch_lock_loop: asyncio.AbstractEventLoop | None = None
+_last_switch_time: float = 0.0
+
+
+def _get_switch_lock() -> asyncio.Lock:
+    global _switch_lock, _switch_lock_loop
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if _switch_lock is None or _switch_lock_loop is not loop:
+        _switch_lock = asyncio.Lock()
+        _switch_lock_loop = loop
+    return _switch_lock
 
 
 async def try_switch_account(
@@ -21,6 +36,9 @@ async def try_switch_account(
     is_session_expired: bool = False,
 ) -> bool:
     """尝试切换到下一个对目标 model 可用的账号。防止并发级联切号。"""
+    global _last_switch_time
+    entry_time = time.time()
+
     # 乐观快速预检：若无需记录永久失效/短时隔离，且当前活跃账号已被并发请求切换至健康状态，直接免锁复用
     if failed_account_id and not is_session_expired and not is_auth_error:
         rotator = runtime_state.rotator
@@ -29,12 +47,15 @@ async def try_switch_account(
             cur_active = account_service.get_active_account()
             if (
                 cur_active
-                and cur_active.id != failed_account_id
+                and (
+                    cur_active.id != failed_account_id
+                    or _last_switch_time >= entry_time
+                )
                 and rotator.is_account_available(cur_active.id, model=model)
             ):
                 return True
 
-    async with _switch_lock:
+    async with _get_switch_lock():
         rotator = runtime_state.rotator
         account_service = runtime_state.account_service
         client = runtime_state.client
@@ -50,12 +71,27 @@ async def try_switch_account(
         current_active = account_service.get_active_account()
         current_id = current_active.id if current_active else None
 
+        # 双重检查 1：如果已有并发协程在 entry_time 之后完成切号或在位自愈刷新，且当前账号对该模型可用，则直接复用
+        if (
+            _last_switch_time >= entry_time
+            and current_id
+            and (not is_session_expired or current_id != failed_account_id)
+            and rotator.is_account_available(current_id, model=model)
+        ):
+            logger.info(
+                "已有并发请求完成切号或会话自愈，直接复用当前健康账号: %s (model=%s)",
+                current_id,
+                model,
+            )
+            return True
+
         # 遇到登录态失效时，永久禁用该账号并拒绝原地重试
         if failed_account_id and is_session_expired:
             rotator.record_session_expired(failed_account_id, model=model)
         elif failed_account_id and is_auth_error:
             rotator.record_auth_error(failed_account_id, model=model)
-        # 双重检查：如果已经由并发协程切换到了新账号，且新账号对当前 model 可用，则直接复用
+
+        # 双重检查 2：如果已经由并发协程切换到了新账号，且新账号对当前 model 可用，则直接复用
         if (
             failed_account_id
             and current_id
@@ -88,6 +124,9 @@ async def try_switch_account(
                 next_account.id,
                 client._session,
             )
+            if result is not None:
+                rotator.clear_cooldown(next_account.id, model=model)
+                _last_switch_time = time.time()
             return result is not None
 
         # 登录态失效严禁在原账号原地重试
@@ -108,6 +147,9 @@ async def try_switch_account(
                 current_id,
                 client._session,
             )
+            if result is not None:
+                rotator.clear_cooldown(current_id, model=model)
+                _last_switch_time = time.time()
             return result is not None
 
         return bool(

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import platform
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -56,9 +58,30 @@ def test_build_chromium_args_contains_stealth_and_mobile_optimizations():
 
 def test_find_chromium_executable_strictly_requires_cloakbrowser(tmp_path):
     # 1. When CloakBrowser is installed, successfully returns executable
-    executable = find_chromium_executable()
-    assert os.path.exists(executable)
-    assert "chrome" in os.path.basename(executable).lower()
+    fake_home = tmp_path / "home"
+    fake_cloak_dir = fake_home / ".cloakbrowser" / "chromium"
+    fake_cloak_dir.mkdir(parents=True)
+    bin_name = "chrome.exe" if platform.system() == "Windows" else "chrome"
+    fake_bin = fake_cloak_dir / bin_name
+    fake_bin.write_text("fake binary")
+    if platform.system() != "Windows":
+        fake_bin.chmod(0o755)
+
+    orig_is_dir = Path.is_dir
+
+    def fake_is_dir(self):
+        if self.name == ".cloakbrowser" and not str(self).startswith(str(fake_home)):
+            return False
+        return orig_is_dir(self)
+
+    with (
+        patch("pathlib.Path.home", return_value=fake_home),
+        patch("aistudio_api.config.settings.browser_executable_path", None),
+        patch.object(Path, "is_dir", fake_is_dir),
+    ):
+        executable = find_chromium_executable()
+        assert os.path.exists(executable)
+        assert "chrome" in os.path.basename(executable).lower()
 
     # 2. When CloakBrowser directories do not exist, strictly raises FileNotFoundError
     with (

@@ -510,3 +510,87 @@ async def test_model_requests_midnight_reset():
     # 跨天后自动恢复可用且单日请求计数清零
     assert stats.is_available("gemini-3.8-flash")
     assert stats.model_requests["gemini-3.8-flash"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ensure_authorization_header_concurrency_and_fallback():
+    """并发请求或 CDP 超时异常时，_ensure_authorization_header 绝不丢失已有 Authorization 头部。"""
+    from aistudio_api.infrastructure.browser.cdp_client import CDPPage
+    from aistudio_api.infrastructure.gateway.transport import (
+        _ensure_authorization_header,
+    )
+
+    page = MagicMock(spec=CDPPage)
+    page.get_cookies = AsyncMock(side_effect=TimeoutError("CDP busy under concurrency"))
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "SAPISIDHASH 1789397237_abcdef0123456789",
+    }
+
+    # 当 CDP 出现超时波动时，绝不能将原有的 Authorization 剥离留空
+    result = await _ensure_authorization_header(page, headers, auth_user="0")
+    assert "Authorization" in result
+    assert result["Authorization"] == "SAPISIDHASH 1789397237_abcdef0123456789"
+    assert result["X-Goog-AuthUser"] == "0"
+
+
+@pytest.mark.asyncio
+async def test_try_switch_account_concurrent_403_avalanche_and_in_place_recovery():
+    """并发多个协程遭遇 403 时，在位自愈仅执行 1 次，自愈后立即清除 auth_cooldown 避免连锁 403。"""
+    from aistudio_api.api.state import runtime_state
+
+    mock_rotator = MagicMock(spec=AccountRotator)
+    mock_acc_service = MagicMock()
+    mock_client = MagicMock()
+    mock_client._session = MagicMock()
+
+    acc1 = AccountMeta(
+        id="acc_1", name="Account 1", email="acc1@test.com", created_at="2026-01-01"
+    )
+    active_acc = acc1
+    mock_acc_service.get_active_account.side_effect = lambda: active_acc
+
+    stats = AccountStats(account_id="acc_1")
+    mock_rotator._stats = {"acc_1": stats}
+    mock_rotator.is_account_available.side_effect = lambda acc_id, model=None: (
+        stats.is_available(model) if acc_id == "acc_1" else False
+    )
+    mock_rotator.record_auth_error.side_effect = lambda acc_id, model=None: (
+        stats.record_auth_error(model)
+    )
+    mock_rotator.clear_cooldown.side_effect = lambda acc_id, model=None: (
+        stats.clear_cooldown(model)
+    )
+
+    activate_count = 0
+
+    async def fake_activate(acc_id, *args, **kwargs):
+        nonlocal activate_count
+        activate_count += 1
+        await asyncio.sleep(0.01)
+        return active_acc
+
+    mock_acc_service.activate_account = AsyncMock(side_effect=fake_activate)
+    mock_rotator.get_next_account = AsyncMock(return_value=acc1)
+
+    with (
+        patch.object(runtime_state, "rotator", mock_rotator),
+        patch.object(runtime_state, "account_service", mock_acc_service),
+        patch.object(runtime_state, "client", mock_client),
+    ):
+        # 3 个并发协程同时遇到 403 并尝试切号/自愈
+        tasks = [
+            try_switch_account(
+                model="gemini-3.8-flash", failed_account_id="acc_1", is_auth_error=True
+            )
+            for _ in range(3)
+        ]
+        results = await asyncio.gather(*tasks)
+
+        assert all(results)
+        # 1. 防雪崩：在位自愈只应当执行 1 次实质性的 activate_account 调用
+        assert activate_count == 1
+        # 2. 自愈成功后，必须清除账号的 auth_cooldown，使账号立即恢复健康可用，杜绝并发下后续请求直接 403
+        assert stats.is_available("gemini-3.8-flash")
+        assert stats.auth_cooldown == 0.0

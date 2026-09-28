@@ -290,6 +290,7 @@ class CDPPage:
         self._last_url: str = ""
         self._unsubscribers: list[Callable[[], None]] = []
         self.has_stream_binding: bool = False
+        self._cached_cookies: dict[str, str] | None = None
 
     def _track_listener(self, unsub: Callable[[], None]) -> Callable[[], None]:
         self._unsubscribers.append(unsub)
@@ -691,7 +692,14 @@ class CDPPage:
         """Retrieve cookies via CDP Network domain."""
         res = await self.cdp.send("Network.getCookies")
         raw_cookies = res.get("cookies")
-        return raw_cookies if isinstance(raw_cookies, list) else []
+        if isinstance(raw_cookies, list):
+            self._cached_cookies = {
+                str(c.get("name") or ""): str(c.get("value") or "")
+                for c in raw_cookies
+                if c.get("name")
+            }
+            return raw_cookies
+        return []
 
     async def set_cookies(
         self, cookies: list[dict[str, object]] | list[dict[str, str]]
@@ -751,8 +759,15 @@ class CDPPage:
                 except Exception as ind_e:
                     log.debug("设置 Cookie %s 失败: %s", item.get("name"), ind_e)
 
+        self._cached_cookies = {
+            str(c.get("name") or ""): str(c.get("value") or "")
+            for c in cookies
+            if c.get("name")
+        }
+
     async def clear_cookies(self) -> None:
         """Clear all browser cookies."""
+        self._cached_cookies = None
         try:
             await self.cdp.send("Network.clearBrowserCookies")
         except Exception as e:
