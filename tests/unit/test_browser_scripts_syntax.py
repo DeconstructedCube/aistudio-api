@@ -72,7 +72,19 @@ def _check_pure_python_bracket_balance(code: str) -> None:
         # Skip regex literals
         if char == "/":
             prev = code[:i].rstrip()
-            if prev and prev[-1] in ("(", "=", ":", ",", "!", "&", "|", "?", ";", "{", "["):
+            if prev and prev[-1] in (
+                "(",
+                "=",
+                ":",
+                ",",
+                "!",
+                "&",
+                "|",
+                "?",
+                ";",
+                "{",
+                "[",
+            ):
                 i += 1
                 while i < n and code[i] != "/":
                     if code[i] == "\\":
@@ -178,11 +190,7 @@ def test_evaluate_wrapper_expressions_parse_cleanly():
 
     for name, script_text, arg in scripts:
         expr = script_text.strip()
-        wrapped = (
-            f"({expr})({json.dumps(arg)})"
-            if arg is not None
-            else f"({expr})()"
-        )
+        wrapped = f"({expr})({json.dumps(arg)})" if arg is not None else f"({expr})()"
 
         prelude = "globalThis.window = globalThis; globalThis.document = { querySelector: () => null, querySelectorAll: () => [] };"
         code = f"{prelude} try {{ new Function({wrapped!r}); }} catch (e) {{ if (e instanceof SyntaxError) throw e; }}"

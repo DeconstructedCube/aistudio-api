@@ -158,7 +158,9 @@ async def run_reverse(
         print()
 
         # 4. 下载并提取全部捕获的 JS / Wasm 资源
-        print(f"\n[4/5] 提取捕获的静态资源 (共 {len(captured_responses)} 个候选请求)...")
+        print(
+            f"\n[4/5] 提取捕获的静态资源 (共 {len(captured_responses)} 个候选请求)..."
+        )
         for req_id, meta in captured_responses.items():
             url = meta["url"]
             parsed = urlparse(url)
@@ -285,9 +287,7 @@ async def run_reverse(
         report_data = await page.evaluate(introspection_js)
 
         # 检查是否有从 Hook 截获到的 Wasm 字节流
-        captured_wasm_list = await page.evaluate(
-            "() => window.__CAPTURED_WASM__ || []"
-        )
+        captured_wasm_list = await page.evaluate("() => window.__CAPTURED_WASM__ || []")
         if isinstance(captured_wasm_list, list) and captured_wasm_list:
             print(f"      [★ 发现] 截获到 {len(captured_wasm_list)} 个 Wasm 模块实例！")
             for idx, w in enumerate(captured_wasm_list):
@@ -312,7 +312,9 @@ async def run_reverse(
         if format_code and saved_files:
             js_files = list(bundles_dir.glob("*.js"))
             if js_files:
-                print(f"\n[*] 正在使用 bun x prettier 美化格式化 {len(js_files)} 个 JS 文件...")
+                print(
+                    f"\n[*] 正在使用 bun x prettier 美化格式化 {len(js_files)} 个 JS 文件..."
+                )
                 try:
                     subprocess.run(  # noqa: ASYNC221
                         [
@@ -327,7 +329,9 @@ async def run_reverse(
                         text=True,
                         cwd=str(PROJECT_ROOT),
                     )
-                    print("      [✓ 完成] 所有 JS 文件已完成排版美化，可直接在编辑器中全文搜索！")
+                    print(
+                        "      [✓ 完成] 所有 JS 文件已完成排版美化，可直接在编辑器中全文搜索！"
+                    )
                 except Exception as e:
                     print(f"      [!] 调用 prettier 格式化提示: {e}")
 

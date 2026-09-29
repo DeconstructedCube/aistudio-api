@@ -560,6 +560,7 @@ class BrowserSession:
             except Exception as e:
                 log.debug("Failed to adapt model into bootstrap template body: %s", e)
             return base
+
     async def capture_template(self, model: str) -> dict[str, object]:
         """Capture template flow forwarder."""
         return await self.capture_template_flow(model)

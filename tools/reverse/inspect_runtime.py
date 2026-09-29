@@ -31,7 +31,9 @@ async def inspect_live(port: int = 9222) -> None:
     client = CDPClient(port=port)
     if not await client.is_endpoint_alive():
         print(f"[!] 无法连接到 127.0.0.1:{port}，请确保该端口已有浏览器在运行。")
-        print("    提示：可先启动主服务 `uv run python main.py server` 或运行 `uv run python tools/reverse/reverse_headless.py`。")
+        print(
+            "    提示：可先启动主服务 `uv run python main.py server` 或运行 `uv run python tools/reverse/reverse_headless.py`。"
+        )
         return
 
     page = await client.connect_page(block_assets=False)

@@ -234,6 +234,7 @@ class AistudioGenerationConfig:
         idx = GenerationConfigIndex.THINKING_CONFIG
         if len(self.values) > idx:
             self.values[idx] = None
+
     def enable_default_thinking(self):
         if self.thinking_config is None:
             self.thinking_config = AistudioThinkingConfig.default().to_wire()

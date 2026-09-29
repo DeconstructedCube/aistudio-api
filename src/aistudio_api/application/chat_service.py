@@ -314,7 +314,6 @@ def encode_schema_to_wire(
     return wire.compact(max_index=SchemaIndex.PROPERTY_ORDERING)
 
 
-
 def encode_function_declaration_to_wire(declaration: dict[str, object]) -> list[object]:
     if isinstance(declaration.get("function"), dict):
         declaration = declaration["function"]  # type: ignore[assignment]

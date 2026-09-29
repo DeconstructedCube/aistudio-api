@@ -25,6 +25,7 @@ dev = [
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
   "google-genai>=1.0.0",
+  "google-auth<2.48.0",
   "pyright>=1.1.300",
   "ruff>=0.8.0; sys_platform != 'android'",
 ]
@@ -32,6 +33,7 @@ test = [
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
   "google-genai>=1.0.0",
+  "google-auth<2.48.0",
 ]
 
 [tool.pyright]

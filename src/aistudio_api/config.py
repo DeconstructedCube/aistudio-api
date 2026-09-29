@@ -230,6 +230,7 @@ def resolve_locale() -> str:
         return override.strip()
     return "en-US"
 
+
 def _resolve_default_idle_timeout() -> int:
     env_val = os.getenv("AISTUDIO_BROWSER_IDLE_TIMEOUT")
     if env_val is not None and env_val.strip() != "":

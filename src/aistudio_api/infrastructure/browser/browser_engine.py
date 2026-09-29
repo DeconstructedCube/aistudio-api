@@ -246,9 +246,7 @@ def _get_process_cmdline_windows(pid: int) -> str:
         windll = getattr(ctypes, "windll", None)
         if not windll:
             return ""
-        h = windll.kernel32.OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION, False, pid
-        )
+        h = windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
         if not h:
             return ""
         try:
@@ -333,9 +331,7 @@ def _get_process_list_windows() -> list[tuple[int, int, str]]:
                         str(entry.szExeFile),
                     )
                 )
-                success = windll.kernel32.Process32NextW(
-                    snap, ctypes.byref(entry)
-                )
+                success = windll.kernel32.Process32NextW(snap, ctypes.byref(entry))
         finally:
             windll.kernel32.CloseHandle(snap)
         return processes
@@ -427,7 +423,9 @@ def _is_active_api_server(pid: int) -> bool:
         return False
     if platform.system() == "Windows":
         cmd = _get_process_cmdline_windows(pid)
-        return bool(cmd and any(k in cmd for k in ("main.py", "aistudio-api-server", "uvicorn")))
+        return bool(
+            cmd and any(k in cmd for k in ("main.py", "aistudio-api-server", "uvicorn"))
+        )
 
     try:
         cmdline_path = Path(f"/proc/{pid}/cmdline")
