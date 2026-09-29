@@ -123,3 +123,58 @@ def test_chat_service_does_not_guess_thought_for_multi_parts():
     assert norm_thought.contents[0].parts[1].thought is False
     assert norm_thought.contents[0].parts[1].thought_signature == "sig123"
     assert norm_thought.contents[0].parts[2].thought is False
+
+
+def test_multimodal_function_response_unpacks_inline_data():
+    """Verify that functionResponse parts containing inlineData (from tools like read)
+    are unpacked into sibling parts for MakerSuite Wire encoding."""
+    fake_base64 = "UklGRvaTAgBXRUJQVlA4IOqTAgDwgAmdASogBnIDPm0ylEckIy"
+    req = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {
+                            "functionResponse": {
+                                "name": "read",
+                                "response": {"output": "Read image file [image/webp]"},
+                                "id": "call_12345",
+                                "parts": [
+                                    {
+                                        "inlineData": {
+                                            "mimeType": "image/webp",
+                                            "data": fake_base64,
+                                        }
+                                    }
+                                ],
+                            }
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    normalized = normalize_gemini_request(req, "gemini-3.8-flash")
+    content = normalized.contents[0]
+    assert len(content.parts) == 2
+
+    part_fr = content.parts[0]
+    assert part_fr.function_response is not None
+    assert part_fr.function_response[0] == "read"
+    assert len(part_fr.function_response) > 2
+    assert part_fr.function_response[2] == "call_12345"
+    part_img = content.parts[1]
+    assert part_img.inline_data == ("image/webp", fake_base64)
+
+    # 验证 capture_images 获取到了解包的图片
+    assert normalized.capture_images == [("image/webp", fake_base64)]
+
+    # 验证 Wire 编码
+    wire = content.to_wire()
+    assert wire[1] == "user"
+    assert len(wire[0]) == 2
+    # Wire part 0 是 function_response (index 11)
+    assert wire[0][0][11][0] == "read"
+    # Wire part 1 是 inline_data (index 2)
+    assert wire[0][1][2] == ["image/webp", fake_base64]

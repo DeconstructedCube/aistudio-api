@@ -71,15 +71,8 @@ async def _ensure_authorization_header(
     cookie_dict = getattr(page, "_cached_cookies", None)
     if not cookie_dict or not any("SAPISID" in k for k in cookie_dict):
         with suppress(Exception):
-            raw_cookies = await page.get_cookies()
-            if raw_cookies:
-                cookie_dict = {
-                    str(c.get("name") or ""): str(c.get("value") or "")
-                    for c in raw_cookies
-                    if c.get("name")
-                }
-                page._cached_cookies = cookie_dict
-
+            await page.get_cookies()
+            cookie_dict = getattr(page, "_cached_cookies", None)
     # 2. 如果 CDP 出现超时波动或未取到 SAPISID，回退读取活跃账号 auth.json 凭据
     if not cookie_dict or not any("SAPISID" in k for k in cookie_dict):
         disk_cookies = _get_active_auth_cookies()

@@ -44,15 +44,15 @@ async def test_browser_session_generate_snapshot(mock_cdp_page):
     session._snap_key = "test_snapshot_fn"
 
     async def fake_evaluate(expr, *args, **kwargs):
-        if "Promise.resolve(result)" in expr or "Promise.resolve(dms[snapKey]" in expr:
-            return "!mocked_snapshot_token_value_123"
-        if "window.__bg_hooked" in expr or "return 'already_hooked'" in expr:
+        if "isSnapCandidate" in expr or "SavePrompt" in expr or "__api_hooked" in expr:
             return "already_hooked"
-        if "!window.__bg_service" in expr:
+        if "service" in expr and "hash" not in expr:
             return True
-        if "window.__sl" in expr:
-            return 100
-        if "window.__sr" in expr:
+        if (
+            "Promise.resolve(result)" in expr
+            or "snapQueue" in expr
+            or "service, hash" in expr
+        ):
             return "!mocked_snapshot_token_value_123"
         return None
 
@@ -74,9 +74,9 @@ async def test_browser_session_send_hooked_request(mock_cdp_page):
     session._page = mock_cdp_page
 
     async def fake_evaluate(expr, args=None, *a, **kw):
-        if "window.default_MakerSuite" in expr or "window.__bg_hooked" in expr:
+        if "isSnapCandidate" in expr or "SavePrompt" in expr or "__api_hooked" in expr:
             return "already_hooked"
-        if "!window.__bg_service" in expr:
+        if "service" in expr and "hash" not in expr:
             return True
         if "XMLHttpRequest" in expr or "fetch(" in expr or "fetch" in expr:
             return {"status": 200, "body": '["response_data"]'}
@@ -116,9 +116,9 @@ async def test_browser_session_send_streaming_request(mock_cdp_page):
     ]
 
     async def fake_evaluate(expr, args=None, *a, **kw):
-        if "window.default_MakerSuite" in expr or "window.__bg_hooked" in expr:
+        if "isSnapCandidate" in expr or "SavePrompt" in expr or "__api_hooked" in expr:
             return "already_hooked"
-        if "window.__bg_service" in expr:
+        if "service" in expr and "hash" not in expr:
             return True
         if isinstance(args, dict) and "rid" in args and binding_callback:
             rid = args["rid"]
@@ -179,15 +179,15 @@ async def test_generate_snapshot_hash_complex_tools_and_multimodal():
     passed_args = []
 
     async def fake_evaluate(expr, args=None, *a, **kw):
-        if (
-            "INSTALL_HOOKS" in expr
-            or "window.__bg_hooked" in expr
-            or "return 'already_hooked'" in expr
-        ):
+        if "isSnapCandidate" in expr or "SavePrompt" in expr or "__api_hooked" in expr:
             return "already_hooked"
-        if "!window.__bg_service" in expr:
+        if "service" in expr and "hash" not in expr:
             return True
-        if "Promise.resolve(result)" in expr:
+        if (
+            "Promise.resolve(result)" in expr
+            or "snapQueue" in expr
+            or "service, hash" in expr
+        ):
             passed_args.append(args)
             return "!snapshot_token_ok"
         return None
@@ -338,9 +338,9 @@ async def test_browser_session_generate_snapshot_concurrency(mock_cdp_page):
     async def fake_evaluate(expr, args=None, *a, **kwargs):
         nonlocal concurrent_evals, max_concurrent_evals
         if (
-            "Promise.resolve" in expr
-            or "window.__bg_snap_queue" in expr
-            or "SNAPSHOT_GENERATE" in expr
+            "Promise.resolve(result)" in expr
+            or "snapQueue" in expr
+            or "service, hash" in expr
         ):
             concurrent_evals += 1
             if concurrent_evals > max_concurrent_evals:
@@ -350,9 +350,9 @@ async def test_browser_session_generate_snapshot_concurrency(mock_cdp_page):
             token = f"!snap_for_{args}"
             concurrent_evals -= 1
             return token
-        if "window.__bg_hooked" in expr:
+        if "isSnapCandidate" in expr or "SavePrompt" in expr or "__api_hooked" in expr:
             return "already_hooked"
-        if "!window.__bg_service" in expr:
+        if "service" in expr and "hash" not in expr:
             return True
         return None
 

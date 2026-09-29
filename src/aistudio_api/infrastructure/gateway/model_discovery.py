@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -166,6 +167,24 @@ class ModelDiscoveryService:
                 self._last_fetched_at = time.time()
 
             return self._cached_models
+
+    async def get_model_by_id(
+        self, model_id: str, session: BrowserSession | None = None
+    ) -> Mapping[str, object] | None:
+        """根据 model_id 获取单个模型元数据（含保底匹配）。"""
+        discovered = await self.get_models(session=session)
+        clean_target = model_id.removeprefix("models/")
+        for model_info in discovered:
+            model_raw_id = str(model_info.get("id") or model_info.get("name") or "")
+            model_clean_id = model_raw_id.removeprefix("models/")
+            if model_clean_id == clean_target:
+                return model_info
+        for model_info in _FALLBACK_MODELS:
+            model_raw_id = str(model_info.get("id") or model_info.get("name") or "")
+            model_clean_id = model_raw_id.removeprefix("models/")
+            if model_clean_id == clean_target:
+                return model_info
+        return None
 
     async def _fetch_via_page(self, page: CDPPage) -> list[dict[str, object]]:
         """在 CDP Page 环境中直接执行 XHR 拉取 ListModels（自动带齐浏览器完整凭据）。"""

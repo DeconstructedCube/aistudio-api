@@ -65,7 +65,7 @@ WIRE_TO_GEMINI_FINISH_REASON: dict[int, str] = {
 def to_gemini_finish_reason(wire_code: int | None) -> str:
     if wire_code is None:
         return "STOP"
-    return WIRE_TO_GEMINI_FINISH_REASON.get(wire_code, "STOP")
+    return WIRE_TO_GEMINI_FINISH_REASON.get(wire_code, "FINISH_REASON_UNSPECIFIED")
 
 
 def clean_upstream_error_message(raw_msg: str) -> str:
@@ -566,11 +566,9 @@ def _build_gemini_streaming_response(
     async def stream_response():
         normalized = None
         try:
-            await ensure_active_account(0, model=model_path)
-            normalized = normalize_gemini_request(req, model_path)
             logger.info(
                 "Gemini 流式请求: model=%s, 对话轮数=%s",
-                normalized.model,
+                model_path,
                 len(req.contents),
             )
             final_usage: dict[str, object] | None = None
@@ -583,7 +581,6 @@ def _build_gemini_streaming_response(
                 normalized = normalize_gemini_request(req, model_path)
                 try:
                     async for event_type, text in client.stream_generate_content(
-                        model=normalized.model,
                         capture_prompt=normalized.capture_prompt,
                         capture_images=normalized.capture_images,
                         contents=normalized.contents,

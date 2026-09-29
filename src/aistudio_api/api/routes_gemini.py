@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from aistudio_api.api.response_models import GeminiGenerateContentResponse
-from aistudio_api.application.api_service import handle_gemini_generate_content
+from aistudio_api.application.api_service_gemini import handle_gemini_generate_content
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 from aistudio_api.infrastructure.utils.logger import get_logger
 

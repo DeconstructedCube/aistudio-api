@@ -6,6 +6,7 @@ import time
 
 from aistudio_api.infrastructure.account.cookie_parser import (
     DISCARDABLE_IMPORT_COOKIE_NAMES,
+    parse_raw_cookies,
 )
 from aistudio_api.infrastructure.utils.logger import get_logger
 
@@ -36,17 +37,6 @@ def _should_skip_browser_injection(name: str) -> bool:
     if name.startswith("__Host-"):
         return True
     return name in DISCARDABLE_IMPORT_COOKIE_NAMES or name.startswith(("_ga_", "_gcl_"))
-
-
-def _parse_cookie_string(raw: str) -> dict[str, str]:
-    """Parse a semicolon-separated cookie string into a dict."""
-    cookies = {}
-    for part in raw.split(";"):
-        part = part.strip()
-        if "=" in part:
-            k, v = part.split("=", 1)
-            cookies[k.strip()] = v.strip()
-    return cookies
 
 
 def _refresh_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
@@ -90,7 +80,7 @@ def load_cookies_from_string(cookie_string: str) -> list[dict[str, object]]:
     returns Playwright-format cookies for browser injection.
     Real expires come from browser export after visiting the page.
     """
-    parsed = _parse_cookie_string(cookie_string)
+    parsed = parse_raw_cookies(cookie_string)
     refreshed = _refresh_session_cookies(parsed)
     merged = dict(parsed)
     merged.update(refreshed)

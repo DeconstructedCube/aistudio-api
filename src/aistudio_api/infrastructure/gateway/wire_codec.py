@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import base64
 import json
-import mimetypes
-from pathlib import Path
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL, settings
 
@@ -127,12 +124,6 @@ def build_tools_from_names(
             raise ValueError(f"Unsupported tool name: {raw_name!r}")
         tools.append(TOOLS_TEMPLATES[name])
     return tools
-
-
-def _encode_image(path: str) -> tuple[str, str]:
-    mime = mimetypes.guess_type(path)[0] or "image/jpeg"
-    data = Path(path).read_bytes()
-    return mime, base64.b64encode(data).decode("ascii")
 
 
 class AistudioWireCodec:
@@ -259,8 +250,9 @@ class AistudioWireCodec:
         if contents is not None:
             request.contents = contents
         elif prompt is not None:
-            request.contents = [self._build_user_content(prompt=prompt, images=images)]
-
+            request.contents = [
+                AistudioContent.from_user_prompt(prompt=prompt, images=images)
+            ]
         if system_instruction_content is not None:
             request.system_instruction = system_instruction_content
         else:
@@ -350,18 +342,6 @@ class AistudioWireCodec:
                         filtered_tools.append(t)
                 request.tools = filtered_tools or None
         return self.encode(request)
-
-    def _build_user_content(
-        self, prompt: str, images: list[str | tuple[str, str]] | None
-    ) -> AistudioContent:
-        parts = []
-        for item in images or []:
-            if isinstance(item, tuple) and len(item) == 2:
-                parts.append(AistudioPart(inline_data=item))
-            elif isinstance(item, str):
-                parts.append(AistudioPart(inline_data=_encode_image(item)))
-        parts.append(AistudioPart(text=prompt))
-        return AistudioContent(role="user", parts=parts)
 
     def _decode_contents(self, raw_contents: object) -> list[AistudioContent]:
         contents: list[AistudioContent] = []

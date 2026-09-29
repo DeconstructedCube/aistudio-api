@@ -480,9 +480,13 @@ class AccountRotator:
             }
         return result
 
+    def get_account_stats(self, account_id: str) -> AccountStats | None:
+        """获取指定账号的统计对象。"""
+        return self._stats.get(account_id)
+
     def is_account_available(self, account_id: str, model: str | None = None) -> bool:
         """检查指定账号在特定模型下是否健康可用。"""
-        stats = self._stats.get(account_id)
+        stats = self.get_account_stats(account_id)
         return bool(stats and stats.is_available(model))
 
     def _get_available_accounts(

@@ -51,27 +51,22 @@ class AccountService:
         if account is None:
             return None
 
-        async def _do_switch():
-            auth_path = self._store.get_auth_path_optional(
-                account_id, require_exists=False
-            )
-            if auth_path is None:
-                logger.error("账号 %s 的账号目录不存在", account_id)
-                return None
+        auth_path = self._store.get_auth_path_optional(account_id, require_exists=False)
+        if auth_path is None:
+            logger.error("账号 %s 的账号目录不存在", account_id)
+            return None
 
-            self._store.set_active_account(account_id)
-            from aistudio_api.api.state import runtime_state
+        self._store.set_active_account(account_id)
+        from aistudio_api.api.state import runtime_state
 
-            if runtime_state.client is not None:
-                runtime_state.client.clear_templates()
-            logger.info("已清除模板缓存")
+        if runtime_state.client is not None:
+            runtime_state.client.clear_templates()
+        logger.info("已清除模板缓存")
 
-            await browser_session.switch_auth(str(auth_path))
-            await browser_session.ensure_botguard_service()
-            logger.info("已切换到账号: %s (%s)", account_id, account.name)
-            return account
-
-        return await _do_switch()
+        await browser_session.switch_auth(str(auth_path))
+        await browser_session.ensure_botguard_service()
+        logger.info("已切换到账号: %s (%s)", account_id, account.name)
+        return account
 
     def delete_account(self, account_id: str) -> bool:
         """删除账号。"""

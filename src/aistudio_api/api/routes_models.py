@@ -72,23 +72,10 @@ async def get_model(
     runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> GeminiModelResponse:
     session = runtime_state.client._session if runtime_state.client else None
-    from aistudio_api.infrastructure.gateway.model_discovery import (
-        _FALLBACK_MODELS,
-        model_discovery,
-    )
+    from aistudio_api.infrastructure.gateway.model_discovery import model_discovery
 
-    discovered = await model_discovery.get_models(session=session)
-    clean_target = model_id.removeprefix("models/")
-    for model_info in discovered:
-        model_raw_id = str(model_info.get("id") or model_info.get("name") or "")
-        model_clean_id = model_raw_id.removeprefix("models/")
-        if model_clean_id == clean_target:
-            logger.info("成功获取模型元数据: %s", clean_target)
-            return _to_gemini_model(model_info)
-    for model_info in _FALLBACK_MODELS:
-        model_raw_id = str(model_info.get("id") or model_info.get("name") or "")
-        model_clean_id = model_raw_id.removeprefix("models/")
-        if model_clean_id == clean_target:
-            logger.info("从保底列表中获取模型元数据: %s", clean_target)
-            return _to_gemini_model(model_info)
+    model_info = await model_discovery.get_model_by_id(model_id, session=session)
+    if model_info is not None:
+        logger.info("成功获取模型元数据: %s", model_id)
+        return _to_gemini_model(model_info)
     raise HTTPException(status_code=404, detail="Model not found")

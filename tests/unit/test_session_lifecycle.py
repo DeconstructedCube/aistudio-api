@@ -138,4 +138,4 @@ async def test_session_capture_template_breaks_on_dead_proc():
     with pytest.raises(
         RuntimeError, match="Browser process died during template capture"
     ):
-        await session.capture_template_flow("models/gemini-custom-uncached")
+        await session.capture_template("models/gemini-custom-uncached")

@@ -378,23 +378,17 @@ def test_cleanup_ghost_accounts():
     store.list_accounts.return_value = [real_acc]
 
     rotator = AccountRotator(account_store=store)
-    # 模拟 rotator_state.json 中残留了已经被删除的幽灵账号 ghost_acc_1 与 ghost_acc_2 (带着 429 状态)
-    rotator._stats["ghost_acc_1"] = AccountStats(
-        account_id="ghost_acc_1", rate_limited=5
-    )
-    rotator._stats["ghost_acc_2"] = AccountStats(
-        account_id="ghost_acc_2", session_expired=True
-    )
-
-    assert "ghost_acc_1" in rotator._stats
-    assert "ghost_acc_2" in rotator._stats
-    assert "real_acc" in rotator._stats
+    # 使用公共 API 模拟持久化恢复或历史遗留的失效/429 幽灵账号
+    rotator.add_account("ghost_acc_1")
+    rotator.record_rate_limited("ghost_acc_1")
+    rotator.add_account("ghost_acc_2")
+    rotator.record_session_expired("ghost_acc_2")
 
     cleaned = rotator.cleanup_ghost_accounts()
     assert set(cleaned) == {"ghost_acc_1", "ghost_acc_2"}
-    assert "ghost_acc_1" not in rotator._stats
-    assert "ghost_acc_2" not in rotator._stats
-    assert "real_acc" in rotator._stats
+    assert "ghost_acc_1" not in rotator.get_all_stats()
+    assert "ghost_acc_2" not in rotator.get_all_stats()
+    assert "real_acc" in rotator.get_all_stats()
 
     # 测试单账号删除同步
     rotator.remove_account("real_acc")

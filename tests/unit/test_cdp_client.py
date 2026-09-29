@@ -127,6 +127,22 @@ async def test_cdp_page_evaluate_trailing_semicolon_handling():
 
 
 @pytest.mark.asyncio
+async def test_cdp_page_wait_for_selector_and_nested_iife():
+    """Test CDPPage.wait_for_selector evaluates the check expression correctly without regex false positives."""
+    conn = MagicMock(spec=CDPConnection)
+    conn.send = AsyncMock(return_value={"result": {"type": "boolean", "value": True}})
+    page = CDPPage(conn, target_id="target-1")
+
+    res = await page.wait_for_selector("textarea", timeout_s=1.0)
+    assert res is True
+    call_args = conn.send.call_args[0]
+    expr = call_args[1]["expression"]
+    assert "textarea" in expr
+    assert expr.startswith("(() => !!(")
+    assert expr.endswith("))()")
+
+
+@pytest.mark.asyncio
 async def test_cdp_page_set_cookies_normalization():
     """Test cookie normalization handles __Host- prefixes and domains properly."""
     conn = MagicMock(spec=CDPConnection)

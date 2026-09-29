@@ -23,7 +23,6 @@ from aistudio_api.infrastructure.gateway.replay import RequestReplayService
 from aistudio_api.infrastructure.gateway.session import BrowserSession
 from aistudio_api.infrastructure.gateway.streaming import StreamingGateway
 from aistudio_api.infrastructure.gateway.wire_codec import (
-    TOOLS_TEMPLATES,
     build_image_generation_search_tool,
     build_tools_from_names,
 )
@@ -31,7 +30,7 @@ from aistudio_api.infrastructure.gateway.wire_parser import (
     parse_image_output,
     parse_text_output,
 )
-from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
+from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("client")
@@ -159,40 +158,6 @@ class AIStudioClient:
             self._captured, body=body, timeout=timeout
         )
 
-    async def stream_chat(
-        self,
-        *,
-        prompt: str,
-        model: str = DEFAULT_TEXT_MODEL,
-        images: list[str | tuple[str, str]] | None = None,
-        system_instruction: str | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-        top_k: int | None = None,
-        max_tokens: int | None = None,
-        tools: list[list] | None = None,
-    ):
-        merged_tools = list(tools or [])
-        async for event in self.stream_generate_content(
-            model=model,
-            capture_prompt=prompt,
-            capture_images=images,
-            contents=[self._build_user_content(prompt=prompt, images=images)],
-            system_instruction_content=(
-                AistudioContent(
-                    role="user", parts=[AistudioPart(text=system_instruction)]
-                )
-                if system_instruction
-                else None
-            ),
-            tools=merged_tools or None,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            max_tokens=max_tokens,
-        ):
-            yield event
-
     async def stream_generate_content(
         self,
         *,
@@ -230,62 +195,13 @@ class AIStudioClient:
                 sanitize_plain_text=sanitize_plain_text,
                 force_refresh=force_refresh_capture,
             )
+            if not captured:
+                raise RequestError(0, "无法拦截请求")
             async for event in self._streaming_gateway.stream_chat(
                 captured=captured,
                 model=model,
-                system_instruction=None,
-                contents=contents,
-                system_instruction_content=system_instruction_content,
-                tools=tools,
-                safety_settings=safety_settings,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                max_tokens=max_tokens,
-                generation_config_overrides=generation_config_overrides,
-                sanitize_plain_text=sanitize_plain_text,
             ):
                 yield event
-
-    async def chat(
-        self,
-        prompt: str,
-        model: str = DEFAULT_TEXT_MODEL,
-        system_instruction: str | None = None,
-        code_execution: bool = False,
-        google_search: bool = False,
-        images: list[str | tuple[str, str]] | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-        top_k: int | None = None,
-        max_tokens: int | None = None,
-        tools: list[list[object]] | None = None,
-    ) -> ModelOutput:
-        merged_tools: list[list[object]] = list(tools or [])
-        if code_execution or google_search:
-            if code_execution:
-                merged_tools.append(TOOLS_TEMPLATES["code_execution"])
-            if google_search:
-                merged_tools.append(TOOLS_TEMPLATES["google_search"])
-
-        return await self.generate_content(
-            model=model,
-            capture_prompt=prompt,
-            capture_images=images,
-            contents=[self._build_user_content(prompt=prompt, images=images)],
-            system_instruction_content=(
-                AistudioContent(
-                    role="user", parts=[AistudioPart(text=system_instruction)]
-                )
-                if system_instruction
-                else None
-            ),
-            tools=merged_tools or None,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            max_tokens=max_tokens,
-        )
 
     async def generate_content(
         self,
@@ -369,7 +285,7 @@ class AIStudioClient:
                 len(images) if images else 0,
             )
             request_contents = contents or [
-                self._build_user_content(prompt=prompt, images=images)
+                AistudioContent.from_user_prompt(prompt=prompt, images=images)
             ]
             generation_config_overrides = None
             output_resolution = self.resolve_image_size(size)
@@ -434,32 +350,6 @@ class AIStudioClient:
                 logger.info("图片已保存: %s (%s bytes)", path, img.size)
 
             return output
-
-    def _build_user_content(
-        self,
-        prompt: str,
-        images: list[str | tuple[str, str]] | None = None,
-    ) -> AistudioContent:
-        parts = []
-        for item in images or []:
-            if isinstance(item, tuple) and len(item) == 2:
-                parts.append(AistudioPart(inline_data=item))
-            elif isinstance(item, str):
-                import base64
-                import mimetypes
-
-                mime = mimetypes.guess_type(item)[0] or "image/jpeg"
-                data = Path(item).read_bytes()
-                parts.append(
-                    AistudioPart(
-                        inline_data=(
-                            mime,
-                            base64.b64encode(data).decode("ascii"),
-                        )
-                    )
-                )
-        parts.append(AistudioPart(text=prompt))
-        return AistudioContent(role="user", parts=parts)
 
 
 __all__ = ["AIStudioClient", "CapturedRequest"]

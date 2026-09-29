@@ -280,9 +280,27 @@ class CDPConnection:
             self.ws = None
 
 
-class CDPPage:
-    """Represents a single browser Page target controlled via CDP."""
+def _build_selector_match_js(selector: str) -> str:
+    """Generate in-page element query snippet for standard CSS, text=, or :has-text() selector."""
+    return f"""(() => {{
+        const sel = {json.dumps(selector)};
+        if (sel.includes(':has-text(')) {{
+            const m = sel.match(/^(.*?):has-text\\(['"](.*?)['"]\\)(.*)$/);
+            if (m) {{
+                const tag = m[1].trim() || '*';
+                const text = m[2];
+                return Array.from(document.querySelectorAll(tag)).find(e => (e.textContent || '').includes(text)) || null;
+            }}
+        }}
+        if (sel.startsWith('text=')) {{
+            const text = sel.slice(5).trim();
+            return Array.from(document.querySelectorAll('*')).find(e => (e.textContent || '').includes(text)) || null;
+        }}
+        return document.querySelector(sel);
+    }})()"""
 
+
+class CDPPage:
     def __init__(self, cdp: CDPConnection, target_id: str):
         self.cdp = cdp
         self.target_id = target_id
@@ -412,19 +430,15 @@ class CDPPage:
                 clean_expr = clean_expr[:-1].rstrip()
             expr = f"({clean_expr})({json.dumps(args)})"
         else:
-            is_iife = bool(re.search(r"\)\s*\([^)]*\)\s*\)*\s*;?$", expr))
-            if not is_iife:
-                is_arrow = bool(
-                    re.match(
-                        r"^(?:async\s+)?(?:\([^()]*\)|[a-zA-Z_$][\w$]*)\s*=>", expr
-                    )
-                )
-                is_fn = bool(re.match(r"^(?:async\s+)?function\b", expr))
-                if is_arrow or is_fn:
-                    clean_expr = expr.rstrip()
-                    while clean_expr.endswith(";"):
-                        clean_expr = clean_expr[:-1].rstrip()
-                    expr = f"({clean_expr})()"
+            is_arrow = bool(
+                re.match(r"^(?:async\s+)?(?:\([^()]*\)|[a-zA-Z_$][\w$]*)\s*=>", expr)
+            )
+            is_fn = bool(re.match(r"^(?:async\s+)?function\b", expr))
+            if is_arrow or is_fn:
+                clean_expr = expr.rstrip()
+                while clean_expr.endswith(";"):
+                    clean_expr = clean_expr[:-1].rstrip()
+                expr = f"({clean_expr})()"
         res = await self.cdp.send(
             "Runtime.evaluate",
             {
@@ -531,22 +545,7 @@ class CDPPage:
     ) -> bool:
         """Wait until element matching selector is present in DOM."""
         deadline = asyncio.get_running_loop().time() + timeout_s
-        check_expr = f"""() => {{
-            const sel = {json.dumps(selector)};
-            if (sel.includes(':has-text(')) {{
-                const m = sel.match(/^(.*?):has-text\\(['"](.*?)['"]\\)(.*)$/);
-                if (m) {{
-                    const tag = m[1].trim() || '*';
-                    const text = m[2];
-                    return Array.from(document.querySelectorAll(tag)).some(e => (e.textContent || '').includes(text));
-                }}
-            }}
-            if (sel.startsWith('text=')) {{
-                const text = sel.slice(5).trim();
-                return Array.from(document.querySelectorAll('*')).some(e => (e.textContent || '').includes(text));
-            }}
-            return document.querySelector(sel) !== null;
-        }}"""
+        check_expr = f"() => !!{_build_selector_match_js(selector)}"
         while asyncio.get_running_loop().time() < deadline:
             try:
                 found = await self.evaluate(check_expr, timeout_s=5.0)
@@ -559,22 +558,7 @@ class CDPPage:
 
     async def query_selector(self, selector: str) -> bool:
         """Check if an element exists."""
-        check_expr = f"""() => {{
-            const sel = {json.dumps(selector)};
-            if (sel.includes(':has-text(')) {{
-                const m = sel.match(/^(.*?):has-text\\(['"](.*?)['"]\\)(.*)$/);
-                if (m) {{
-                    const tag = m[1].trim() || '*';
-                    const text = m[2];
-                    return Array.from(document.querySelectorAll(tag)).some(e => (e.textContent || '').includes(text));
-                }}
-            }}
-            if (sel.startsWith('text=')) {{
-                const text = sel.slice(5).trim();
-                return Array.from(document.querySelectorAll('*')).some(e => (e.textContent || '').includes(text));
-            }}
-            return document.querySelector(sel) !== null;
-        }}"""
+        check_expr = f"() => !!{_build_selector_match_js(selector)}"
         try:
             return bool(await self.evaluate(check_expr))
         except Exception:
@@ -583,21 +567,7 @@ class CDPPage:
     async def click(self, selector: str, timeout_s: float = 5.0) -> bool:
         """Click an element matching selector."""
         expr = f"""() => {{
-            const sel = {json.dumps(selector)};
-            let el = null;
-            if (sel.includes(':has-text(')) {{
-                const m = sel.match(/^(.*?):has-text\\(['"](.*?)['"]\\)(.*)$/);
-                if (m) {{
-                    const tag = m[1].trim() || '*';
-                    const text = m[2];
-                    el = Array.from(document.querySelectorAll(tag)).find(e => (e.textContent || '').includes(text)) || null;
-                }}
-            }} else if (sel.startsWith('text=')) {{
-                const text = sel.slice(5).trim();
-                el = Array.from(document.querySelectorAll('*')).find(e => (e.textContent || '').includes(text)) || null;
-            }} else {{
-                el = document.querySelector(sel);
-            }}
+            const el = {_build_selector_match_js(selector)};
             if (!el) return false;
             el.click();
             return true;
@@ -606,27 +576,16 @@ class CDPPage:
 
     async def fill(self, selector: str, value: str) -> bool:
         """Fill an input or textarea element with value."""
-        expr = r"""(args) => {
-            const sel = args.selector;
-            let el = null;
-            if (sel.includes(':has-text(')) {
-                const m = sel.match(/^(.*?):has-text\(['"](.*?)['"]\)(.*)$/);
-                if (m) {
-                    const tag = m[1].trim() || '*';
-                    const text = m[2];
-                    el = Array.from(document.querySelectorAll(tag)).find(e => (e.textContent || '').includes(text)) || null;
-                }
-            } else {
-                el = document.querySelector(sel);
-            }
+        expr = f"""(args) => {{
+            const el = {_build_selector_match_js(selector)};
             if (!el) return false;
             el.focus();
             el.value = args.value;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+            el.dispatchEvent(new Event('change', {{ bubbles: true }}));
             return true;
-        }"""
-        return bool(await self.evaluate(expr, {"selector": selector, "value": value}))
+        }}"""
+        return bool(await self.evaluate(expr, {"value": value}))
 
     async def send_control_enter(self, selector: str = "textarea") -> bool:
         """Focus target and dispatch Control+Enter shortcut."""

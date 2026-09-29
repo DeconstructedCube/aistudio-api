@@ -32,6 +32,19 @@ class GeminiFunctionResponse(BaseModel):
         validation_alias=AliasChoices("response", "content", "output"),
     )
     id: str | None = None
+    parts: list[GeminiPart] | None = None
+
+
+class GeminiExecutableCode(BaseModel):
+    code: str
+    language: str = Field(default="PYTHON")
+    id: str | None = None
+
+
+class GeminiCodeExecutionResult(BaseModel):
+    outcome: str
+    output: str
+    id: str | None = None
 
 
 class GeminiPart(BaseModel):
@@ -54,6 +67,17 @@ class GeminiPart(BaseModel):
         default=None,
         validation_alias=AliasChoices("functionResponse", "function_response"),
     )
+    executableCode: GeminiExecutableCode | None = Field(
+        default=None,
+        validation_alias=AliasChoices("executableCode", "executable_code"),
+    )
+    codeExecutionResult: GeminiCodeExecutionResult | None = Field(
+        default=None,
+        validation_alias=AliasChoices("codeExecutionResult", "code_execution_result"),
+    )
+
+
+GeminiFunctionResponse.model_rebuild()
 
 
 class GeminiContent(BaseModel):

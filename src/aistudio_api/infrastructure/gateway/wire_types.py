@@ -256,6 +256,8 @@ class AistudioPart:
     file_id: str | None = None
     function_call: tuple[str, object] | tuple[str, object, str] | None = None
     function_response: tuple[str, object] | tuple[str, object, str] | None = None
+    executable_code: tuple[str, str] | None = None
+    code_execution_result: tuple[str, str] | None = None
     thought_signature: str | None = None
     thought: bool = False
 
@@ -289,6 +291,31 @@ class AistudioPart:
             if call_id:
                 function_response.append(call_id)
             wire[PartIndex.FUNCTION_RESPONSE_ALT] = function_response
+            if self.thought_signature:
+                wire[PartIndex.THOUGHT_SIGNATURE] = self.thought_signature
+            return wire.compact()
+        if self.executable_code:
+            lang, code = self.executable_code
+            lang_code = 1 if str(lang).upper() in ("1", "PYTHON") else 0
+            wire[PartIndex.EXECUTABLE_CODE] = [lang_code, code]
+            if self.thought_signature:
+                wire[PartIndex.THOUGHT_SIGNATURE] = self.thought_signature
+            return wire.compact()
+        if self.code_execution_result:
+            outcome, output = self.code_execution_result
+            outcome_map = {
+                "OUTCOME_OK": 1,
+                "OUTCOME_FAILED": 2,
+                "OUTCOME_DEADLINE_EXCEEDED": 3,
+            }
+            outcome_code = (
+                outcome_map.get(str(outcome).upper(), 1)
+                if isinstance(outcome, str)
+                else int(outcome)
+            )
+            wire[PartIndex.CODE_RESULT] = [outcome_code, output]
+            if self.thought_signature:
+                wire[PartIndex.THOUGHT_SIGNATURE] = self.thought_signature
             return wire.compact()
         # Text part — mark as thinking when thought=True (wire index 12 = 1).
         if self.thought:
@@ -345,6 +372,34 @@ class AistudioContent:
 
     def to_wire(self):
         return [[part.to_wire() for part in self.parts], self.role]
+
+    @classmethod
+    def from_user_prompt(
+        cls,
+        prompt: str,
+        images: list[str | tuple[str, str]] | None = None,
+    ) -> AistudioContent:
+        parts: list[AistudioPart] = []
+        for item in images or []:
+            if isinstance(item, tuple) and len(item) == 2:
+                parts.append(AistudioPart(inline_data=item))
+            elif isinstance(item, str):
+                import base64
+                import mimetypes
+                from pathlib import Path
+
+                mime = mimetypes.guess_type(item)[0] or "image/jpeg"
+                data = Path(item).read_bytes()
+                parts.append(
+                    AistudioPart(
+                        inline_data=(
+                            mime,
+                            base64.b64encode(data).decode("ascii"),
+                        )
+                    )
+                )
+        parts.append(AistudioPart(text=prompt))
+        return cls(role="user", parts=parts)
 
 
 @dataclass

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from aistudio_api.config import DEFAULT_TEXT_MODEL
 from aistudio_api.infrastructure.gateway.session import BrowserSession
 from aistudio_api.infrastructure.gateway.wire_codec import modify_body
-from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
+from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("capture")
@@ -68,7 +68,7 @@ class RequestCaptureService:
         template = await self._ensure_template(model)
         rewritten_contents = contents
         snapshot_contents = rewritten_contents or [
-            self._build_capture_content(prompt=prompt, images=images)
+            AistudioContent.from_user_prompt(prompt=prompt, images=images)
         ]
 
         # 签名是一次性的票据（根据请求内容穿进 snapshot 计算），每次请求实时生成，不可复用缓存
@@ -128,28 +128,3 @@ class RequestCaptureService:
             self._templates[model] = template
             logger.info("Hook 模板已就绪并缓存: model=%s", model)
             return template
-
-    def _build_capture_content(
-        self, prompt: str, images: list[str | tuple[str, str]] | None
-    ) -> AistudioContent:
-        parts = []
-        for item in images or []:
-            if isinstance(item, tuple) and len(item) == 2:
-                parts.append(AistudioPart(inline_data=item))
-            elif isinstance(item, str):
-                import base64
-                import mimetypes
-                from pathlib import Path
-
-                mime = mimetypes.guess_type(item)[0] or "image/jpeg"
-                data = Path(item).read_bytes()
-                parts.append(
-                    AistudioPart(
-                        inline_data=(
-                            mime,
-                            base64.b64encode(data).decode("ascii"),
-                        )
-                    )
-                )
-        parts.append(AistudioPart(text=prompt))
-        return AistudioContent(role="user", parts=parts)

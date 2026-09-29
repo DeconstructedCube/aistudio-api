@@ -427,9 +427,9 @@ async def test_browser_session_send_streaming_batch_events():
     ]
 
     async def fake_eval(expr, args=None, *a, **kwargs):
-        if "default_MakerSuite" in expr or "window.__bg_hooked" in expr:
+        if "default_MakerSuite" in expr or "INSTALL_HOOKS" in expr:
             return "already_hooked"
-        if "window.__bg_service" in expr:
+        if "service" in expr:
             return True
         if isinstance(args, dict) and "rid" in args and binding_callback:
             rid = args["rid"]
@@ -470,12 +470,11 @@ async def test_rotator_prioritizes_least_used_account():
     store.list_accounts.return_value = [acc1, acc2]
 
     rotator = AccountRotator(account_store=store)
-    # acc1 调用了 50 次，acc2 只调用了 5 次
-    rotator._stats["acc_1"].model_requests["gemini-3.8-flash"] = 50
-    rotator._stats["acc_1"].requests = 50
-    rotator._stats["acc_2"].model_requests["gemini-3.8-flash"] = 5
-    rotator._stats["acc_2"].requests = 5
-
+    # acc1 调用了 50 次，acc2 只调用了 5 次 (使用公共 record_success 接口填充状态)
+    for _ in range(50):
+        rotator.record_success("acc_1", model="gemini-3.8-flash")
+    for _ in range(5):
+        rotator.record_success("acc_2", model="gemini-3.8-flash")
     # 1. 减少切换（黏性优先）：如果当前活跃号是 acc1 且健康可用，继续复用 acc1
     chosen = await rotator.get_next_account(
         model="models/gemini-3.8-flash",
@@ -495,7 +494,9 @@ async def test_rotator_prioritizes_least_used_account():
 
     # 3. 前缀统一规范化：带 models/ 前缀与不带前缀均指向相同的调用计数
     rotator.record_success("acc_2", model="models/gemini-3.8-flash")
-    assert rotator._stats["acc_2"].model_requests["gemini-3.8-flash"] == 6
+    acc2_stats = rotator.get_account_stats("acc_2")
+    assert acc2_stats is not None
+    assert acc2_stats.model_requests["gemini-3.8-flash"] == 6
 
 
 @pytest.mark.asyncio

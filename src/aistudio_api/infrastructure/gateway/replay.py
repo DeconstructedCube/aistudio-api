@@ -11,7 +11,7 @@ logger = get_logger("replay")
 
 
 class RequestReplayService:
-    def __init__(self, session: BrowserSession | None):
+    def __init__(self, session: BrowserSession):
         self._session = session
 
     async def replay(
@@ -29,26 +29,9 @@ class RequestReplayService:
             if k.lower() not in ("host", "content-length")
         }
 
-        try:
-            if self._session is not None:
-                return await self._session.send_hooked_request(
-                    body=body,
-                    timeout_ms=timeout * 1000,
-                    url=captured.url if captured else None,
-                    headers=headers if captured else None,
-                )
-
-            import httpx
-
-            async with httpx.AsyncClient(
-                timeout=float(timeout), proxy=settings.proxy_url
-            ) as client:
-                resp = await client.post(
-                    captured.url,
-                    content=body.encode("utf-8"),
-                    headers=headers,
-                )
-                return resp.status_code, resp.content
-        except Exception as exc:
-            logger.error("请求重放异常: %s", exc)
-            return 0, str(exc).encode()
+        return await self._session.send_hooked_request(
+            body=body,
+            timeout_ms=timeout * 1000,
+            url=captured.url,
+            headers=headers,
+        )

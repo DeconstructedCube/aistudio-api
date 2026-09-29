@@ -17,7 +17,6 @@ from aistudio_api.infrastructure.gateway.wire_parser import (
     parse_chunk_usage,
     parse_response_chunk,
 )
-from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("streaming")
@@ -74,25 +73,13 @@ class StreamingGateway:
     async def stream_chat(
         self,
         *,
-        captured: CapturedRequest | None,
+        captured: CapturedRequest,
         model: str,
-        system_instruction: str | None,
-        contents: list[AistudioContent] | None = None,
-        system_instruction_content: AistudioContent | None = None,
-        tools: list[list] | None = None,
-        safety_settings: list[list] | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-        top_k: int | None = None,
-        max_tokens: int | None = None,
-        generation_config_overrides: dict | None = None,
-        sanitize_plain_text: bool = True,
     ) -> AsyncGenerator[tuple[str, object | None], None]:
         if not captured:
             raise ValueError("captured request is required")
         if self._session is None:
             raise RuntimeError("browser session is required for streaming xhr replay")
-
         modified_body = captured.body
 
         parser = IncrementalJSONStreamParser()

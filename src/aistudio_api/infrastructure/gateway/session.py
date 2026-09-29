@@ -242,7 +242,7 @@ class BrowserSession:
                         # 0. 清理页面中上一个账号的 BotGuardService 和快照状态
                         with suppress(Exception):
                             await self._page.evaluate(
-                                "() => { window.__bg_service = null; window.__bg_snapshot = null; window.__bg_hooked = false; window.__snap_key = null; }"
+                                "() => { if (window.__AISTUDIO__) { window.__AISTUDIO__.service = null; window.__AISTUDIO__.snapshot = null; window.__AISTUDIO__.hooked = false; window.__AISTUDIO__.snapKey = null; } }"
                             )
 
                         # 1. 清理当前会话 Cookie 与 Cache
@@ -322,7 +322,7 @@ class BrowserSession:
                 and self._snap_key
             )
             or (
-                await page.evaluate("() => !!window.__bg_service")
+                await page.evaluate("() => !!window.__AISTUDIO__?.service")
                 and self._bootstrap_template is not None
                 and self._snap_key
             )
@@ -337,7 +337,7 @@ class BrowserSession:
                     and self._snap_key
                 )
                 or (
-                    await page.evaluate("() => !!window.__bg_service")
+                    await page.evaluate("() => !!window.__AISTUDIO__?.service")
                     and self._bootstrap_template is not None
                     and self._snap_key
                 )
@@ -348,7 +348,7 @@ class BrowserSession:
                 self._hooks_installed = False
                 with suppress(Exception):
                     await page.evaluate(
-                        "() => { window.__bg_service = null; window.__bg_snapshot = null; window.__bg_hooked = false; window.__snap_key = null; }"
+                        "() => { if (window.__AISTUDIO__) { window.__AISTUDIO__.service = null; window.__AISTUDIO__.snapshot = null; window.__AISTUDIO__.hooked = false; window.__AISTUDIO__.snapKey = null; } }"
                     )
                 self._bootstrap_template = None
                 await self._goto_aistudio(page)
@@ -378,11 +378,12 @@ class BrowserSession:
             await page.evaluate(DIALOG_CLEANUP_JS)
             await page.evaluate(
                 """(() => {
-                    const clickable = Array.from(document.querySelectorAll('button, mat-card, a, [role="button"]'));
-                    const target = clickable.find(el => (el.innerText || el.textContent || '').includes('Code and Chat'));
-                    if (target) { target.click(); return; }
-                    const startBtn = clickable.find(el => (el.innerText || el.textContent || '').includes('Start building'));
-                    if (startBtn) { startBtn.click(); return; }
+                    const clickable = Array.from(document.querySelectorAll('button, mat-card, a, [role="button"], [role="tab"], .nav-item'));
+                    const targets = ['Playground', 'Code and Chat', 'Chat prompt', 'New chat', 'Start building', 'Create prompt'];
+                    for (const term of targets) {
+                        const target = clickable.find(el => (el.innerText || el.textContent || '').includes(term));
+                        if (target) { target.click(); return; }
+                    }
                 })()"""
             )
             await page.wait_for_timeout(1000)
@@ -454,8 +455,7 @@ class BrowserSession:
                             f"Cookie 认证失效，已跳转至登录页: {curr_url}"
                         )
                     await page.wait_for_timeout(1000)
-                    if await page.evaluate("() => !!window.__bg_service"):
-                        # 预热即刻截断：捕获到 BotGuardService 后立即停止生成，无需等待模型吐字
+                    if await page.evaluate("() => !!window.__AISTUDIO__?.service"):
                         with suppress(Exception):
                             await page.evaluate(STOP_GENERATION_JS)
                         if not captured:
@@ -538,14 +538,12 @@ class BrowserSession:
                 await self.switch_auth(original_auth_file)
                 self._profile_dir = original_profile_dir
 
-    async def capture_template_flow(self, model: str) -> dict[str, object]:
+    async def capture_template(self, model: str) -> dict[str, object]:
         """Return request template for the model using bootstrap baseline contract."""
         async with self._template_lock:
             if self._proc is not None and not self._proc.is_alive():
                 raise RuntimeError("Browser process died during template capture")
             await self.ensure_botguard_service()
-            if self._proc is not None and not self._proc.is_alive():
-                raise RuntimeError("Browser process died during template capture")
             base = dict(self._bootstrap_template or DEFAULT_BOOTSTRAP_TEMPLATE)
             normalized_model = (
                 model if model.startswith("models/") else f"models/{model}"
@@ -560,10 +558,6 @@ class BrowserSession:
             except Exception as e:
                 log.debug("Failed to adapt model into bootstrap template body: %s", e)
             return base
-
-    async def capture_template(self, model: str) -> dict[str, object]:
-        """Capture template flow forwarder."""
-        return await self.capture_template_flow(model)
 
     async def generate_snapshot(self, contents: list[AistudioContent]) -> str:
         """Generate a BotGuard snapshot token for given content payload.
@@ -581,7 +575,7 @@ class BrowserSession:
         Concurrent requests are safely serialized through _snapshot_lock to prevent
         BotGuard Wasm VM state collisions.
         """
-        async with self.request_scope(), self._snapshot_lock:
+        async with self._snapshot_lock:
             page = await self.ensure_botguard_service()
             if not self._snap_key:
                 raise RuntimeError("Snapshot function not detected")
@@ -595,6 +589,10 @@ class BrowserSession:
                         hash_parts.append(str(part.inline_data[1]))
                     elif part.file_id is not None:
                         hash_parts.append(str(part.file_id))
+                    elif part.executable_code is not None:
+                        hash_parts.append(str(part.executable_code[1]))
+                    elif part.code_execution_result is not None:
+                        hash_parts.append(str(part.code_execution_result[1]))
                     else:
                         hash_parts.append("")
             content_hash = sha256(" ".join(hash_parts).encode("utf-8")).hexdigest()
@@ -627,28 +625,27 @@ class BrowserSession:
         headers: dict[str, str] | None = None,
     ) -> tuple[int, bytes]:
         """Replay request via XHR inside the browser context."""
-        async with self.request_scope():
-            page = await self.ensure_botguard_service()
-            if url and headers is not None:
-                captured_url = url
-                captured_headers = headers
-            else:
-                template = await self.capture_template_flow(model="gemini-3.7-flash")
-                captured_url = str(template.get("url") or "")
-                raw_hdrs = template.get("headers")
-                captured_headers = {
-                    str(k): str(v)
-                    for k, v in (raw_hdrs.items() if isinstance(raw_hdrs, dict) else [])
-                }
+        page = await self.ensure_botguard_service()
+        if url and headers is not None:
+            captured_url = url
+            captured_headers = headers
+        else:
+            template = await self.capture_template(model="gemini-3.7-flash")
+            captured_url = str(template.get("url") or "")
+            raw_hdrs = template.get("headers")
+            captured_headers = {
+                str(k): str(v)
+                for k, v in (raw_hdrs.items() if isinstance(raw_hdrs, dict) else [])
+            }
 
-            return await self._transport.send_hooked_request(
-                page,
-                url=captured_url,
-                headers=captured_headers,
-                body=body,
-                timeout_ms=timeout_ms,
-                auth_user=self.get_current_auth_user(),
-            )
+        return await self._transport.send_hooked_request(
+            page,
+            url=captured_url,
+            headers=captured_headers,
+            body=body,
+            timeout_ms=timeout_ms,
+            auth_user=self.get_current_auth_user(),
+        )
 
     async def send_streaming_request(
         self,
@@ -659,32 +656,31 @@ class BrowserSession:
         headers: dict[str, str] | None = None,
     ) -> AsyncGenerator[tuple[str, object], None]:
         """Send a streaming request, yielding ('status', int) and ('chunk', bytes) events."""
-        async with self.request_scope():
-            page = await self.ensure_botguard_service()
-            if url and headers is not None:
-                captured_url = url
-                captured_headers = headers
-            else:
-                template = await self.capture_template_flow(model="gemini-3.7-flash")
-                captured_url = str(template.get("url") or "")
-                raw_hdrs = template.get("headers")
-                captured_headers = {
-                    str(k): str(v)
-                    for k, v in (raw_hdrs.items() if isinstance(raw_hdrs, dict) else [])
-                }
+        page = await self.ensure_botguard_service()
+        if url and headers is not None:
+            captured_url = url
+            captured_headers = headers
+        else:
+            template = await self.capture_template(model="gemini-3.7-flash")
+            captured_url = str(template.get("url") or "")
+            raw_hdrs = template.get("headers")
+            captured_headers = {
+                str(k): str(v)
+                for k, v in (raw_hdrs.items() if isinstance(raw_hdrs, dict) else [])
+            }
 
-            try:
-                async for event in self._transport.send_streaming_request(
-                    page,
-                    url=captured_url,
-                    headers=captured_headers,
-                    body=body,
-                    timeout_ms=timeout_ms,
-                    auth_user=self.get_current_auth_user(),
-                ):
-                    yield event
-            finally:
-                await self.cleanup_stream_page()
+        try:
+            async for event in self._transport.send_streaming_request(
+                page,
+                url=captured_url,
+                headers=captured_headers,
+                body=body,
+                timeout_ms=timeout_ms,
+                auth_user=self.get_current_auth_user(),
+            ):
+                yield event
+        finally:
+            await self.cleanup_stream_page()
 
     async def cleanup_stream_page(self) -> None:
         """Execute post-stream DOM cleanup and throttled V8 garbage collection."""
@@ -782,7 +778,7 @@ class BrowserSession:
         page = await self.ensure_botguard_service()
         from aistudio_api.config import DEFAULT_TEXT_MODEL
 
-        tpl = await self.capture_template_flow(DEFAULT_TEXT_MODEL)
+        tpl = await self.capture_template(DEFAULT_TEXT_MODEL)
         raw_url = str(tpl.get("url") or "")
         raw_headers = tpl.get("headers")
         headers_dict = raw_headers if isinstance(raw_headers, dict) else {}
@@ -1092,14 +1088,6 @@ class BrowserSession:
                     {"email": expected_email, "authUser": auth_user},
                 )
             )
-
-        if not is_verified and is_on_correct_user:
-            with suppress(Exception):
-                cookies = await page.get_cookies()
-                for c in cookies:
-                    if expected_email in str(c.get("value", "")).lower():
-                        is_verified = True
-                        break
 
         # 3. 如果当前处于多账号专属路由 /u/{auth_user}/ 下，且未检测到冲突账号，确认放行
         if (

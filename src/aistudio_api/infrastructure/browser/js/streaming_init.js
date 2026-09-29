@@ -1,11 +1,9 @@
 (args) => {
     const rid = args.rid;
     window.__AISTUDIO__ = window.__AISTUDIO__ || {};
-    const streams = window.__AISTUDIO__.streams = window.__AISTUDIO__.streams || window.__streams || {};
-    const aborts = window.__AISTUDIO__.streamAbort = window.__AISTUDIO__.streamAbort || window.__stream_abort || {};
-    window.__streams = streams;
-    window.__stream_abort = aborts;
-    const existing = window.__streams[rid];
+    const streams = window.__AISTUDIO__.streams = window.__AISTUDIO__.streams || {};
+    const aborts = window.__AISTUDIO__.streamAbort = window.__AISTUDIO__.streamAbort || {};
+    const existing = streams[rid];
     if (existing && existing.abort) {
         try { existing.abort(); } catch (e) {}
     }
@@ -15,7 +13,7 @@
         reader: null,
         abortController: abortController,
     };
-    window.__streams[rid] = state;
+    streams[rid] = state;
 
     function push(event) {
         event.rid = rid;
@@ -46,10 +44,8 @@
             timeoutId = null;
         }
         try {
-            if (window.__AISTUDIO__ && window.__AISTUDIO__.streams) delete window.__AISTUDIO__.streams[rid];
-            if (window.__AISTUDIO__ && window.__AISTUDIO__.streamAbort) delete window.__AISTUDIO__.streamAbort[rid];
-            if (window.__streams) delete window.__streams[rid];
-            if (window.__stream_abort) delete window.__stream_abort[rid];
+            if (window.__AISTUDIO__?.streams) delete window.__AISTUDIO__.streams[rid];
+            if (window.__AISTUDIO__?.streamAbort) delete window.__AISTUDIO__.streamAbort[rid];
         } catch (e) {}
     }
     const doAbort = function() {
@@ -61,7 +57,7 @@
             try { state.abortController.abort(); } catch (e) {}
         }
     };
-    window.__stream_abort[rid] = doAbort;
+    aborts[rid] = doAbort;
     state.abort = doAbort;
 
     const headers = Object.assign({}, args.headers || {});

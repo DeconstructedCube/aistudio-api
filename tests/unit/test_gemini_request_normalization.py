@@ -36,7 +36,7 @@ def test_normalize_gemini_request_exposes_generation_config_overrides():
 
     normalized = normalize_gemini_request(req, "models/gemini-3.1-flash-image-preview")
 
-    assert normalized["generation_config_overrides"] == {
+    assert normalized.generation_config_overrides == {
         "stop_sequences": ["6"],
         "max_tokens": 65536,
         "temperature": 1,
@@ -119,8 +119,8 @@ def test_normalize_gemini_request_maps_official_image_generation_fields():
 
     normalized = normalize_gemini_request(req, "models/gemini-3.1-flash-image-preview")
 
-    assert normalized["tools"] == [[None, None, None, [None, [[], []]]]]
-    assert normalized["generation_config_overrides"] == {
+    assert normalized.tools == [[None, None, None, [None, [[], []]]]]
+    assert normalized.generation_config_overrides == {
         "image_output_mode": AistudioImageOutputMode.text_and_image(),
         "thinking_config": [1, None, None, 3],
         "output_resolution": ["9:16", "4K"],
@@ -156,7 +156,7 @@ def test_normalize_gemini_request_encodes_function_declarations_to_wire_tools():
     )
     normalized = normalize_gemini_request(req, "models/gemma-4-31b-it")
 
-    assert normalized["tools"] == [
+    assert normalized.tools == [
         [
             None,
             [
@@ -201,7 +201,7 @@ def test_normalize_gemini_request_applies_gemma_default_tools():
 
     normalized = normalize_gemini_request(req, "models/gemma-4-31b-it")
 
-    assert normalized["tools"] == [[None, None, None, [None, [[]]]]]
+    assert normalized.tools == [[None, None, None, [None, [[]]]]]
 
 
 def test_normalize_gemini_request_encodes_builtin_tools_to_wire():
@@ -220,7 +220,7 @@ def test_normalize_gemini_request_encodes_builtin_tools_to_wire():
     )
     normalized = normalize_gemini_request(req, "models/gemini-3.5-flash")
 
-    assert normalized["tools"] == [
+    assert normalized.tools == [
         [[]],
         [None, None, None, [None, [[]]]],
         [None, None, None, None, None, None, None, None, None, None, []],
@@ -251,7 +251,7 @@ def test_normalize_gemini_request_empty_tools_disables_model_defaults():
 
     normalized = normalize_gemini_request(req, "models/gemma-4-31b-it")
 
-    assert normalized["tools"] == []
+    assert normalized.tools == []
 
 
 def test_normalize_gemini_request_rejects_unsupported_person_generation():
@@ -312,15 +312,15 @@ def test_normalize_gemini_request_maps_official_text_model_fields():
 
     normalized = normalize_gemini_request(req, "models/gemini-3.5-flash")
 
-    assert normalized["tools"] == [
+    assert normalized.tools == [
         [None, None, None, None, None, None, None, []],
         [[]],
         [None, None, None, [None, [[]]]],
     ]
-    assert normalized["generation_config_overrides"] == {
+    assert normalized.generation_config_overrides == {
         "thinking_config": [1, None, None, 3],
     }
-    assert normalized["safety_settings"] == [
+    assert normalized.safety_settings == [
         [None, None, 7, 1],
         [None, None, 8, 4],
         [None, None, 9, 3],
@@ -367,7 +367,7 @@ model_defaults:
     )
 
     normalized = normalize_gemini_request(req, "models/gemini-2.5-flash")
-    assert normalized["safety_settings"] == [[None, None, 7, 4]]
+    assert normalized.safety_settings == [[None, None, 7, 4]]
     invalidate_config_cache()
 
 

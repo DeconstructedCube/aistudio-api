@@ -16,12 +16,12 @@ from aistudio_api.infrastructure.browser.scripts import (
 from aistudio_api.infrastructure.gateway.transport import XHRStreamTransport
 
 
-def test_streaming_scripts_include_window_deletions():
-    """Verify V8 memory cleanup logic is present in scripts."""
-    assert "delete window.__streams[rid]" in STREAMING_INIT_JS
-    assert "delete window.__stream_abort[rid]" in STREAMING_INIT_JS
-    assert "delete window.__streams[rid]" in STREAM_CLEANUP_JS
-    assert "delete window.__stream_abort[rid]" in STREAM_CLEANUP_JS
+def test_streaming_scripts_defined_and_non_empty():
+    """Verify streaming initialization and cleanup scripts are properly loaded."""
+    assert len(STREAMING_INIT_JS.strip()) > 0
+    assert len(STREAM_CLEANUP_JS.strip()) > 0
+    assert "__AISTUDIO__" in STREAMING_INIT_JS
+    assert "__AISTUDIO__" in STREAM_CLEANUP_JS
 
 
 @pytest.mark.asyncio

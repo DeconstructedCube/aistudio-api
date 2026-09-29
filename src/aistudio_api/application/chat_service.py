@@ -40,14 +40,6 @@ class NormalizedGeminiRequest:
     max_tokens: int | None = None
     generation_config_overrides: dict[str, object] | None = None
 
-    def __getitem__(self, key: str) -> object:
-        if hasattr(self, key):
-            return getattr(self, key)
-        raise KeyError(key)
-
-    def get(self, key: str, default: object = None) -> object:
-        return getattr(self, key, default)
-
 
 SCHEMA_TYPE_CODES = {
     "string": 1,
@@ -643,10 +635,44 @@ def normalize_gemini_request(
                         else (fr.name, resp_payload),
                     )
                 )
+                if fr.parts:
+                    for subpart in fr.parts:
+                        if subpart.inlineData is not None:
+                            img_data = (
+                                subpart.inlineData.mimeType,
+                                subpart.inlineData.data,
+                            )
+                            parts.append(
+                                AistudioPart(
+                                    inline_data=img_data,
+                                    thought_signature=subpart.thoughtSignature,
+                                )
+                            )
+                            content_images.append(img_data)
+                        elif subpart.text is not None:
+                            parts.append(AistudioPart(text=subpart.text))
+                            text_parts.append(subpart.text)
+                continue
+            if part.executableCode is not None:
+                ec = part.executableCode
+                parts.append(
+                    AistudioPart(
+                        executable_code=(ec.language, ec.code),
+                        thought_signature=part.thoughtSignature,
+                    )
+                )
+                continue
+            if part.codeExecutionResult is not None:
+                cer = part.codeExecutionResult
+                parts.append(
+                    AistudioPart(
+                        code_execution_result=(cer.outcome, cer.output),
+                        thought_signature=part.thoughtSignature,
+                    )
+                )
                 continue
             if part.fileData is not None:
                 raise ValueError("fileData is not supported yet")
-
         contents.append(AistudioContent(role=role, parts=parts))
 
         if role == "user":

@@ -348,18 +348,4 @@ async def probe_google_accounts_infinite(
 
             auth_user_idx += 1
 
-    # 如果探活因为网络原因没有返回任何结果，但包含了核心 cookie，保底返回 u/0
-    if not valid_accounts and (
-        "SAPISID" in cookie_dict
-        or "__Secure-1PSID" in cookie_dict
-        or "SID" in cookie_dict
-    ):
-        valid_accounts.append(
-            {
-                "auth_user": "0",
-                "status_code": 200,
-                "name": "Google Account (u/0)",
-            }
-        )
-
     return valid_accounts
