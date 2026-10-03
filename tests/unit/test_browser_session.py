@@ -331,6 +331,7 @@ async def test_browser_session_generate_snapshot_concurrency(mock_cdp_page):
     session = BrowserSession(port=9222)
     session._page = mock_cdp_page
     session._snap_key = "test_snapshot_fn"
+    session._hooks_installed = True
 
     concurrent_evals = 0
     max_concurrent_evals = 0
@@ -371,7 +372,6 @@ async def test_browser_session_generate_snapshot_concurrency(mock_cdp_page):
     assert max_concurrent_evals == 1
     assert len(set(results)) == 5
 
-
 def test_browser_session_temporary_chat_urls():
     """Verify AI Studio navigation URLs always enforce temporary=true to prevent history pollution."""
     from aistudio_api.infrastructure.gateway.session import (
@@ -391,7 +391,6 @@ def test_browser_session_temporary_chat_urls():
     assert all("temporary=true" in u for u in urls_multi)
     assert any("/u/3/" in u for u in urls_multi)
 
-
 @pytest.mark.asyncio
 async def test_browser_session_enable_temporary_chat(mock_cdp_page):
     """Verify _enable_temporary_chat evaluates the in-page selector script."""
@@ -403,3 +402,4 @@ async def test_browser_session_enable_temporary_chat(mock_cdp_page):
     mock_cdp_page.evaluate.assert_called_once()
     expr = mock_cdp_page.evaluate.call_args[0][0]
     assert "temporary" in expr.lower()
+

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 _JS_DIR = Path(__file__).resolve().parent / "js"
@@ -46,3 +47,21 @@ def build_hooked_request_args(
         "body": body,
         "timeout": timeout_s,
     }
+def build_selector_match_js(selector: str) -> str:
+    """Generate in-page element query snippet for standard CSS, text=, or :has-text() selector."""
+    return f"""(() => {{
+        const sel = {json.dumps(selector)};
+        if (sel.includes(':has-text(')) {{
+            const m = sel.match(/^(.*?):has-text\\(['"](.*?)['"]\\)(.*)$/);
+            if (m) {{
+                const tag = m[1].trim() || '*';
+                const text = m[2];
+                return Array.from(document.querySelectorAll(tag)).find(e => (e.textContent || '').includes(text)) || null;
+            }}
+        }}
+        if (sel.startsWith('text=')) {{
+            const text = sel.slice(5).trim();
+            return Array.from(document.querySelectorAll('*')).find(e => (e.textContent || '').includes(text)) || null;
+        }}
+        return document.querySelector(sel);
+    }})()"""

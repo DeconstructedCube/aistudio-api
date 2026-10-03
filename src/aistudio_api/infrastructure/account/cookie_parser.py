@@ -262,16 +262,6 @@ def parse_cookie_string(
         "origins": [],
     }
 
-
-def parse_and_filter_google_cookies(raw: object) -> list[dict[str, object]]:
-    state = parse_cookie_string(raw)
-    cookies_obj = state.get("cookies")
-    cookies: list[dict[str, object]] = (
-        cookies_obj if isinstance(cookies_obj, list) else []
-    )
-    return [cookie for cookie in cookies if "google" in str(cookie.get("domain", ""))]
-
-
 async def probe_google_accounts_infinite(
     raw_or_dict: object,
     *,

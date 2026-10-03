@@ -39,7 +39,7 @@ async def test_try_switch_account_double_check_reuse():
     mock_rotator = MagicMock(spec=AccountRotator)
     mock_service = MagicMock(spec=AccountService)
     mock_client = MagicMock(spec=AIStudioClient)
-    mock_client._session = MagicMock()
+    mock_client.session = MagicMock()
 
     # Active account is now "acc_2"
     active_acc = AccountMeta(
@@ -156,7 +156,7 @@ async def test_try_switch_account_single_account_recovery():
     mock_rotator = MagicMock(spec=AccountRotator)
     mock_service = MagicMock(spec=AccountService)
     mock_client = MagicMock(spec=AIStudioClient)
-    mock_client._session = MagicMock()
+    mock_client.session = MagicMock()
     mock_client.clear_templates = MagicMock()
 
     active_acc = AccountMeta(
@@ -191,7 +191,7 @@ async def test_try_switch_account_single_account_recovery():
         mock_client.clear_templates.assert_called_once()
         mock_service.activate_account.assert_called_once_with(
             "acc_1",
-            mock_client._session,
+            mock_client.session,
         )
     finally:
         runtime_state.rotator = orig_rotator
@@ -207,7 +207,7 @@ async def test_try_switch_account_session_expired_strictly_forbids_in_place_retr
     mock_rotator = MagicMock(spec=AccountRotator)
     mock_service = MagicMock(spec=AccountService)
     mock_client = MagicMock(spec=AIStudioClient)
-    mock_client._session = MagicMock()
+    mock_client.session = MagicMock()
 
     active_acc = AccountMeta(
         id="acc_1",
@@ -255,7 +255,7 @@ async def test_try_switch_account_session_expired_switches_to_healthy_account():
     mock_rotator = MagicMock(spec=AccountRotator)
     mock_service = MagicMock(spec=AccountService)
     mock_client = MagicMock(spec=AIStudioClient)
-    mock_client._session = MagicMock()
+    mock_client.session = MagicMock()
 
     acc1 = AccountMeta(
         id="acc_1", name="Cookie A u/0", email="user@gmail.com", created_at="2026-01-01"
@@ -292,7 +292,7 @@ async def test_try_switch_account_session_expired_switches_to_healthy_account():
         # 成功激活 acc_2
         mock_service.activate_account.assert_called_once_with(
             "acc_2",
-            mock_client._session,
+            mock_client.session,
         )
     finally:
         runtime_state.rotator = orig_rotator

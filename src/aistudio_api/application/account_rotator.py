@@ -710,10 +710,6 @@ class AccountRotator:
 _rotator: AccountRotator | None = None
 
 
-def get_rotator() -> AccountRotator | None:
-    return _rotator
-
-
 def init_rotator(account_store: AccountStore) -> AccountRotator:
     global _rotator
     _rotator = AccountRotator(account_store)

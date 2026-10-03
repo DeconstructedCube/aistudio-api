@@ -17,7 +17,6 @@ from urllib.parse import urlsplit
 
 from aistudio_api.config import settings
 from aistudio_api.domain.errors import SessionExpiredError
-from aistudio_api.infrastructure.account.account_store import AccountStore
 from aistudio_api.infrastructure.browser.browser_engine import (
     ChromiumProcess,
     launch_chromium_process,
@@ -90,7 +89,8 @@ class BrowserSession:
 
     def __init__(self, port: int):
         self.port = port
-        self._auth_file = settings.auth_file or self._discover_active_auth_file()
+        self._auth_file: str | None = settings.auth_file or None
+        self._auth_user: str | None = None
         self._profile_dir = self._derive_profile_dir(self._auth_file)
         self._proc: ChromiumProcess | None = None
         self._cdp_client: CDPClient | None = None
@@ -106,12 +106,13 @@ class BrowserSession:
         self._switching: bool = False
         self._switch_event = asyncio.Event()
         self._switch_event.set()
-        self._last_activity_time: float = time.time()
         self._hooks_installed: bool = False
         self._stream_cleanup_count: int = 0
 
     def get_current_auth_user(self) -> str:
         """获取当前活跃账号的 auth_user 编号（0, 1, 2...）。"""
+        if self._auth_user is not None:
+            return self._auth_user
         if self._auth_file:
             try:
                 meta_path = Path(self._auth_file).parent / "meta.json"
@@ -120,13 +121,6 @@ class BrowserSession:
                     return str(meta.get("auth_user") or "0")
             except Exception:
                 pass
-        try:
-            store = AccountStore()
-            acc = store.get_active_account()
-            if acc and acc.auth_user:
-                return str(acc.auth_user)
-        except Exception:
-            pass
         return "0"
 
     @asynccontextmanager
@@ -225,11 +219,8 @@ class BrowserSession:
             self._switch_event.clear()
             self._switching = True
             try:
-                # 等待正在处理的请求排干，最多等待 15 秒，避免直接切号杀进程导致进行中的流断连
-                for _ in range(150):
-                    if self._in_flight <= 0:
-                        break
-                    await asyncio.sleep(0.1)
+                # 立即通知当前所有进行中的流式请求切号事件，使其快速失败并在新账号上重试，绝不卡死等待
+                self._transport.abort_all_streams("account_switched")
 
                 self._auth_file = auth_file
                 self._profile_dir = self._derive_profile_dir(auth_file)
@@ -353,6 +344,7 @@ class BrowserSession:
                 self._bootstrap_template = None
                 await self._goto_aistudio(page)
                 await self._install_hooks(page)
+
             current_url = page.url or ""
             if "available-regions" in current_url:
                 raise RuntimeError(
@@ -469,9 +461,6 @@ class BrowserSession:
                         # 执行 DOM 垃圾回收，消除历史对话 DOM 堆积
                         with suppress(Exception):
                             await page.evaluate(DOM_GC_CLEANUP_JS)
-                        # 自动识别并记录当前账号的真实邮箱
-                        with suppress(Exception):
-                            await self._verify_account_identity(page)
                         log.debug(
                             "BotGuard 捕获成功，耗时 %d 秒 (累计 %.1f 秒)",
                             i + 1,
@@ -483,7 +472,6 @@ class BrowserSession:
                 unsub()
                 with suppress(Exception):
                     await page.fill("textarea", original_text)
-
     async def import_cookies(
         self, cookie_string: str, auth_file: str | None = None
     ) -> int:
@@ -615,7 +603,6 @@ class BrowserSession:
             raise RuntimeError(
                 f"Snapshot generation failed for content hash {content_hash[:8]}"
             )
-
     async def send_hooked_request(
         self,
         *,
@@ -881,8 +868,6 @@ class BrowserSession:
                     raise SessionExpiredError(
                         f"Cookie 认证失败，已被重定向到 Google 登录页。 (url={current_url})"
                     )
-                with suppress(Exception):
-                    await page.evaluate(DIALOG_CLEANUP_JS)
 
                 for _ in range(15):
                     with suppress(Exception):
@@ -925,7 +910,6 @@ class BrowserSession:
         raise RuntimeError(
             f"Hook install failed: {result} (url={page_url}, title={page_title!r})"
         )
-
     async def _enable_temporary_chat(self, page: CDPPage) -> bool:
         """激活 Temporary chat 模式，防止预热请求保存至账号历史。"""
         try:
@@ -1037,26 +1021,30 @@ class BrowserSession:
             else ("/u/0/" in curr_url or "/u/" not in curr_url)
         )
 
+        expected_email = (meta.get("email") or "").strip().lower()
         discovered_email: str | None = None
-        # 仅在页面路由与当前子账号匹配时提取邮箱，防止多账号 Cookie 共享导致的邮箱跨账号串号污染
-        if is_on_correct_user:
+        # 仅在尚未记录邮箱且处于目标子账号路由时，执行首次自动探查并持久化写入 meta.json
+        if not expected_email and is_on_correct_user:
             discovered_email = await self.extract_account_email(page)
             if discovered_email:
-                account_store = AccountStore()
-                if account_store.update_account_email(account_id, discovered_email):
-                    log.info(
-                        "已自动识别并更新账号 %s (u/%s) 登录邮箱: %s",
-                        account_id,
-                        auth_user,
-                        mask_email(discovered_email),
-                    )
+                log.info(
+                    "已自动识别账号 %s (u/%s) 登录邮箱: %s",
+                    account_id,
+                    auth_user,
+                    mask_email(discovered_email),
+                )
                 meta["email"] = discovered_email
+                with suppress(Exception):
+                    meta_path.write_text(
+                        json.dumps(meta, indent=2, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                expected_email = discovered_email.strip().lower()
 
-        expected_email = (meta.get("email") or "").strip().lower()
         if not expected_email:
             return is_on_correct_user
 
-        # 1. 如果提取到的邮箱与期望邮箱一致（大小写不敏感），直接确认匹配
+        # 1. 如果刚提取到的邮箱与期望邮箱一致（大小写不敏感），直接确认匹配
         if (
             discovered_email
             and discovered_email.strip().lower() == expected_email
@@ -1147,22 +1135,7 @@ class BrowserSession:
             log.debug(f"Failed to save cookies: {e}")
 
     @staticmethod
-    def _discover_active_auth_file() -> str | None:
-        try:
-            store = AccountStore()
-            account = store.get_active_account()
-            if account is None:
-                return None
-            path = store.get_auth_path_optional(account.id, require_exists=False)
-            return str(path) if path is not None else None
-        except Exception:
-            return None
-
-    @staticmethod
     def _derive_profile_dir(auth_file: str | None) -> str | None:
         if not auth_file:
-            fallback_auth_file = BrowserSession._discover_active_auth_file()
-            if not fallback_auth_file:
-                return None
-            auth_file = fallback_auth_file
+            return None
         return str(Path(auth_file).resolve().parent / "profile")

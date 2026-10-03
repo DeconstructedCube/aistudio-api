@@ -57,12 +57,7 @@ class AccountService:
             return None
 
         self._store.set_active_account(account_id)
-        from aistudio_api.api.state import runtime_state
-
-        if runtime_state.client is not None:
-            runtime_state.client.clear_templates()
-        logger.info("已清除模板缓存")
-
+        logger.info("已切换活跃账号持久化状态: %s", account_id)
         await browser_session.switch_auth(str(auth_path))
         await browser_session.ensure_botguard_service()
         logger.info("已切换到账号: %s (%s)", account_id, account.name)

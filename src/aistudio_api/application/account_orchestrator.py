@@ -64,7 +64,7 @@ async def try_switch_account(
             rotator is None
             or account_service is None
             or client is None
-            or client._session is None
+            or client.session is None
         ):
             return False
 
@@ -122,13 +122,12 @@ async def try_switch_account(
         if current_id is None or next_account.id != current_id:
             result = await account_service.activate_account(
                 next_account.id,
-                client._session,
+                client.session,
             )
             if result is not None:
                 rotator.clear_cooldown(next_account.id, model=model)
                 _last_switch_time = time.time()
             return result is not None
-
         # 登录态失效严禁在原账号原地重试
         if is_session_expired and (
             failed_account_id == current_id or next_account.id == failed_account_id
@@ -145,13 +144,12 @@ async def try_switch_account(
             client.clear_templates()
             result = await account_service.activate_account(
                 current_id,
-                client._session,
+                client.session,
             )
             if result is not None:
                 rotator.clear_cooldown(current_id, model=model)
                 _last_switch_time = time.time()
             return result is not None
-
         return bool(
             current_id and rotator.is_account_available(current_id, model=model)
         )

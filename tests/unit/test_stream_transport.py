@@ -128,3 +128,30 @@ async def test_transport_streaming_timeout_raises():
         ):
             pass
     await push_task
+@pytest.mark.asyncio
+async def test_transport_abort_all_streams_interrupts_inflight_queues():
+    """Verify abort_all_streams immediately interrupts in-flight streams without 60s timeout."""
+    transport = XHRStreamTransport()
+    page = MagicMock(spec=CDPPage)
+    page.on_binding = MagicMock()
+    page.add_binding = AsyncMock()
+    page.evaluate = AsyncMock()
+
+    async def run_stream():
+        async for _ in transport.send_streaming_request(
+            page,
+            url="http://test.com",
+            headers={},
+            body="{}",
+            timeout_ms=5000,
+        ):
+            pass
+
+    task = asyncio.create_task(run_stream())
+    await asyncio.sleep(0.05)
+
+    # Trigger account switch stream abortion
+    transport.abort_all_streams("account_switched")
+
+    with pytest.raises(RuntimeError, match="streaming request failed: account_switched"):
+        await task

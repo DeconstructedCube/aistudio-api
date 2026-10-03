@@ -6,7 +6,7 @@ from pathlib import Path
 
 from aistudio_api.infrastructure.gateway.wire_parser import (
     _coerce_int,
-    _decode_wire_argument_pairs,
+    _decode_wire_struct,
     _decode_wire_value,
     _iter_response_chunks,
     parse_chunk_usage,
@@ -33,16 +33,15 @@ def test_coerce_int():
     assert _coerce_int(None) is None
 
 
-def test_decode_wire_value_and_pairs():
+def test_decode_wire_value_and_struct():
     # Value with >= 3 items where item[2] is present
     val = ["skip", "skip", "actual_value"]
     assert _decode_wire_value(val) == "actual_value"
 
-    # Argument pairs
+    # Struct pairs
     pairs = [["key1", "val1"], ["key2", "val2"]]
-    decoded = _decode_wire_argument_pairs(pairs)
+    decoded = _decode_wire_struct(pairs)
     assert decoded == {"key1": "val1", "key2": "val2"}
-
 
 def test_iter_response_chunks():
     assert _iter_response_chunks([]) == []
@@ -175,15 +174,14 @@ def test_parse_image_output_keeps_only_final_images_in_images_field():
     assert output.thinking.startswith("**Envisioning a Kitty Scene**")
 
 
-def test_decode_wire_argument_pairs_with_three_element_array():
+def test_decode_wire_struct_with_three_element_array():
     from aistudio_api.infrastructure.gateway.wire_parser import (
-        _decode_wire_argument_pairs,
+        _decode_wire_struct,
     )
 
     raw = [["city", "San Francisco", "extra_field"]]
-    decoded = _decode_wire_argument_pairs(raw)
+    decoded = _decode_wire_struct(raw)
     assert decoded == {"city": "San Francisco"}
-
 
 def test_decode_wire_value_booleans_and_numbers():
     # Value booleans (JSPB boolean compression 0/1 and explicit bool)

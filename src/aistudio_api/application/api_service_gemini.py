@@ -33,6 +33,9 @@ from aistudio_api.domain.errors import (
     RequestError,
     SessionExpiredError,
     UsageLimitExceeded,
+    is_browser_session_hang_error,
+    is_transient_rpc_error,
+    parse_upstream_grpc_error,
 )
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 from aistudio_api.infrastructure.utils.logger import get_logger
@@ -73,55 +76,17 @@ def clean_upstream_error_message(raw_msg: str) -> str:
     if not raw_msg:
         return ""
     text = raw_msg.strip()
-
-    # Only unpack if it contains a JSPB bracket array like [,[ or [null,[
     if "[,[" not in text and "[null,[" not in text and not text.startswith("[,"):
         return text
-
-    m = re.match(r"^HTTP\s+\d+:\s*(.*)$", text)
-    inner = m.group(1).strip() if m else text
-
-    normalized = inner
-    if normalized.startswith("[,"):
-        normalized = "[null," + normalized[2:]
-
-    try:
-        data = json.loads(normalized)
-
-        def find_msg(obj):
-            if isinstance(obj, list):
-                if len(obj) >= 2 and isinstance(obj[1], str) and obj[1]:
-                    return obj[1]
-                for item in obj:
-                    res = find_msg(item)
-                    if res:
-                        return res
-            return None
-
-        extracted = find_msg(data)
-        if extracted:
-            return extracted
-    except Exception:
-        pass
-
-    match = re.search(r'\[\s*,\s*\[\s*\d+\s*,\s*"([^"\\]*(?:\\.[^"\\]*)*)"', inner)
-    if match:
-        try:
-            return json.loads(f'"{match.group(1)}"')
-        except Exception:
-            return match.group(1)
-
-    match2 = re.search(
-        r'\[\s*null\s*,\s*\[\s*\d+\s*,\s*"([^"\\]*(?:\\.[^"\\]*)*)"', inner
-    )
-    if match2:
-        try:
-            return json.loads(f'"{match2.group(1)}"')
-        except Exception:
-            return match2.group(1)
-
-    return text
-
+    inner = text
+    while True:
+        m = re.match(r"^HTTP\s+\d+:\s*(.*)$", inner)
+        if m:
+            inner = m.group(1).strip()
+        else:
+            break
+    _, msg = parse_upstream_grpc_error(inner)
+    return msg or inner
 
 def classify_gemini_error_payload(exc: Exception) -> tuple[int, str, str]:
     """Extract standard Gemini HTTP status code, message, and status string from an exception."""
@@ -271,15 +236,7 @@ async def handle_attempt_exception(
 
     # 针对 Google 上游偶发且完全随机的 RPC 路由 404 (Ambiguous request for service '' and method '/GenerativeService.*')：
     # 此报错为上游端点偶发抖动，在未产生输出时当场立即重试（严禁切号以防浪费配额，其他 404 严格按原样报错抛出）
-    err_str = str(exc).lower()
-    if (
-        isinstance(exc, RequestError)
-        and exc.status == 404
-        and not has_yielded_data
-        and "ambiguous request for service" in err_str
-        and "generatecontent" in err_str
-        and attempt < MAX_RETRIES - 1
-    ):
+    if is_transient_rpc_error(exc) and not has_yielded_data and attempt < MAX_RETRIES - 1:
         logger.warning(
             "检测到 Google 上游偶发 404 (Ambiguous RPC method)，当场立即重试 (%d/%d): %s",
             attempt + 1,
@@ -288,33 +245,24 @@ async def handle_attempt_exception(
         )
         client.clear_templates()
         return True
-    if isinstance(exc, (RuntimeError, TimeoutError)):
-        err_msg = str(exc).lower()
-        if (
-            "template capture" in err_msg
-            or "botguard" in err_msg
-            or "timeout" in err_msg
-            or "cdp" in err_msg
-            or "closed" in err_msg
-            or "aborted" in err_msg
-        ):
-            logger.warning(
-                "模板或 BotGuard 捕获超时 (%d/%d): %s，切换账号重试",
-                attempt + 1,
-                MAX_RETRIES,
-                exc,
-            )
-            client.clear_templates()
-            if not has_yielded_data and await try_switch_account(
-                model=target_model, failed_account_id=failed_id, is_auth_error=False
-            ):
-                logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
-                return True
-            if attempt < 2 and not has_yielded_data:
-                if client._session is not None:
-                    await client._session._close_internal()
-                return True
 
+    if is_browser_session_hang_error(exc):
+        logger.warning(
+            "模板或 BotGuard 捕获超时 (%d/%d): %s，切换账号重试",
+            attempt + 1,
+            MAX_RETRIES,
+            exc,
+        )
+        client.clear_templates()
+        if not has_yielded_data and await try_switch_account(
+            model=target_model, failed_account_id=failed_id, is_auth_error=False
+        ):
+            logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
+            return True
+        if attempt < 2 and not has_yielded_data:
+            if client._session is not None:
+                await client._session._close_internal()
+            return True
     if isinstance(exc, RequestError):
         clean_msg = clean_upstream_error_message(str(exc))
         status_code = exc.status if exc.status > 0 else 500

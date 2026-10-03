@@ -24,11 +24,19 @@ class CapturedRequest:
     snapshot: str = ""
 
     def __post_init__(self):
-        parsed = json.loads(self.body)
-        self.model = parsed[0] if parsed else ""
-        self.snapshot = (
-            parsed[4] if len(parsed) > 4 and isinstance(parsed[4], str) else ""
-        )
+        if not self.model or not self.snapshot:
+            try:
+                parsed = json.loads(self.body)
+                if not self.model:
+                    self.model = str(parsed[0]) if parsed and len(parsed) > 0 else ""
+                if not self.snapshot:
+                    self.snapshot = (
+                        str(parsed[4])
+                        if len(parsed) > 4 and isinstance(parsed[4], str)
+                        else ""
+                    )
+            except Exception:
+                pass
 
 
 class RequestCaptureService:
@@ -94,7 +102,11 @@ class RequestCaptureService:
             snapshot=snapshot,
         )
         captured = CapturedRequest(
-            url=template.url, headers=dict(template.headers), body=body
+            url=template.url,
+            headers=dict(template.headers),
+            body=body,
+            model=model,
+            snapshot=snapshot,
         )
         logger.info(
             "Hook 拦截成功: model=%s, snapshot=%s chars, body=%s chars",

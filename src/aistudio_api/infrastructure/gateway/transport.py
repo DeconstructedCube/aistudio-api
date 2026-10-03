@@ -94,6 +94,11 @@ class XHRStreamTransport:
     def __init__(self) -> None:
         self._queues: dict[str, asyncio.Queue[dict[str, object]]] = {}
 
+    def abort_all_streams(self, reason: str = "account_switched") -> None:
+        """Immediately abort all active in-flight streaming queues."""
+        for q in list(self._queues.values()):
+            with suppress(Exception):
+                q.put_nowait({"type": "error", "message": reason})
     def _ensure_page_binding(self, page: CDPPage) -> None:
         if getattr(page, "has_stream_binding", False):
             return
@@ -126,6 +131,12 @@ class XHRStreamTransport:
 
             page.cdp.on("Runtime.bindingCalled", listener)
 
+        # Hook navigation / context destruction to fail-fast ongoing streams
+        if hasattr(page, "cdp") and hasattr(page.cdp, "on"):
+            def on_nav(_params: dict[str, object]) -> None:
+                self.abort_all_streams("page_navigated")
+
+            page.cdp.on("Runtime.executionContextDestroyed", on_nav)
     async def send_hooked_request(
         self,
         page: CDPPage,

@@ -338,10 +338,6 @@ def _decode_wire_value(value: object) -> object:
         return value[2]
     return [_decode_wire_value(item) for item in value]
 
-
-_decode_wire_argument_pairs = _decode_wire_struct
-
-
 def parse_usage_metadata(raw_usage: object) -> dict[str, object]:
     if not isinstance(raw_usage, list):
         return {}

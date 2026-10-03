@@ -65,7 +65,10 @@ class AIStudioClient:
         self._replay_service = RequestReplayService(session=self._session)
 
         self._streaming_gateway = StreamingGateway(session=self._session)
-
+    @property
+    def session(self) -> BrowserSession:
+        """Expose active browser session facade."""
+        return self._session
     async def warmup(self) -> None:
         """预热浏览器后端并加载 AI Studio 页面及捕获 BotGuard 服务。"""
         if self._session is not None:

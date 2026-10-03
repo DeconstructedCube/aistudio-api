@@ -134,7 +134,6 @@ async def test_session_capture_template_breaks_on_dead_proc():
     mock_page.wait_for_timeout = AsyncMock()
     session.ensure_botguard_service = AsyncMock(return_value=mock_page)
     session._click_run_button = AsyncMock(return_value=True)
-
     with pytest.raises(
         RuntimeError, match="Browser process died during template capture"
     ):
