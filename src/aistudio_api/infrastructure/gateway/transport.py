@@ -131,12 +131,6 @@ class XHRStreamTransport:
 
             page.cdp.on("Runtime.bindingCalled", listener)
 
-        # Hook navigation / context destruction to fail-fast ongoing streams
-        if hasattr(page, "cdp") and hasattr(page.cdp, "on"):
-            def on_nav(_params: dict[str, object]) -> None:
-                self.abort_all_streams("page_navigated")
-
-            page.cdp.on("Runtime.executionContextDestroyed", on_nav)
     async def send_hooked_request(
         self,
         page: CDPPage,

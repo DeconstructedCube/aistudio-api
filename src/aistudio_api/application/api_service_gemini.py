@@ -529,6 +529,7 @@ def _build_gemini_streaming_response(
                 normalized = normalize_gemini_request(req, model_path)
                 try:
                     async for event_type, text in client.stream_generate_content(
+                        model=normalized.model,
                         capture_prompt=normalized.capture_prompt,
                         capture_images=normalized.capture_images,
                         contents=normalized.contents,

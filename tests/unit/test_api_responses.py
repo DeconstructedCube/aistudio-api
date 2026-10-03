@@ -178,3 +178,41 @@ async def test_handle_attempt_exception_retries_ambiguous_rpc_404_in_place():
             client=mock_client,
             has_yielded_data=True,
         )
+
+@pytest.mark.asyncio
+async def test_build_gemini_streaming_response_passes_requested_model():
+    from unittest.mock import MagicMock
+
+    from aistudio_api.api.schemas import (
+        GeminiContent,
+        GeminiGenerateContentRequest,
+        GeminiPart,
+    )
+    from aistudio_api.application.api_service_gemini import (
+        _build_gemini_streaming_response,
+    )
+    from aistudio_api.infrastructure.gateway.client import AIStudioClient
+
+    passed_model = None
+
+    async def fake_stream_generate_content(*args, **kwargs):
+        nonlocal passed_model
+        passed_model = kwargs.get("model")
+        yield ("chunk", b"data: test")
+        yield ("finish_reason", "STOP")
+
+    mock_client = MagicMock(spec=AIStudioClient)
+    mock_client.stream_generate_content = MagicMock(side_effect=fake_stream_generate_content)
+
+    req = GeminiGenerateContentRequest(
+        contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])]
+    )
+    resp = _build_gemini_streaming_response(
+        client=mock_client,
+        req=req,
+        model_path="gemini-2.5-pro",
+    )
+
+    chunks = [chunk async for chunk in resp.body_iterator]
+    assert len(chunks) > 0
+    assert passed_model == "models/gemini-2.5-pro"
