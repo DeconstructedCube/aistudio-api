@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import secrets
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -163,29 +165,31 @@ async def validation_exception_handler(
 @app.middleware("http")
 async def logging_and_dump_middleware(request, call_next):
     """统一请求生命周期日志与请求转储 (DEBUG) 中间件。"""
-    import secrets
-    import time
 
     start_time = time.perf_counter()
-    req_id = f"req_{secrets.token_hex(4)}"
     path = request.url.path
 
     is_static = path.startswith(("/static", "/assets")) or path in ("/favicon.ico",)
     dump_enabled = is_dump_requests_enabled() and not is_static
 
+    req_id = ""
     body_text = None
+    client_str = ""
+    headers_dict = None
+    query_dict = None
+
     if dump_enabled:
+        req_id = f"req_{secrets.token_hex(4)}"
+        client_str = (
+            f"{request.client.host}:{request.client.port}" if request.client else "unknown"
+        )
+        headers_dict = dict(request.headers)
+        query_dict = dict(request.query_params)
         try:
             body_bytes = await request.body()
             body_text = body_bytes.decode("utf-8", errors="replace")
         except Exception:
             body_text = "(failed to read request body)"
-
-    client_str = (
-        f"{request.client.host}:{request.client.port}" if request.client else "unknown"
-    )
-    headers_dict = dict(request.headers)
-    query_dict = dict(request.query_params)
 
     try:
         response = await call_next(request)
@@ -197,8 +201,8 @@ async def logging_and_dump_middleware(request, call_next):
                 method=request.method,
                 url=str(request.url),
                 client=client_str,
-                headers=headers_dict,
-                query_params=query_dict,
+                headers=headers_dict or {},
+                query_params=query_dict or {},
                 body_text=body_text,
                 status_code=500,
                 elapsed_ms=elapsed_ms,
@@ -242,8 +246,8 @@ async def logging_and_dump_middleware(request, call_next):
             method=request.method,
             url=str(request.url),
             client=client_str,
-            headers=headers_dict,
-            query_params=query_dict,
+            headers=headers_dict or {},
+            query_params=query_dict or {},
             body_text=body_text,
             status_code=response.status_code,
             elapsed_ms=elapsed_ms,

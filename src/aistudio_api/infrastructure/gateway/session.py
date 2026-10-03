@@ -538,7 +538,10 @@ class BrowserSession:
             )
             try:
                 body_val = base.get("body")
-                if isinstance(body_val, str) and body_val.startswith("["):
+                if isinstance(body_val, str) and body_val.startswith('["models/') and "," in body_val:
+                    first_comma = body_val.find(",")
+                    base["body"] = f'["{normalized_model}"' + body_val[first_comma:]
+                elif isinstance(body_val, str) and body_val.startswith("["):
                     body_list = json.loads(body_val)
                     if isinstance(body_list, list) and len(body_list) > 0:
                         body_list[0] = normalized_model
@@ -672,7 +675,11 @@ class BrowserSession:
     async def cleanup_stream_page(self) -> None:
         """Execute post-stream DOM cleanup and throttled V8 garbage collection."""
         self._stream_cleanup_count += 1
-        if self._page is not None and not self._page.is_closed():
+        if (
+            self._page is not None
+            and not self._page.is_closed()
+            and (self._in_flight <= 0 or (self._stream_cleanup_count % 5 == 0))
+        ):
             with suppress(Exception):
                 await self._page.evaluate(DOM_GC_CLEANUP_JS)
             if self._in_flight <= 0 and (self._stream_cleanup_count % 10 == 0):
@@ -760,21 +767,6 @@ class BrowserSession:
         await self._goto_aistudio(self._page)
         await self._install_hooks(self._page)
         return self._page
-
-    async def _prepare_streaming(self) -> tuple[CDPPage, str, dict[str, str]]:
-        page = await self.ensure_botguard_service()
-        from aistudio_api.config import DEFAULT_TEXT_MODEL
-
-        tpl = await self.capture_template(DEFAULT_TEXT_MODEL)
-        raw_url = str(tpl.get("url") or "")
-        raw_headers = tpl.get("headers")
-        headers_dict = raw_headers if isinstance(raw_headers, dict) else {}
-        headers = {
-            str(k): str(v)
-            for k, v in headers_dict.items()
-            if str(k).lower() not in ("host", "content-length")
-        }
-        return page, raw_url, headers
 
     async def _bootstrap_google_session(self, page: CDPPage) -> None:
         await page.goto(

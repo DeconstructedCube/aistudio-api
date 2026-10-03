@@ -236,3 +236,70 @@ def test_update_account_email(tmp_path):
 
     # 重复更新相同邮箱返回 False
     assert store.update_account_email(acc.id, "real_user@gmail.com") is False
+
+
+@pytest.mark.asyncio
+async def test_delete_cookie_group_migrates_active_account(tmp_path):
+    """测试批量删除包含当前活跃账号的 Cookie 组时，正确切换活跃账号与浏览器会话。"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from aistudio_api.api.routes_accounts import delete_cookie_group
+    from aistudio_api.api.state import RuntimeState
+    from aistudio_api.application.account_service import AccountService
+    from aistudio_api.infrastructure.account.account_store import AccountStore
+
+    store = AccountStore(accounts_dir=tmp_path / "accounts_grp_test")
+    svc = AccountService(store)
+
+    # 创建属于 group1 的两个子账号 (u/0 和 u/1)
+    acc1 = svc.save_account_from_cookies(
+        name="Acc1",
+        email="acc1@gmail.com",
+        storage_state={"cookies": []},
+        auth_user="0",
+        cookie_id="group_test_123",
+    )
+    svc.save_account_from_cookies(
+        name="Acc2",
+        email="acc2@gmail.com",
+        storage_state={"cookies": []},
+        auth_user="1",
+        cookie_id="group_test_123",
+    )
+    # 创建属于 group2 的备用账号
+    acc3 = svc.save_account_from_cookies(
+        name="Acc3",
+        email="acc3@gmail.com",
+        storage_state={"cookies": []},
+        auth_user="0",
+        cookie_id="group_test_456",
+    )
+
+    svc.set_active_account(acc1.id)
+    active_before = svc.get_active_account()
+    assert active_before is not None and active_before.id == acc1.id
+
+    mock_session = MagicMock()
+    mock_session.switch_auth = AsyncMock()
+    mock_client = MagicMock()
+    mock_client._session = mock_session
+
+    state = RuntimeState(
+        client=mock_client,
+        account_service=svc,
+    )
+
+    # 删除 group_test_123 (包含当前 active 的 acc1)
+    res = await delete_cookie_group(
+        cookie_id="group_test_123",
+        account_service=svc,
+        runtime_state=state,
+    )
+    assert res == {"deleted": 2}
+
+    # 活跃账号应当自动切换至剩余账号 acc3
+    new_active = svc.get_active_account()
+    assert new_active is not None
+    assert new_active.id == acc3.id
+    # 且触发了 browser_session.switch_auth
+    assert mock_session.switch_auth.called

@@ -33,7 +33,6 @@ def test_multimodal_zero_disk_io_pipeline():
         }
     )
     normalized = normalize_gemini_request(req, "gemini-3.5-flash")
-    assert normalized.cleanup_paths == []
     part0 = normalized.contents[0].parts[0]
     assert part0.inline_data == ("image/png", fake_base64)
     wire_part = part0.to_wire()

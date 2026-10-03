@@ -216,3 +216,51 @@ async def test_build_gemini_streaming_response_passes_requested_model():
     chunks = [chunk async for chunk in resp.body_iterator]
     assert len(chunks) > 0
     assert passed_model == "models/gemini-2.5-pro"
+
+
+@pytest.mark.asyncio
+async def test_streaming_metadata_event_does_not_block_failover():
+    """验证在仅接收到 thought_signature 等内部元数据事件时发生异常，不会误判为已发送数据而阻断重试。"""
+    from unittest.mock import MagicMock
+
+    from aistudio_api.api.schemas import (
+        GeminiContent,
+        GeminiGenerateContentRequest,
+        GeminiPart,
+    )
+    from aistudio_api.application.api_service_gemini import (
+        _build_gemini_streaming_response,
+    )
+    from aistudio_api.domain.errors import RequestError
+    from aistudio_api.infrastructure.gateway.client import AIStudioClient
+
+    attempt_count = 0
+
+    async def fake_stream_generate_content(*args, **kwargs):
+        nonlocal attempt_count
+        attempt_count += 1
+        if attempt_count == 1:
+            # 首次尝试：仅产生内部元数据事件，尚未发出实际正文 chunk，随即遇到 204/抖动异常
+            yield ("thought_signature", "sig_early")
+            raise RequestError(204, "No content")
+        # 第二次尝试：正常流式输出
+        yield ("body", "Hello world after retry")
+        yield ("finish_reason", "STOP")
+
+    mock_client = MagicMock(spec=AIStudioClient)
+    mock_client.stream_generate_content = MagicMock(side_effect=fake_stream_generate_content)
+    mock_client.clear_templates = MagicMock()
+
+    req = GeminiGenerateContentRequest(
+        contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])]
+    )
+    resp = _build_gemini_streaming_response(
+        client=mock_client,
+        req=req,
+        model_path="gemini-3.7-flash",
+    )
+
+    chunks = [chunk async for chunk in resp.body_iterator]
+    # 验证重试成功完成
+    assert attempt_count == 2
+    assert any("Hello world after retry" in str(c) for c in chunks)

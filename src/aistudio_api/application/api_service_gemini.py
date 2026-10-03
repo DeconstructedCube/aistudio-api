@@ -24,7 +24,6 @@ from aistudio_api.application.account_orchestrator import (
     try_switch_account,
 )
 from aistudio_api.application.chat_service import (
-    cleanup_files,
     normalize_gemini_request,
 )
 from aistudio_api.domain.errors import (
@@ -380,9 +379,7 @@ async def handle_gemini_generate_content(
             ):
                 continue
             raise
-        finally:
-            if normalized is not None and not stream:
-                cleanup_files(normalized.cleanup_paths)
+
 
     raise HTTPException(
         429,
@@ -545,7 +542,6 @@ def _build_gemini_streaming_response(
                         sanitize_plain_text=False,
                         force_refresh_capture=stream_attempt > 0,
                     ):
-                        has_yielded_data = True
                         if event_type == "usage":
                             final_usage = text if isinstance(text, dict) else None
                         elif event_type == "finish_reason":
@@ -568,6 +564,7 @@ def _build_gemini_streaming_response(
                             )
                             buffered_thought_sig = None
                             if chunk:
+                                has_yielded_data = True
                                 yield chunk
                     break
                 except Exception as exc:
@@ -600,9 +597,7 @@ def _build_gemini_streaming_response(
             )
         except Exception as exc:
             yield format_sse_error(exc)
-        finally:
-            if normalized is not None:
-                cleanup_files(normalized.cleanup_paths)
+
 
     return StreamingResponse(
         stream_response(),

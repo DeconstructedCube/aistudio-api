@@ -230,11 +230,6 @@ class AistudioGenerationConfig:
         self._ensure_len(idx + 1)
         self.values[idx] = value
 
-    def clear_gemma_thinking_budget(self):
-        idx = GenerationConfigIndex.THINKING_CONFIG
-        if len(self.values) > idx:
-            self.values[idx] = None
-
     def enable_default_thinking(self):
         if self.thinking_config is None:
             self.thinking_config = AistudioThinkingConfig.default().to_wire()

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import dataclass
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL
@@ -22,21 +21,6 @@ class CapturedRequest:
     body: str
     model: str = ""
     snapshot: str = ""
-
-    def __post_init__(self):
-        if not self.model or not self.snapshot:
-            try:
-                parsed = json.loads(self.body)
-                if not self.model:
-                    self.model = str(parsed[0]) if parsed and len(parsed) > 0 else ""
-                if not self.snapshot:
-                    self.snapshot = (
-                        str(parsed[4])
-                        if len(parsed) > 4 and isinstance(parsed[4], str)
-                        else ""
-                    )
-            except Exception:
-                pass
 
 
 class RequestCaptureService:
@@ -136,6 +120,7 @@ class RequestCaptureService:
                 url=str(captured.get("url") or ""),
                 headers=headers,
                 body=str(captured.get("body") or ""),
+                model=model,
             )
             self._templates[model] = template
             logger.info("Hook 模板已就绪并缓存: model=%s", model)

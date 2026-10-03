@@ -214,16 +214,41 @@ async def delete_cookie_group(
     runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> dict[str, int]:
     """按 Cookie 组批量删除该 Cookie 下的所有子账号。"""
+    active_account = account_service.get_active_account()
+    active_id = active_account.id if active_account is not None else None
+    active_deleted = False
+
     accounts = account_service.list_accounts()
     deleted_count = 0
     rotator = runtime_state.rotator
     for a in accounts:
         acc_cid = getattr(a, "cookie_id", None) or f"cookie_{a.created_at[:16]}"
-        if acc_cid == cookie_id and account_service.delete_account(a.id):
-            deleted_count += 1
-            if rotator:
-                rotator.remove_account(a.id)
-            log.info("已删除组 %s 下的子账号 %s", cookie_id, a.id)
+        if acc_cid == cookie_id:
+            if a.id == active_id:
+                active_deleted = True
+            if account_service.delete_account(a.id):
+                deleted_count += 1
+                if rotator:
+                    rotator.remove_account(a.id)
+                log.info("已删除组 %s 下的子账号 %s", cookie_id, a.id)
+
+    if active_deleted:
+        remaining_accounts = account_service.list_accounts()
+        new_active = remaining_accounts[0] if remaining_accounts else None
+        browser_session = (
+            runtime_state.client._session if runtime_state.client else None
+        )
+        if new_active is not None:
+            account_service.set_active_account(new_active.id)
+            if browser_session is not None:
+                new_auth_path = account_service.get_account_auth_path(new_active.id)
+                await browser_session.switch_auth(
+                    str(new_auth_path) if new_auth_path else None
+                )
+        else:
+            if browser_session is not None:
+                await browser_session.switch_auth(None)
+
     return {"deleted": deleted_count}
 
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -32,7 +30,6 @@ class NormalizedGeminiRequest:
     safety_settings: list[list[object]] | None
     capture_prompt: str
     capture_images: list[str | tuple[str, str]] | None
-    cleanup_paths: list[str]
     tool_config: list[object] | None = None
     temperature: float | None = None
     top_p: float | None = None
@@ -55,28 +52,7 @@ SCHEMA_TYPE_CODES = {
 }
 
 
-def _encode_wire_value(val: object) -> object:
-    if val is None:
-        return [0]
-    if isinstance(val, bool):
-        return [None, None, None, val]
-    if isinstance(val, (int, float)):
-        return [None, val]
-    if isinstance(val, str):
-        return [None, None, val]
-    if isinstance(val, dict):
-        entries = [[k, _encode_wire_value(v)] for k, v in val.items()]
-        return [None, None, None, None, entries]
-    if isinstance(val, (list, tuple)):
-        items = [_encode_wire_value(item) for item in val]
-        return [None, None, None, None, None, [items]]
-    return val
 
-
-def cleanup_files(paths: list[str]):
-    for path in paths:
-        with contextlib.suppress(OSError):
-            Path(path).unlink()
 
 
 def _resolve_schema_type_code(schema: dict[str, object]) -> tuple[int, str, bool]:
@@ -570,7 +546,7 @@ def _normalize_gemini_safety_settings(
 
 
 def normalize_gemini_request(
-    req: GeminiGenerateContentRequest, requested_model: str, tmp_dir: str | None = None
+    req: GeminiGenerateContentRequest, requested_model: str
 ) -> NormalizedGeminiRequest:
     if not req.contents:
         raise ValueError("contents is required")
@@ -581,7 +557,6 @@ def normalize_gemini_request(
         else f"models/{requested_model}"
     )
     contents: list[AistudioContent] = []
-    cleanup_paths: list[str] = []
     capture_prompt = "你好"
     capture_images: list[str | tuple[str, str]] = []
 
@@ -686,7 +661,10 @@ def normalize_gemini_request(
         system_instruction = AistudioContent(
             role=req.systemInstruction.role or "user",
             parts=[
-                AistudioPart(text=part.text)
+                AistudioPart(
+                    text=part.text,
+                    thought_signature=part.thoughtSignature,
+                )
                 if part.text is not None
                 else AistudioPart(
                     inline_data=(part.inlineData.mimeType, part.inlineData.data)
@@ -725,15 +703,19 @@ def normalize_gemini_request(
             if tool.urlContext is not None:
                 builtin_tool_names.append("url_context")
             if builtin_tool_names:
-                tools.extend(
-                    build_tools_from_names(
-                        builtin_tool_names,
-                        model=model,
-                        is_image_model=model_defaults.is_image_model,
-                        drop_unsupported=model_defaults.drop_unsupported_params,
-                    )
+                filtered_builtin = _drop_covered_builtin_tools(
+                    builtin_tool_names, seen_builtin
                 )
-                seen_builtin.update(builtin_tool_names)
+                if filtered_builtin:
+                    tools.extend(
+                        build_tools_from_names(
+                            filtered_builtin,
+                            model=model,
+                            is_image_model=model_defaults.is_image_model,
+                            drop_unsupported=model_defaults.drop_unsupported_params,
+                        )
+                    )
+                    seen_builtin.update(filtered_builtin)
         if all_function_declarations:
             tools.append([None, all_function_declarations])
 
@@ -863,7 +845,6 @@ def normalize_gemini_request(
         else None,
         capture_prompt=capture_prompt,
         capture_images=capture_images or None,
-        cleanup_paths=cleanup_paths,
         temperature=generation_config.temperature if generation_config else None,
         top_p=generation_config.topP if generation_config else None,
         top_k=generation_config.topK if generation_config else None,

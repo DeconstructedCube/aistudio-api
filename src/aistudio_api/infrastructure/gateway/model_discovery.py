@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -150,9 +152,40 @@ class ModelDiscoveryService:
                     logger.debug("通过页面 XHR 拉取模型列表失败: %s", e)
 
             # 2. 次选通过直接 HTTP 协议拉取
-            if cookies:
+            effective_cookies = cookies
+            effective_auth_user = auth_user
+            if not effective_cookies:
+                auth_file = getattr(session, "_auth_file", None) if session is not None else None
+                if not auth_file:
+                    try:
+                        from aistudio_api.infrastructure.account.account_store import (
+                            AccountStore,
+                        )
+                        store = AccountStore()
+                        active = store.get_active_account()
+                        if active:
+                            auth_path = store.get_auth_path_optional(active.id, require_exists=True)
+                            auth_file = str(auth_path) if auth_path else None
+                            effective_auth_user = active.auth_user or "0"
+                    except Exception:
+                        pass
+                if auth_file and Path(auth_file).is_file():
+                    try:
+                        data = json.loads(Path(auth_file).read_text(encoding="utf-8"))
+                        raw_cookies = data.get("cookies") or []
+                        effective_cookies = {
+                            str(c.get("name") or ""): str(c.get("value") or "")
+                            for c in raw_cookies
+                            if c.get("name")
+                        }
+                        if session is not None and hasattr(session, "get_current_auth_user"):
+                            effective_auth_user = session.get_current_auth_user()
+                    except Exception:
+                        pass
+
+            if effective_cookies:
                 try:
-                    models = await self._fetch_via_http(cookies, auth_user)
+                    models = await self._fetch_via_http(effective_cookies, effective_auth_user)
                     if models:
                         self._cached_models = models
                         self._last_fetched_at = time.time()

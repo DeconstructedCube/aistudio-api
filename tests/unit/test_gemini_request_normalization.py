@@ -797,3 +797,45 @@ def test_unboxed_single_pair_decoding():
 
     unboxed = ["path", [None, None, "test.txt"]]
     assert _decode_wire_struct(unboxed) == {"path": "test.txt"}
+
+
+def test_normalize_gemini_request_preserves_system_instruction_thought_signature():
+    """Verify thought_signature is preserved on systemInstruction text parts."""
+    req = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "Hello"}]}],
+            "systemInstruction": {
+                "role": "user",
+                "parts": [
+                    {"text": "System prompt with thought signature", "thoughtSignature": "sys_sig_123"}
+                ],
+            },
+        }
+    )
+    normalized = normalize_gemini_request(req, "gemini-3.7-flash")
+    assert normalized.system_instruction is not None
+    assert len(normalized.system_instruction.parts) == 1
+    sys_part = normalized.system_instruction.parts[0]
+    assert sys_part.text == "System prompt with thought signature"
+    assert sys_part.thought_signature == "sys_sig_123"
+
+
+def test_normalize_gemini_request_deduplicates_and_covers_builtin_tools():
+    """Verify multiple/duplicate search declarations are deduplicated and covered properly."""
+    req = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "Hello"}]}],
+            "tools": [
+                {"googleSearch": {}},
+                {"googleSearch": {}},
+                {"codeExecution": {}},
+            ],
+        }
+    )
+    normalized = normalize_gemini_request(req, "gemini-3.7-flash")
+    # tools should have codeExecution and googleSearch, but googleSearch must not be duplicated!
+    assert normalized.tools is not None
+    # code_execution = [[]], google_search = [None, None, None, [None, [[]]]]
+    assert len(normalized.tools) == 2
+    assert [[]] in normalized.tools
+    assert [None, None, None, [None, [[]]]] in normalized.tools
