@@ -215,15 +215,39 @@ async def delete_cookie_group(
 ) -> dict[str, int]:
     """按 Cookie 组批量删除该 Cookie 下的所有子账号。"""
     accounts = account_service.list_accounts()
+    active_account = account_service.get_active_account()
+    active_deleted = False
     deleted_count = 0
     rotator = runtime_state.rotator
     for a in accounts:
         acc_cid = getattr(a, "cookie_id", None) or f"cookie_{a.created_at[:16]}"
-        if acc_cid == cookie_id and account_service.delete_account(a.id):
+        if acc_cid != cookie_id:
+            continue
+        if active_account is not None and a.id == active_account.id:
+            active_deleted = True
+        if account_service.delete_account(a.id):
             deleted_count += 1
             if rotator:
                 rotator.remove_account(a.id)
             log.info("已删除组 %s 下的子账号 %s", cookie_id, a.id)
+
+    if active_deleted:
+        remaining = account_service.list_accounts()
+        replacement = remaining[0] if remaining else None
+        browser_session = (
+            runtime_state.client._session if runtime_state.client else None
+        )
+        if replacement is not None:
+            account_service.set_active_account(replacement.id)
+        if browser_session is not None:
+            replacement_path = (
+                account_service.get_account_auth_path(replacement.id)
+                if replacement is not None
+                else None
+            )
+            await browser_session.switch_auth(
+                str(replacement_path) if replacement_path else None
+            )
     return {"deleted": deleted_count}
 
 
@@ -312,6 +336,7 @@ async def probe_and_import(
         probe_google_accounts_infinite,
     )
 
+    had_active_account = account_service.get_active_account() is not None
     probed = await probe_google_accounts_infinite(req.cookies)
     if not probed:
         raise HTTPException(status_code=400, detail="未探测到有效已登录 Google 账号")
@@ -328,6 +353,11 @@ async def probe_and_import(
         cookie_id=cid,
     )
     imported_accounts = [to_account_response(account) for account in metas]
+
+    if not had_active_account and metas and runtime_state.client is not None:
+        browser_session = runtime_state.client._session
+        if browser_session is not None:
+            await account_service.activate_account(metas[0].id, browser_session)
 
     log.info("探活与导入完成: 成功导入 %d 个账号", len(imported_accounts))
     return ProbeAndImportResponse(

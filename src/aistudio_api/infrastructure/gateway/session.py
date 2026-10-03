@@ -71,6 +71,15 @@ def _is_login_page_url(url: str | None) -> bool:
     )
 
 
+def _is_aistudio_page_url(url: str | None) -> bool:
+    if not url:
+        return False
+    try:
+        return (urlsplit(url).hostname or "").lower() == "aistudio.google.com"
+    except Exception:
+        return False
+
+
 DEFAULT_BOOTSTRAP_TEMPLATE = {
     "url": "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent",
     "headers": {
@@ -284,7 +293,7 @@ class BrowserSession:
     async def ensure_hook_page(self) -> bool:
         """Ensure page is navigated to AI Studio and hooks are installed."""
         page = await self.ensure_context()
-        if "aistudio.google.com" not in (page.url or ""):
+        if not _is_aistudio_page_url(page.url):
             await self._goto_aistudio(page)
         await self._install_hooks(page)
         return True
@@ -302,7 +311,7 @@ class BrowserSession:
             return self._page
 
         page = await self.ensure_context()
-        if "aistudio.google.com" not in (page.url or ""):
+        if not _is_aistudio_page_url(page.url):
             await self._goto_aistudio(page)
         await self._install_hooks(page)
 
@@ -887,6 +896,10 @@ class BrowserSession:
             raise last_exc
 
     async def _install_hooks(self, page: CDPPage) -> None:
+        if _is_login_page_url(page.url):
+            raise SessionExpiredError(
+                f"Cookie 认证失效，当前页面为 Google 登录页: {page.url}"
+            )
         result = await page.evaluate(INSTALL_HOOKS_JS)
         if result == "already_hooked":
             self._hooks_installed = True
@@ -906,6 +919,10 @@ class BrowserSession:
                 self._hooks_installed = True
                 return
         page_url = page.url if page else "(no page)"
+        if _is_login_page_url(page_url):
+            raise SessionExpiredError(
+                f"Cookie 认证失效，当前页面为 Google 登录页: {page_url}"
+            )
         page_title = await page.title() if page else ""
         raise RuntimeError(
             f"Hook install failed: {result} (url={page_url}, title={page_title!r})"
