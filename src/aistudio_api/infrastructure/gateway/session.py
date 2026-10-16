@@ -103,6 +103,7 @@ class BrowserSession:
         self._template_lock = asyncio.Lock()
         self._snapshot_lock = asyncio.Lock()
         self._in_flight: int = 0
+        self._last_activity_time: float = time.time()
         self._switching: bool = False
         self._switch_event = asyncio.Event()
         self._switch_event.set()
@@ -717,6 +718,11 @@ class BrowserSession:
             profile_path = Path(profile_dir)
             profile_path.mkdir(parents=True, exist_ok=True)
 
+        # 冷启动浏览器需 ~20s，期间 _proc 已非空但请求尚未进入 request_scope()；
+        # 不刷新时间戳的话，空闲回收器会按上一次请求的旧值判定"空闲超时"，
+        # 把刚拉起的进程直接回收，而失败路径永远走不到 request_scope()，
+        # 时间戳无法自愈 —— 服务就此瘫痪直到重启。
+        self._last_activity_time = time.time()
         self._proc = launch_chromium_process(
             port=self.port,
             user_data_dir=profile_dir,
