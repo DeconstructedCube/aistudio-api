@@ -102,16 +102,13 @@ class RequestCaptureService:
         return captured
 
     async def _ensure_template(self, model: str) -> CapturedRequest:
-        ctx = self._session.active_context
-        ctx_id = ctx.context_id if ctx else None
-        if self._active_ctx_id != ctx_id:
-            self._templates.clear()
-            self._active_ctx_id = ctx_id
-
-        if model in self._templates:
-            return self._templates[model]
-
         async with self._lock:
+            # 冷启动或切号完成后再读取模板，避免缓存占位模板或旧会话模板。
+            ctx = await self._session.ensure_ready()
+            if self._active_ctx_id != ctx.context_id:
+                self._templates.clear()
+                self._active_ctx_id = ctx.context_id
+
             if model in self._templates:
                 return self._templates[model]
 

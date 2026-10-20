@@ -247,18 +247,29 @@ async def handle_attempt_exception(
 
     if is_browser_session_hang_error(exc):
         logger.warning(
-            "模板或 BotGuard 捕获超时 (%d/%d): %s，切换账号重试",
+            "浏览器请求或会话异常 (%d/%d): %s",
             attempt + 1,
             MAX_RETRIES,
             exc,
         )
         client.clear_templates()
-        if not has_yielded_data and await try_switch_account(
-            model=target_model, failed_account_id=failed_id, is_auth_error=False
-        ):
-            logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
-            return True
-        if attempt < 2 and not has_yielded_data:
+        if not has_yielded_data and attempt < MAX_RETRIES - 1:
+            try:
+                if await try_switch_account(
+                    model=target_model,
+                    failed_account_id=failed_id,
+                    is_auth_error=False,
+                ):
+                    logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
+                    return True
+            except (RuntimeError, TimeoutError) as recovery_error:
+                logger.warning(
+                    "会话恢复失败 (%d/%d)，关闭浏览器后重试: %s",
+                    attempt + 1,
+                    MAX_RETRIES,
+                    recovery_error,
+                )
+                exc = recovery_error
             if client._session is not None:
                 await client._session._close_internal()
             return True
