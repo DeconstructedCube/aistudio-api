@@ -223,7 +223,11 @@ class BrowserSession:
                 else:
                     new_page = await self._cdp_client.connect_page(block_assets=True)
 
-                await load_cookies_to_page(new_page, auth_file)
+                await load_cookies_to_page(
+                    new_page,
+                    auth_file,
+                    switching_account=old_context is not None,
+                )
                 await navigate_to_aistudio(
                     new_page,
                     auth_user=target_auth_user,
@@ -231,7 +235,9 @@ class BrowserSession:
                 )
 
                 async def _reload_cb(page: CDPPage) -> bool:
-                    return await load_cookies_to_page(page, auth_file)
+                    return await load_cookies_to_page(
+                        page, auth_file, force_inject=True
+                    )
 
                 snap_key, base_template = await bootstrap_botguard_and_template(
                     new_page,
@@ -482,6 +488,12 @@ class BrowserSession:
         ):
             with suppress(Exception):
                 await target_page.evaluate(DOM_GC_CLEANUP_JS)
+            if self._stream_cleanup_count % 5 == 0 and self._auth_file:
+                # Google rolls __Secure-1PSIDTS inside the browser every ~15
+                # minutes. Without this write-back a restart re-seeds the
+                # session from hours-old credentials and immediately 403s.
+                with suppress(Exception):
+                    await save_browser_cookies(target_page, self._auth_file)
             if self._stream_cleanup_count % 10 == 0:
                 with suppress(Exception):
                     await target_page.collect_garbage()
@@ -528,7 +540,9 @@ class BrowserSession:
 
     async def reload_current_account_cookies(self, page: CDPPage | None = None) -> bool:
         target = page or (self.active_context.page if self.active_context else None)
-        return bool(target and await load_cookies_to_page(target, self._auth_file))
+        return bool(
+            target and await load_cookies_to_page(target, self._auth_file, force_inject=True)
+        )
 
     async def _save_cookies(
         self,
