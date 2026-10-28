@@ -300,11 +300,25 @@ async def logging_and_dump_middleware(request, call_next):
 static_dir = Path(__file__).resolve().parents[1] / "static"
 index_html_path = static_dir / "index.html"
 
+class CachedStaticFiles(StaticFiles):
+    """带缓存控制的静态资源处理器：
+    - 带 hash 的构建产物：设置 1 年强缓存并标记 immutable
+    - 未带 hash 的文件：设置 no-cache, must-revalidate 强制协商缓存
+    """
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if "-" in path:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
 if static_dir.is_dir():
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    app.mount("/static", CachedStaticFiles(directory=str(static_dir)), name="static")
     assets_dir = static_dir / "assets"
     if assets_dir.is_dir():
-        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+        app.mount("/assets", CachedStaticFiles(directory=str(assets_dir)), name="assets")
 
 
 @app.get("/auth/check")
