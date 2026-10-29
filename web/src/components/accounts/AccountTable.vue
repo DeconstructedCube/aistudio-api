@@ -117,16 +117,24 @@ function toggleAllModels() {
   forceExpandAllModels.value = !forceExpandAllModels.value
 }
 
-// 美西午夜刷新倒计时计算
+// 美西午夜刷新倒计时计算 (自动适配 PST/PDT 夏令时)
 const hoursUntilPacificMidnight = computed(() => {
   const now = new Date()
-  // 计算基于 UTC-8（美西冬令时/夏令时标准区间）
-  const utcNow = now.getTime() + now.getTimezoneOffset() * 60000
-  const pacificOffsetHours = -8
-  const pacificNow = new Date(utcNow + 3600000 * pacificOffsetHours)
-  const hoursLeft = 23 - pacificNow.getHours()
-  const minutesLeft = 59 - pacificNow.getMinutes()
-  return `${hoursLeft} 小时 ${minutesLeft} 分`
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false,
+    }).formatToParts(now)
+    const h = Number(parts.find((p) => p.type === 'hour')?.value ?? 0) % 24
+    const m = Number(parts.find((p) => p.type === 'minute')?.value ?? 0)
+    return `${23 - h} 小时 ${59 - m} 分`
+  } catch {
+    const utcNow = now.getTime() + now.getTimezoneOffset() * 60000
+    const pacificNow = new Date(utcNow - 8 * 3600000)
+    return `${23 - pacificNow.getHours()} 小时 ${59 - pacificNow.getMinutes()} 分`
+  }
 })
 
 // 清理幽灵残留状态

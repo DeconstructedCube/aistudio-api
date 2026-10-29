@@ -136,17 +136,12 @@ class BrowserSession:
     async def request_scope(self):
         """追踪活动请求。"""
         self._in_flight += 1
-        ctx = self.active_context
-        if ctx is not None:
-            ctx.in_flight += 1
         try:
-            yield ctx
+            yield self.active_context
         finally:
             self._in_flight = max(0, self._in_flight - 1)
-            if ctx is not None:
-                ctx.decr_in_flight()
 
-    async def ensure_ready(self, timeout_s: float = 60.0) -> SessionContext:
+    async def ensure_ready(self, timeout_s: float = 120.0) -> SessionContext:
         """Wait until session is 100% READY."""
         if self._gate.is_ready() and self._gate.active_context is not None:
             return self._gate.active_context
@@ -200,6 +195,8 @@ class BrowserSession:
             self._auth_user = target_auth_user
             self._tier = target_tier
             self._profile_dir = derive_profile_dir(auth_file)
+            new_page: CDPPage | None = None
+            created_dedicated_tab = False
             try:
                 # Real browser mode
                 if self._proc is None or not self._proc.is_alive():
@@ -211,6 +208,7 @@ class BrowserSession:
                 # Blue-Green: always create a dedicated new tab when transitioning from an existing account
                 if old_context is not None:
                     new_page = await self._cdp_client.create_new_page(block_assets=True)
+                    created_dedicated_tab = True
                 else:
                     new_page = await self._cdp_client.connect_page(block_assets=True)
 
@@ -242,6 +240,7 @@ class BrowserSession:
                     base_template=base_template,
                     tier=target_tier,
                 )
+                self._cdp_client.page = new_page
 
                 if (
                     old_context is not None
@@ -267,6 +266,20 @@ class BrowserSession:
                 return new_context
 
             except Exception as exc:
+                if new_page is not None and (
+                    created_dedicated_tab
+                    or old_context is None
+                    or getattr(old_context.page, "target_id", None)
+                    != getattr(new_page, "target_id", None)
+                ):
+                    with suppress(Exception):
+                        if not new_page.is_closed():
+                            await new_page.close()
+                    if self._cdp_client is not None and getattr(
+                        new_page, "target_id", None
+                    ):
+                        with suppress(Exception):
+                            await self._cdp_client.close_target(new_page.target_id)
                 self._gate.set_failed(exc)
                 log.error("会话切换失败: %s", exc)
                 raise
@@ -275,13 +288,17 @@ class BrowserSession:
         self,
         context: SessionContext,
         active_target_id: str | None = None,
-        max_wait_s: float = 12.0,
+        max_wait_s: float = 600.0,
     ) -> None:
+        deadline = asyncio.get_running_loop().time() + max_wait_s
         while context.in_flight > 0:
-            with suppress(TimeoutError):
-                await asyncio.wait_for(context.drain_event.wait(), timeout=max_wait_s)
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0 or context.page.is_closed():
                 break
-            if context.page.is_closed():
+            with suppress(TimeoutError):
+                await asyncio.wait_for(
+                    context.drain_event.wait(), timeout=min(remaining, 2.0)
+                )
                 break
 
         with suppress(Exception):
@@ -353,7 +370,7 @@ class BrowserSession:
             for attempt in range(3):
                 try:
                     snapshot = await ctx.page.evaluate(
-                        SNAPSHOT_GENERATE_JS, args=content_hash, timeout_s=10.0
+                        SNAPSHOT_GENERATE_JS, args=content_hash, timeout_s=25.0
                     )
                     if snapshot and isinstance(snapshot, str) and len(snapshot) > 0:
                         return snapshot
@@ -382,15 +399,19 @@ class BrowserSession:
             if isinstance(hdrs_val, dict)
             else {}
         )
-        return await self._transport.send_hooked_request(
-            ctx.page,
-            url=captured_url,
-            headers=captured_headers,
-            body=body,
-            timeout_ms=timeout_ms,
-            auth_user=ctx.auth_user,
-            tier=ctx.tier,
-        )
+        ctx.in_flight += 1
+        try:
+            return await self._transport.send_hooked_request(
+                ctx.page,
+                url=captured_url,
+                headers=captured_headers,
+                body=body,
+                timeout_ms=timeout_ms,
+                auth_user=ctx.auth_user,
+                tier=ctx.tier,
+            )
+        finally:
+            ctx.decr_in_flight()
 
     async def send_streaming_request(
         self,
@@ -450,7 +471,7 @@ class BrowserSession:
             load_cookies_from_string,
         )
 
-        pw_cookies = load_cookies_from_string(cookie_string)
+        pw_cookies = await asyncio.to_thread(load_cookies_from_string, cookie_string)
         target_auth = auth_file or self._auth_file
         if not target_auth:
             return len(pw_cookies)
@@ -521,8 +542,21 @@ class BrowserSession:
             await self._close_internal()
 
     async def _close_internal(self) -> None:
+        active_ctx = self._gate.active_context
+        retiring = list(self._retiring_contexts)
         self._gate.reset()
         self._retiring_contexts.clear()
+        self._transport.close("session_closed")
+
+        for task in list(self._background_tasks):
+            if not task.done():
+                task.cancel()
+        self._background_tasks.clear()
+
+        for ctx in ([active_ctx] if active_ctx is not None else []) + retiring:
+            with suppress(Exception):
+                if not ctx.page.is_closed():
+                    await ctx.page.close()
 
         if self._cdp_client is not None:
             with suppress(Exception):

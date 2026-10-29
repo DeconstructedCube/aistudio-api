@@ -95,6 +95,7 @@ class StreamingGateway:
         latest_finish_reason: int | None = None
         latest_response_id: str | None = None
         raw_parts: list[str] = []
+        has_received_chunks = False
         status_code = 0
         async for event_type, payload in self._session.send_streaming_request(
             body=modified_body,
@@ -105,11 +106,13 @@ class StreamingGateway:
             if event_type == "status" and payload and not status_code:
                 status_code = int(str(payload))
             elif event_type == "chunk" and payload:
+                has_received_chunks = True
                 if isinstance(payload, bytes):
                     text_payload = payload.decode("utf-8", errors="replace")
                 else:
                     text_payload = str(payload)
-                raw_parts.append(text_payload)
+                if settings.dump_raw_response or status_code != 200:
+                    raw_parts.append(text_payload)
                 for parsed_chunk in parser.feed(text_payload):
                     usage = parse_chunk_usage(parsed_chunk)
                     if usage:
@@ -160,7 +163,7 @@ class StreamingGateway:
             if detail:
                 raise RequestError(status_code, detail)
             raise RequestError(status_code, "")
-        if not raw_parts:
+        if not has_received_chunks:
             raise BrowserTransportError(
                 "stream ended before any data arrived (connection truncated)"
             )

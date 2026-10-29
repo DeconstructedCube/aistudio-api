@@ -75,7 +75,11 @@ def stats_response() -> StatsResponse:
                         m_daily = st.daily_models[clean_m]
                         quota = resolve_tier_quota(acc.tier, clean_m)
                         used_pct = round((m_daily.requests / max(1, quota)) * 100, 1)
-                        cd_rem = max(0, int(m_daily.cooldown_until - time.time())) if m_daily.cooldown_until > time.time() else 0
+                        cd_rem = (
+                            max(0, int(m_daily.cooldown_until - time.time()))
+                            if m_daily.cooldown_until > time.time()
+                            else 0
+                        )
                         breakdown.append(
                             AccountBreakdownItem(
                                 account_id=acc.id,
@@ -92,7 +96,9 @@ def stats_response() -> StatsResponse:
                                 today_reasoning_tokens=m_daily.reasoning_tokens,
                                 configured_quota=quota,
                                 quota_used_percent=used_pct,
-                                is_available=acc.enabled and cd_rem == 0 and not st.session_expired,
+                                is_available=acc.enabled
+                                and cd_rem == 0
+                                and not st.session_expired,
                                 cooldown_remaining=cd_rem,
                             )
                         )
@@ -462,7 +468,7 @@ async def create_api_key(req: CreateApiKeyRequest) -> ApiKeyItemModel:
     return ApiKeyItemModel(name=name, key=new_key, created_at=created_at)
 
 
-@protected_router.delete("/api-keys/{key_value}")
+@protected_router.delete("/api-keys/{key_value:path}")
 async def delete_api_key(key_value: str) -> dict[str, bool]:
     """在 config.yaml 中删除指定 API Key。"""
 
@@ -505,7 +511,7 @@ async def delete_api_key(key_value: str) -> dict[str, bool]:
     return {"ok": True}
 
 
-@protected_router.put("/api-keys/{key_value}", response_model=ApiKeyItemModel)
+@protected_router.put("/api-keys/{key_value:path}", response_model=ApiKeyItemModel)
 async def update_api_key_name(
     key_value: str, req: UpdateApiKeyRequest
 ) -> ApiKeyItemModel:

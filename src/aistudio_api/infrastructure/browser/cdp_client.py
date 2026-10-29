@@ -247,6 +247,11 @@ class CDPConnection:
     async def close(self) -> None:
         """Close WebSocket connection cleanly."""
         self._closed = True
+        for task in list(self._background_tasks):
+            if not task.done():
+                task.cancel()
+        self._background_tasks.clear()
+        self._listeners.clear()
         if self._recv_task and not self._recv_task.done():
             self._recv_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

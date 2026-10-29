@@ -95,7 +95,7 @@ class SessionReadinessGate:
         self._last_error = None
         self._event.clear()
 
-    async def wait_ready(self, timeout_s: float = 60.0) -> SessionContext:
+    async def wait_ready(self, timeout_s: float = 120.0) -> SessionContext:
         """Wait until session is READY, or fail fast if transition failed."""
         if self.is_ready() and self._active_context is not None:
             return self._active_context

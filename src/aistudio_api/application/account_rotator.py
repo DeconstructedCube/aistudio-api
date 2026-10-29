@@ -410,15 +410,28 @@ class AccountStats:
             or isinstance(old_model_drips, dict)
         ):
             all_keys: set[str] = set()
-            for source in (old_model_reqs, old_model_cds, old_model_rates, old_model_drips):
+            for source in (
+                old_model_reqs,
+                old_model_cds,
+                old_model_rates,
+                old_model_drips,
+            ):
                 if isinstance(source, dict):
-                    all_keys.update(str(k) for k in source.keys())
+                    all_keys.update(str(k) for k in source)
             for m_k in all_keys:
                 daily_models[str(m_k)] = AccountModelDailyStats(
-                    requests=_as_int(old_model_reqs.get(m_k)) if isinstance(old_model_reqs, dict) else 0,
-                    rate_limited=_as_int(old_model_rates.get(m_k)) if isinstance(old_model_rates, dict) else 0,
-                    cooldown_until=_as_float(old_model_cds.get(m_k)) if isinstance(old_model_cds, dict) else 0.0,
-                    drip_mode=bool(old_model_drips.get(m_k)) if isinstance(old_model_drips, dict) else False,
+                    requests=_as_int(old_model_reqs.get(m_k))
+                    if isinstance(old_model_reqs, dict)
+                    else 0,
+                    rate_limited=_as_int(old_model_rates.get(m_k))
+                    if isinstance(old_model_rates, dict)
+                    else 0,
+                    cooldown_until=_as_float(old_model_cds.get(m_k))
+                    if isinstance(old_model_cds, dict)
+                    else 0.0,
+                    drip_mode=bool(old_model_drips.get(m_k))
+                    if isinstance(old_model_drips, dict)
+                    else False,
                 )
         return cls(
             account_id=str(data.get("account_id") or ""),
@@ -657,9 +670,7 @@ class AccountRotator:
                 account.id, AccountStats(account_id=account.id)
             )
             # 4. 登录态与真 429/403 冷却检查
-            if not stats.is_available(
-                model, ignore_auth_cooldown=ignore_auth_cooldown
-            ):
+            if not stats.is_available(model, ignore_auth_cooldown=ignore_auth_cooldown):
                 continue
 
             candidates.append((account, stats))
@@ -906,9 +917,7 @@ class AccountRotator:
         for gid in ghost_ids:
             self._stats.pop(gid, None)
         if ghost_ids:
-            logger.info(
-                "已清理 %d 个幽灵账号残留状态: %s", len(ghost_ids), ghost_ids
-            )
+            logger.info("已清理 %d 个幽灵账号残留状态: %s", len(ghost_ids), ghost_ids)
             self.save_state()
         return ghost_ids
 
@@ -920,4 +929,3 @@ def init_rotator(account_store: AccountStore) -> AccountRotator:
     global _rotator
     _rotator = AccountRotator(account_store)
     return _rotator
-

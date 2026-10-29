@@ -268,9 +268,13 @@ async def handle_attempt_exception(
         ):
             logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
             return True
-        if attempt < 2 and not has_yielded_data:
-            if client._session is not None:
-                await client._session._close_internal()
+        if (
+            attempt < 2
+            and not has_yielded_data
+            and client._session is not None
+            and client._session._in_flight <= 1
+        ):
+            await client._session._close_internal()
             return True
         if isinstance(exc, BrowserTransportError):
             runtime_state.record(target_model, "errors")
@@ -538,8 +542,14 @@ def _build_gemini_streaming_response(
             final_finish_reason: str = "STOP"
             latest_response_id: str | None = None
             buffered_thought_sig: str | None = None
+            stream_completed = False
+            last_stream_error: Exception | None = None
             for stream_attempt in range(MAX_RETRIES):
                 has_yielded_data = False
+                final_usage = None
+                final_finish_reason = "STOP"
+                latest_response_id = None
+                buffered_thought_sig = None
                 await ensure_active_account(stream_attempt, model=model_path)
                 normalized = normalize_gemini_request(req, model_path)
                 try:
@@ -584,8 +594,10 @@ def _build_gemini_streaming_response(
                             if chunk:
                                 has_yielded_data = True
                                 yield chunk
+                    stream_completed = True
                     break
                 except Exception as exc:
+                    last_stream_error = exc
                     if await handle_attempt_exception(
                         exc,
                         attempt=stream_attempt,
@@ -597,10 +609,10 @@ def _build_gemini_streaming_response(
                         continue
                     raise
 
+            if not stream_completed and last_stream_error is not None:
+                raise last_stream_error
             target_model = normalized.model if normalized else model_path
-            record_rotator_event(
-                "success", model=target_model, usage=final_usage
-            )
+            record_rotator_event("success", model=target_model, usage=final_usage)
             if normalized is not None:
                 runtime_state.record(
                     normalized.model,

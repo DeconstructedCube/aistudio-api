@@ -3,6 +3,12 @@
     document.querySelectorAll('ms-chat-turn-options, ms-chat-loading-indicator').forEach(el => el.remove());
     document.querySelectorAll('.cdk-overlay-backdrop, ms-updates, ms-nav-popover').forEach(el => el.remove());
     document.querySelectorAll('canvas, video, audio').forEach(el => el.remove());
+    const turns = document.querySelectorAll('ms-chat-turn');
+    if (turns.length > 2) {
+        for (let i = 0; i < turns.length - 1; i++) {
+            try { turns[i].remove(); } catch (e) {}
+        }
+    }
 
     try {
         document.querySelectorAll('img[src^="blob:"]').forEach(img => {

@@ -360,25 +360,43 @@ def _default_config() -> dict[str, object]:
                 "default_limit": 50,
             },
             "Pro": {
-                "argon_models": {"match": {"contains": ["argon", "gemini-4"]}, "daily_limit": 50},
+                "argon_models": {
+                    "match": {"contains": ["argon", "gemini-4"]},
+                    "daily_limit": 50,
+                },
                 "flash_models": {"match": {"contains": ["flash"]}, "daily_limit": 150},
                 "pro_models": {"match": {"contains": ["pro"]}, "daily_limit": 50},
-                "image_models": {"match": {"contains": ["image", "imagen"]}, "daily_limit": 50},
+                "image_models": {
+                    "match": {"contains": ["image", "imagen"]},
+                    "daily_limit": 50,
+                },
                 "default_limit": 50,
             },
             "Ultra": {
-                "argon_models": {"match": {"contains": ["argon", "gemini-4"]}, "daily_limit": 250},
+                "argon_models": {
+                    "match": {"contains": ["argon", "gemini-4"]},
+                    "daily_limit": 250,
+                },
                 "flash_models": {"match": {"contains": ["flash"]}, "daily_limit": 1500},
                 "pro_models": {"match": {"contains": ["pro"]}, "daily_limit": 250},
-                "image_models": {"match": {"contains": ["image", "imagen"]}, "daily_limit": 250},
+                "image_models": {
+                    "match": {"contains": ["image", "imagen"]},
+                    "daily_limit": 250,
+                },
                 "video_models": {"match": {"contains": ["veo"]}, "daily_limit": 50},
                 "default_limit": 250,
             },
             "Ultra_20X": {
-                "argon_models": {"match": {"contains": ["argon", "gemini-4"]}, "daily_limit": 1000},
+                "argon_models": {
+                    "match": {"contains": ["argon", "gemini-4"]},
+                    "daily_limit": 1000,
+                },
                 "flash_models": {"match": {"contains": ["flash"]}, "daily_limit": 5000},
                 "pro_models": {"match": {"contains": ["pro"]}, "daily_limit": 1000},
-                "image_models": {"match": {"contains": ["image", "imagen"]}, "daily_limit": 1000},
+                "image_models": {
+                    "match": {"contains": ["image", "imagen"]},
+                    "daily_limit": 1000,
+                },
                 "video_models": {"match": {"contains": ["veo"]}, "daily_limit": 200},
                 "default_limit": 1000,
             },
@@ -781,4 +799,3 @@ def get_configured_paid_model_rules(
     if isinstance(def_rules, dict):
         return def_rules
     return {}
-    return raw_rules

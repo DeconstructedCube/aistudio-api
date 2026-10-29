@@ -13,6 +13,7 @@ from aistudio_api.infrastructure.account.cookie_parser import (
     DEFAULT_API_KEY,
     DEFAULT_EXT_BIN,
     DEFAULT_USER_AGENT,
+    normalize_benefit_tier,
     parse_benefit_tier_response,
 )
 from aistudio_api.infrastructure.browser.cdp_client import CDPPage
@@ -96,9 +97,7 @@ def get_tier_from_meta(auth_file: str | None) -> str:
             meta_path = Path(auth_file).parent / "meta.json"
             if meta_path.exists():
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                tier = str(meta.get("tier") or "Free").strip().capitalize()
-                if tier in ("Free", "Pro", "Ultra", "Plus"):
-                    return tier
+                return normalize_benefit_tier(str(meta.get("tier") or "Free"))
         except Exception:
             pass
     return "Free"

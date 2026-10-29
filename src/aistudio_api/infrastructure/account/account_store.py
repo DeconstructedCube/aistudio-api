@@ -435,7 +435,11 @@ class AccountStore:
             if existing is not None:
                 account_id = existing.id
                 created_at = existing.created_at
-                if resolved_tier == "Free" and existing.tier and existing.tier != "Free":
+                if (
+                    resolved_tier == "Free"
+                    and existing.tier
+                    and existing.tier != "Free"
+                ):
                     resolved_tier = existing.tier
                 if resolved_group == "default" and existing.group:
                     resolved_group = existing.group
@@ -520,14 +524,16 @@ class AccountStore:
         return True
 
     def update_account_tier(self, account_id: str, tier: str) -> bool:
-        """更新账号的订阅权益等级 (Free / Pro / Ultra / Plus)，并持久化 meta.json 与 registry.json。"""
+        """更新账号的订阅权益等级 (Free / Pro / Ultra / Ultra_20X / Plus)，并持久化 meta.json 与 registry.json。"""
+        from aistudio_api.infrastructure.account.cookie_parser import (
+            normalize_benefit_tier,
+        )
+
         registry = self._load_registry()
         acc = self._find_registered_account(registry, account_id)
         if acc is None:
             return False
-        clean_tier = (tier or "Free").strip().capitalize()
-        if clean_tier not in ("Free", "Pro", "Ultra", "Plus"):
-            clean_tier = "Free"
+        clean_tier = normalize_benefit_tier(tier)
         if acc.tier == clean_tier:
             return False
         acc.tier = clean_tier
@@ -631,6 +637,7 @@ class AccountStore:
         if modified:
             self._save_registry(registry)
         return modified
+
     # ─── 预设方案 (Presets) 管理 ───
     def _ensure_default_presets(self) -> None:
         if self._presets_path.exists():
@@ -670,6 +677,7 @@ class AccountStore:
             self._presets = presets
             payload = {pid: p.to_dict() for pid, p in presets.items()}
             _atomic_write_json(self._presets_path, payload)
+
     def list_presets(self) -> list[AccountPreset]:
         """列出所有预设方案。"""
         presets = self._load_presets()

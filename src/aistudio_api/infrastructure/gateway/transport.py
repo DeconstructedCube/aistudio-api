@@ -323,16 +323,16 @@ class XHRStreamTransport:
         rid = uuid.uuid4().hex[:8]
 
         # Ensure native binding on page and register local async queue
-        self._ensure_page_binding(page)
-        if hasattr(page, "add_binding"):
-            with suppress(Exception):
-                await page.add_binding("__aistudio_stream_push__")
-        elif hasattr(page, "cdp") and hasattr(page.cdp, "send"):
-            with suppress(Exception):
-                await page.cdp.send(
-                    "Runtime.addBinding", {"name": "__aistudio_stream_push__"}
-                )
-
+        if not getattr(page, "has_stream_binding", False):
+            self._ensure_page_binding(page)
+            if hasattr(page, "add_binding"):
+                with suppress(Exception):
+                    await page.add_binding("__aistudio_stream_push__")
+            elif hasattr(page, "cdp") and hasattr(page.cdp, "send"):
+                with suppress(Exception):
+                    await page.cdp.send(
+                        "Runtime.addBinding", {"name": "__aistudio_stream_push__"}
+                    )
         queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
         self._queues[rid] = queue
 
@@ -403,5 +403,8 @@ class XHRStreamTransport:
                 raise TimeoutError("streaming response timed out before completion")
         finally:
             self._queues.pop(rid, None)
-            with suppress(Exception):
-                await page.evaluate(STREAM_CLEANUP_JS, rid)
+            if not page.is_closed():
+                with suppress(Exception, asyncio.CancelledError):
+                    await asyncio.shield(
+                        page.evaluate(STREAM_CLEANUP_JS, rid, timeout_s=5.0)
+                    )

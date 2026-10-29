@@ -207,6 +207,7 @@ function updateThinkingConfig(level: 'MINIMAL' | 'LOW' | 'MEDIUM' | 'HIGH' | nul
           <FieldHelpTip schema-key="profile.default_tools" />
         </div>
         <ConfigTagList
+          :model-value="profile.default_tools || []"
           label="已启用的默认工具"
           description="客户端未显式传 tools 时，默认自动挂载的工具"
           :suggestions="TOOL_SUGGESTIONS"

@@ -115,15 +115,26 @@ async def test_session_blue_green_transition_preserves_inflight():
 
     # Mock bootstrap functions
     from unittest.mock import patch
+
     with (
-        patch("aistudio_api.infrastructure.gateway.session.load_cookies_to_page", AsyncMock(return_value=True)),
-        patch("aistudio_api.infrastructure.gateway.session.navigate_to_aistudio", AsyncMock()),
+        patch(
+            "aistudio_api.infrastructure.gateway.session.load_cookies_to_page",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "aistudio_api.infrastructure.gateway.session.navigate_to_aistudio",
+            AsyncMock(),
+        ),
         patch(
             "aistudio_api.infrastructure.gateway.session.bootstrap_botguard_and_template",
-            AsyncMock(return_value=("snap_new", {"body": '["models/gemini-3.8-flash"]'})),
+            AsyncMock(
+                return_value=("snap_new", {"body": '["models/gemini-3.8-flash"]'})
+            ),
         ),
     ):
-        new_ctx = await session.transition_to_account("/data/acc2.json", force_refresh=True)
+        new_ctx = await session.transition_to_account(
+            "/data/acc2.json", force_refresh=True
+        )
 
     # 1. New page is created and becomes active context
     assert new_ctx.page == new_page
@@ -142,3 +153,53 @@ async def test_session_blue_green_transition_preserves_inflight():
     old_page.close.assert_called_once()
     mock_cdp.close_target.assert_called_once_with("page_tab_1")
     assert old_ctx not in session._retiring_contexts
+
+
+@pytest.mark.asyncio
+async def test_session_blue_green_transition_closes_new_tab_on_failure():
+    """Verify failed transition closes the newly created tab to prevent orphan tab leaks."""
+    from unittest.mock import patch
+
+    session = BrowserSession(port=9222)
+    mock_proc = MagicMock()
+    mock_proc.is_alive.return_value = True
+    session._proc = mock_proc
+
+    old_page = MagicMock(spec=CDPPage)
+    old_page.is_closed.return_value = False
+    old_page.target_id = "page_tab_1"
+
+    leaked_page = MagicMock(spec=CDPPage)
+    leaked_page.is_closed.return_value = False
+    leaked_page.target_id = "page_tab_failed_2"
+    leaked_page.close = AsyncMock()
+
+    mock_cdp = MagicMock(spec=CDPClient)
+    mock_cdp.create_new_page = AsyncMock(return_value=leaked_page)
+    mock_cdp.close_target = AsyncMock()
+    session._cdp_client = mock_cdp
+
+    old_ctx = SessionContext(
+        page=old_page,
+        snap_key="snap_old",
+        auth_user="0",
+        auth_file="/data/acc1.json",
+        base_template={"body": '["models/gemini-3.7-flash"]'},
+    )
+    session._gate.set_ready(old_ctx)
+
+    with (
+        patch(
+            "aistudio_api.infrastructure.gateway.session.load_cookies_to_page",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "aistudio_api.infrastructure.gateway.session.navigate_to_aistudio",
+            AsyncMock(side_effect=RuntimeError("Navigation or BotGuard failed")),
+        ),
+        pytest.raises(RuntimeError, match="Navigation or BotGuard failed"),
+    ):
+        await session.transition_to_account("/data/acc_broken.json", force_refresh=True)
+
+    leaked_page.close.assert_awaited_once()
+    mock_cdp.close_target.assert_awaited_once_with("page_tab_failed_2")
