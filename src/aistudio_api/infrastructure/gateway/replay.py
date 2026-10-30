@@ -29,4 +29,5 @@ class RequestReplayService:
             body=body,
             url=captured.url,
             headers=headers,
+            ctx=getattr(captured, "ctx", None),
         )

@@ -66,6 +66,13 @@ async def lifespan(_app: FastAPI):
     rotator = init_rotator(account_store)
     runtime_state.rotator = rotator
 
+    for a in account_store.list_accounts():
+        st = rotator.get_account_stats(a.id)
+        if st is not None and not st.session_expired and st.auth_cooldown > 0:
+            st.auth_cooldown = 0.0
+    active_auth_path = account_store.get_active_auth_path()
+    if active_auth_path is not None and client.session is not None:
+        client.session._auth_file = str(active_auth_path)
     logger.info(
         "Client initialized (port=%s, accounts=%d)",
         runtime_state.browser_port,

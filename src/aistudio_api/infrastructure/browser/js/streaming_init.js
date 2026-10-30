@@ -47,7 +47,7 @@
     window.fetch(args.url, {
         method: 'POST',
         headers: headers,
-        body: args.gzip ? Uint8Array.from(atob(args.body), c => c.charCodeAt(0)) : args.body,
+        body: args.body,
         credentials: 'include',
         signal: abortController.signal,
     }).then(response => {

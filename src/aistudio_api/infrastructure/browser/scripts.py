@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import base64
-import gzip
 import json
 from pathlib import Path
 
 _JS_DIR = Path(__file__).resolve().parent / "js"
-_GZIP_MIN_BYTES = 96 * 1024
 
 
 def _load_js(filename: str) -> str:
@@ -46,25 +43,6 @@ def build_hooked_request_args(
         "headers": headers,
         "body": body,
     }
-    if any(
-        key.lower() == "content-encoding" and value.lower() != "identity"
-        for key, value in headers.items()
-    ):
-        return args
-    raw = body.encode("utf-8")
-    if len(raw) >= _GZIP_MIN_BYTES:
-        args["body"] = base64.b64encode(gzip.compress(raw, compresslevel=6)).decode(
-            "ascii"
-        )
-        args["headers"] = {
-            **{
-                key: value
-                for key, value in headers.items()
-                if key.lower() != "content-encoding"
-            },
-            "Content-Encoding": "gzip",
-        }
-        args["gzip"] = True
     return args
 
 

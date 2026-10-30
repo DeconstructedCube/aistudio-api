@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import gzip
 import json
 from unittest.mock import AsyncMock, MagicMock
 
@@ -15,8 +13,6 @@ from aistudio_api.infrastructure.browser.cdp_client import CDPPage
 from aistudio_api.infrastructure.browser.scripts import (
     STREAM_CLEANUP_JS,
     STREAMING_INIT_JS,
-    build_hooked_request_args,
-    build_streaming_init_args,
 )
 from aistudio_api.infrastructure.gateway.capture import CapturedRequest
 from aistudio_api.infrastructure.gateway.session import BrowserSession
@@ -169,33 +165,6 @@ async def test_transport_abort_stream_by_rid():
         await task2
 
     assert transport.in_flight_count == 0
-
-
-def test_build_request_args_gzip_above_threshold():
-    """Verify bodies >= 96KB are automatically gzipped and base64-encoded for fetch."""
-    small_body = '["models/gemini-3.7-flash","hello"]'
-    small_args = build_hooked_request_args(
-        url="https://example.com",
-        headers={"Content-Type": "application/json+protobuf"},
-        body=small_body,
-    )
-    assert "gzip" not in small_args
-    assert small_args["body"] == small_body
-
-    large_body = '["models/gemini-3.7-flash","' + ("A" * (96 * 1024)) + '"]'
-    large_args = build_streaming_init_args(
-        url="https://example.com",
-        headers={"Content-Type": "application/json+protobuf"},
-        body=large_body,
-        rid="r_gzip",
-    )
-    assert large_args.get("gzip") is True
-    assert large_args["rid"] == "r_gzip"
-    headers = large_args["headers"]
-    assert isinstance(headers, dict)
-    assert headers["Content-Encoding"] == "gzip"
-    compressed_bytes = base64.b64decode(str(large_args["body"]))
-    assert gzip.decompress(compressed_bytes).decode("utf-8") == large_body
 
 
 @pytest.mark.asyncio

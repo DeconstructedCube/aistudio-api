@@ -289,6 +289,31 @@ async def bootstrap_botguard_and_template(
                                 break
                         await page.wait_for_timeout(100)
                 with suppress(Exception):
+                    for _ in range(20):
+                        snap_ready = await page.evaluate(
+                            """async () => {
+                                const a = window.__AISTUDIO__;
+                                if (!a) return true;
+                                if (typeof a.snapshot === 'string' && a.snapshot.length > 10) return true;
+                                const dms = window.default_MakerSuite;
+                                if (!dms || !a.snapKey || typeof dms[a.snapKey] !== 'function') return true;
+                                try {
+                                    const s = await dms[a.snapKey](
+                                        a.service,
+                                        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+                                    );
+                                    if (typeof s === 'string' && s.length > 10) {
+                                        a.snapshot = s;
+                                        return true;
+                                    }
+                                } catch (e) {}
+                                return false;
+                            }"""
+                        )
+                        if snap_ready is not False:
+                            break
+                        await page.wait_for_timeout(400)
+                with suppress(Exception):
                     await page.evaluate(STOP_GENERATION_JS)
                 await page.fill("textarea", original_text)
                 with suppress(Exception):

@@ -21,6 +21,7 @@ class CapturedRequest:
     body: str
     model: str = ""
     snapshot: str = ""
+    ctx: object | None = None
 
 
 class RequestCaptureService:
@@ -58,7 +59,8 @@ class RequestCaptureService:
     ) -> CapturedRequest | None:
         if force_refresh:
             self._templates.pop(model, None)
-        template = await self._ensure_template(model)
+        ctx = await self._session.ensure_ready()
+        template = await self._ensure_template(model, ctx=ctx)
         rewritten_contents = contents
         snapshot_contents = rewritten_contents or [
             AistudioContent.from_user_prompt(prompt=prompt, images=images)
@@ -91,6 +93,7 @@ class RequestCaptureService:
             headers=dict(template.headers),
             body=body,
             model=model,
+            ctx=ctx,
             snapshot=snapshot,
         )
         logger.info(
@@ -101,9 +104,17 @@ class RequestCaptureService:
         )
         return captured
 
-    async def _ensure_template(self, model: str) -> CapturedRequest:
-        ctx = await self._session.ensure_ready()
-        ctx_id = ctx.context_id
+    async def _ensure_template(
+        self, model: str, ctx: object | None = None
+    ) -> CapturedRequest:
+        from aistudio_api.infrastructure.gateway.session_state import SessionContext
+
+        active_ctx = (
+            ctx
+            if isinstance(ctx, SessionContext)
+            else await self._session.ensure_ready()
+        )
+        ctx_id = active_ctx.context_id
         if self._active_ctx_id != ctx_id:
             self._templates.clear()
             self._active_ctx_id = ctx_id
