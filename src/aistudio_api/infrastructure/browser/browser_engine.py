@@ -765,7 +765,6 @@ def _assign_process_to_job(job_handle: int | None, proc_handle: int) -> bool:
         return False
 
 
-
 _ACTIVE_CHROMIUM_PROCESSES: set[ChromiumProcess] = set()
 
 

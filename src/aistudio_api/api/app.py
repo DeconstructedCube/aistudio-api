@@ -131,6 +131,7 @@ async def lifespan(_app: FastAPI):
                                     )
                     except Exception:
                         pass
+
     tier_task = asyncio.create_task(_auto_refresh_tiers())
 
     yield
@@ -152,7 +153,9 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="AI Studio API", lifespan=lifespan)
 app.include_router(system_public_router)
 app.include_router(system_protected_router, dependencies=[Depends(require_web_auth)])
-app.include_router(accounts_router, prefix="/api", dependencies=[Depends(require_web_auth)])
+app.include_router(
+    accounts_router, prefix="/api", dependencies=[Depends(require_web_auth)]
+)
 app.include_router(accounts_router, dependencies=[Depends(require_web_auth)])
 app.include_router(gemini_router, dependencies=[Depends(require_api_key)])
 app.include_router(models_router, dependencies=[Depends(require_api_key)])
@@ -210,7 +213,9 @@ async def logging_and_dump_middleware(request, call_next):
     if dump_enabled:
         req_id = f"req_{secrets.token_hex(4)}"
         client_str = (
-            f"{request.client.host}:{request.client.port}" if request.client else "unknown"
+            f"{request.client.host}:{request.client.port}"
+            if request.client
+            else "unknown"
         )
         headers_dict = dict(request.headers)
         query_dict = dict(request.query_params)
@@ -342,7 +347,9 @@ async def spa_navigation_middleware(request: Request, call_next):
     if is_html_nav and (is_accounts_spa or not is_api) and index_html_path.is_file():
         response = FileResponse(index_html_path)
         response.headers["Vary"] = "Accept"
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, max-age=0"
+        )
         return response
 
     response = await call_next(request)
@@ -354,7 +361,9 @@ async def spa_navigation_middleware(request: Request, call_next):
                 response.headers["Vary"] = f"{existing_vary}, Accept"
         else:
             response.headers["Vary"] = "Accept"
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, max-age=0"
+        )
 
     return response
 
@@ -365,7 +374,9 @@ async def root_index():
     if index_html_path.is_file():
         response = FileResponse(index_html_path)
         response.headers["Vary"] = "Accept"
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Cache-Control"] = (
+            "no-store, no-cache, must-revalidate, max-age=0"
+        )
         return response
     return JSONResponse({"message": "AI Studio API Web UI"})
 

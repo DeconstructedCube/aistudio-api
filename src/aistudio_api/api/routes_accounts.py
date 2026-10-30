@@ -117,6 +117,7 @@ class ApplyPresetResponse(BaseModel):
     enabled_account_ids: list[str]
     disabled_account_ids: list[str]
 
+
 class ImportCookiesRequest(BaseModel):
     cookies: str
     name: str | None = None
@@ -594,7 +595,9 @@ async def apply_preset(
         from aistudio_api.application.account_orchestrator import try_switch_account
 
         if not active_acc or not active_acc.enabled or active_acc.id in dis_ids:
-            await try_switch_account(failed_account_id=active_acc.id if active_acc else None)
+            await try_switch_account(
+                failed_account_id=active_acc.id if active_acc else None
+            )
         else:
             await try_switch_account()
 

@@ -4,7 +4,6 @@ export interface SystemConfig {
   browser_headless: boolean
   proxy_configured: boolean
   auth_enabled: boolean
-  timeout_stream: number
   yaml_content: string
   log_level?: string
   dump_requests?: boolean

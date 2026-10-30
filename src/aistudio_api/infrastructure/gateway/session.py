@@ -141,7 +141,7 @@ class BrowserSession:
         finally:
             self._in_flight = max(0, self._in_flight - 1)
 
-    async def ensure_ready(self, timeout_s: float = 120.0) -> SessionContext:
+    async def ensure_ready(self) -> SessionContext:
         """Wait until session is 100% READY."""
         if self._gate.is_ready() and self._gate.active_context is not None:
             return self._gate.active_context
@@ -149,7 +149,7 @@ class BrowserSession:
         if self._gate.state == SessionState.UNINITIALIZED:
             await self.transition_to_account(self._auth_file, force_refresh=False)
 
-        return await self._gate.wait_ready(timeout_s=timeout_s)
+        return await self._gate.wait_ready()
 
     async def ensure_context(self) -> CDPPage:
         """Ensure active verified CDPPage is available, auto-reconnecting if dropped."""
@@ -288,17 +288,12 @@ class BrowserSession:
         self,
         context: SessionContext,
         active_target_id: str | None = None,
-        max_wait_s: float = 600.0,
     ) -> None:
-        deadline = asyncio.get_running_loop().time() + max_wait_s
         while context.in_flight > 0:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0 or context.page.is_closed():
+            if context.page.is_closed():
                 break
             with suppress(TimeoutError):
-                await asyncio.wait_for(
-                    context.drain_event.wait(), timeout=min(remaining, 2.0)
-                )
+                await asyncio.wait_for(context.drain_event.wait(), timeout=2.0)
                 break
 
         with suppress(Exception):
@@ -387,7 +382,6 @@ class BrowserSession:
         self,
         *,
         body: str,
-        timeout_ms: int,
         url: str | None = None,
         headers: dict[str, str] | None = None,
     ) -> tuple[int, bytes]:
@@ -406,7 +400,6 @@ class BrowserSession:
                 url=captured_url,
                 headers=captured_headers,
                 body=body,
-                timeout_ms=timeout_ms,
                 auth_user=ctx.auth_user,
                 tier=ctx.tier,
             )
@@ -417,7 +410,6 @@ class BrowserSession:
         self,
         *,
         body: str,
-        timeout_ms: int,
         url: str | None = None,
         headers: dict[str, str] | None = None,
     ) -> AsyncGenerator[tuple[str, object], None]:
@@ -436,7 +428,6 @@ class BrowserSession:
                 url=captured_url,
                 headers=captured_headers,
                 body=body,
-                timeout_ms=timeout_ms,
                 auth_user=ctx.auth_user,
                 tier=ctx.tier,
             ):

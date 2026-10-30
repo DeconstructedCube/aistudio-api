@@ -107,7 +107,6 @@ async def test_browser_session_send_hooked_request(mock_cdp_page):
         url="https://alkalimakersuite-pa.clients6.google.com/test",
         headers={"content-type": "application/json"},
         body='["test"]',
-        timeout_ms=5000,
     )
     assert status == 200
     assert body == b'["response_data"]'
@@ -162,7 +161,6 @@ async def test_browser_session_send_streaming_request(mock_cdp_page):
         url="https://alkalimakersuite-pa.clients6.google.com/stream",
         headers={"content-type": "application/json"},
         body='["stream"]',
-        timeout_ms=5000,
     ):
         collected.append((tag, data))
 

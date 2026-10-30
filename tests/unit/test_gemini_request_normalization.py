@@ -807,7 +807,10 @@ def test_normalize_gemini_request_preserves_system_instruction_thought_signature
             "systemInstruction": {
                 "role": "user",
                 "parts": [
-                    {"text": "System prompt with thought signature", "thoughtSignature": "sys_sig_123"}
+                    {
+                        "text": "System prompt with thought signature",
+                        "thoughtSignature": "sys_sig_123",
+                    }
                 ],
             },
         }

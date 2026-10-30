@@ -274,12 +274,10 @@ class XHRStreamTransport:
         url: str,
         headers: dict[str, str],
         body: str,
-        timeout_ms: int,
         auth_user: str = "0",
         tier: str | None = None,
     ) -> tuple[int, bytes]:
         """Replay request via XHR inside the browser page context."""
-        timeout_s = timeout_ms / 1000
         clean_headers = await _ensure_authorization_header(
             page, headers, auth_user=auth_user, tier=tier
         )
@@ -288,10 +286,9 @@ class XHRStreamTransport:
             url=url,
             headers=clean_headers,
             body=body,
-            timeout_s=timeout_s,
         )
 
-        result = await page.evaluate(HOOKED_REQUEST_JS, args, timeout_s=timeout_s + 5.0)
+        result = await page.evaluate(HOOKED_REQUEST_JS, args, timeout_s=None)
         res_dict: dict[str, object] = result if isinstance(result, dict) else {}
         status = int(str(res_dict.get("status") or 0))
         raw_text = str(res_dict.get("body") or "")
@@ -307,7 +304,6 @@ class XHRStreamTransport:
         url: str,
         headers: dict[str, str],
         body: str,
-        timeout_ms: int,
         auth_user: str = "0",
         tier: str | None = None,
     ) -> AsyncGenerator[tuple[str, object], None]:
@@ -315,7 +311,6 @@ class XHRStreamTransport:
 
         Guarantees V8 window cleanup on termination/timeout and prevents silent truncation.
         """
-        timeout_s = timeout_ms / 1000
         clean_headers = await _ensure_authorization_header(
             page, headers, auth_user=auth_user, tier=tier
         )
@@ -340,12 +335,10 @@ class XHRStreamTransport:
             url=url,
             headers=clean_headers,
             body=body,
-            timeout_s=timeout_s,
             rid=rid,
         )
         await page.evaluate(STREAMING_INIT_JS, init_args)
 
-        deadline = asyncio.get_running_loop().time() + timeout_s
         status_sent = False
         is_terminal = False
 
@@ -353,14 +346,8 @@ class XHRStreamTransport:
             while not is_terminal:
                 if page.is_closed() is True:
                     raise BrowserTransportError("Browser page closed during streaming")
-                now = asyncio.get_running_loop().time()
-                remaining = deadline - now
-                if remaining <= 0:
-                    break
-
-                step_timeout = min(remaining, 1.0)
                 try:
-                    event = await asyncio.wait_for(queue.get(), timeout=step_timeout)
+                    event = await asyncio.wait_for(queue.get(), timeout=1.0)
                 except TimeoutError:
                     if page.is_closed() is True:
                         raise BrowserTransportError(
@@ -372,12 +359,10 @@ class XHRStreamTransport:
                     status = int(str(event.get("status") or 0))
                     yield ("status", status)
                     status_sent = True
-                    deadline = asyncio.get_running_loop().time() + timeout_s
                 elif etype == "chunk":
                     text = str(event.get("text") or "")
                     if text:
                         yield ("chunk", text.encode("utf-8"))
-                        deadline = asyncio.get_running_loop().time() + timeout_s
                 elif etype == "error":
                     message = str(event.get("message") or "unknown error")
                     _log_rpc_net_evidence(page, "streaming")
@@ -399,8 +384,6 @@ class XHRStreamTransport:
                 raise _transport_error(
                     page, "streaming request timeout: no response status"
                 )
-            if not is_terminal:
-                raise TimeoutError("streaming response timed out before completion")
         finally:
             self._queues.pop(rid, None)
             if not page.is_closed():

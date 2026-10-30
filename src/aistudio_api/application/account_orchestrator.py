@@ -85,7 +85,10 @@ async def try_switch_account(
             _last_switch_time >= entry_time
             and current_id
             and (not is_session_expired or current_id != failed_account_id)
-            and (not required_tiers or (current_active and current_active.tier in required_tiers))
+            and (
+                not required_tiers
+                or (current_active and current_active.tier in required_tiers)
+            )
             and rotator.is_account_available(current_id, model=model)
         ):
             logger.info(
@@ -106,7 +109,10 @@ async def try_switch_account(
             failed_account_id
             and current_id
             and current_id != failed_account_id
-            and (not required_tiers or (current_active and current_active.tier in required_tiers))
+            and (
+                not required_tiers
+                or (current_active and current_active.tier in required_tiers)
+            )
             and rotator.is_account_available(current_id, model=model)
         ):
             logger.info(
@@ -164,7 +170,10 @@ async def try_switch_account(
             return result is not None
         return bool(
             current_id
-            and (not required_tiers or (current_active and current_active.tier in required_tiers))
+            and (
+                not required_tiers
+                or (current_active and current_active.tier in required_tiers)
+            )
             and rotator.is_account_available(current_id, model=model)
         )
 
@@ -186,7 +195,15 @@ async def ensure_active_account(attempt: int, model: str | None = None) -> None:
         if model_discovery.is_paid_model(model):
             req_tier = model_discovery.get_required_tier(model)
             req_tiers = model_discovery.get_required_tiers(model)
-            allowed_tiers = set(req_tiers) if req_tiers else ({"Pro", "Ultra", "Ultra_20X"} if req_tier == "Pro" else {"Ultra", "Ultra_20X"})
+            allowed_tiers = (
+                set(req_tiers)
+                if req_tiers
+                else (
+                    {"Pro", "Ultra", "Ultra_20X"}
+                    if req_tier == "Pro"
+                    else {"Ultra", "Ultra_20X"}
+                )
+            )
             cur_tier = (current.tier if current else None) or "Free"
             if not current or cur_tier not in allowed_tiers:
                 logger.info(
@@ -223,6 +240,7 @@ async def ensure_active_account(attempt: int, model: str | None = None) -> None:
     ):
         await try_switch_account(model=model, failed_account_id=current.id)
 
+
 def record_rotator_event(
     event: str,
     model: str | None = None,
@@ -242,6 +260,7 @@ def record_rotator_event(
         rotator.record_auth_error(account.id, model=model)
     elif event == "error":
         rotator.record_error(account.id, model=model)
+
 
 __all__ = [
     "MAX_RETRIES",

@@ -340,6 +340,7 @@ def test_account_stats_short_cooldown_sync():
     rem3 = stats.get_cooldown_remaining("gemini-2.5-flash")
     assert rem3 > 60.0
 
+
 def test_safe_account_dir_path_traversal_rejection(tmp_path):
     """Verify _safe_account_dir rejects path traversal and malicious account IDs."""
     from aistudio_api.infrastructure.account.account_store import _safe_account_dir

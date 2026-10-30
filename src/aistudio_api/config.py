@@ -43,6 +43,7 @@ def _load_int_env(*names: str, default: int) -> int:
         return default
     return int(value)
 
+
 def _load_web_password() -> str | None:
     return os.getenv("AISTUDIO_WEB_PASSWORD") or os.getenv("AISTUDIO_ADMIN_PASSWORD")
 
@@ -64,6 +65,7 @@ def _load_dump_to_file_env() -> bool:
     if val is None:
         return False
     return val.strip().lower() in ("1", "true", "yes", "on", "dump", "y", "t")
+
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_DATA_DIR = _PROJECT_ROOT / "data"
@@ -248,8 +250,6 @@ class Settings:
     proxy_url: str | None = discover_proxy_url()
     web_password: str | None = _load_web_password()
     api_keys: frozenset[str] = frozenset()
-    timeout_replay: int = int(os.getenv("AISTUDIO_TIMEOUT_REPLAY", "600"))
-    timeout_stream: int = int(os.getenv("AISTUDIO_TIMEOUT_STREAM", "600"))
     timezone: str = resolve_timezone()
     locale: str = resolve_locale()
     dump_raw_response: bool = os.getenv("AISTUDIO_DUMP_RAW_RESPONSE", "0") in (

@@ -99,7 +99,6 @@ class StreamingGateway:
         status_code = 0
         async for event_type, payload in self._session.send_streaming_request(
             body=modified_body,
-            timeout_ms=settings.timeout_stream * 1000,
             url=captured.url if captured else None,
             headers=captured.headers if captured else None,
         ):

@@ -47,7 +47,9 @@ async def test_accounts_html_navigation_headers():
     """Verify that visiting /accounts as HTML returns the SPA HTML with cache isolation headers."""
     async with _client() as client:
         for path in ("/accounts", "/accounts/"):
-            resp = await client.get(path, headers={"Accept": "text/html,application/xhtml+xml"})
+            resp = await client.get(
+                path, headers={"Accept": "text/html,application/xhtml+xml"}
+            )
             assert resp.status_code == 200
             assert "<!DOCTYPE html>" in resp.text
             assert "text/html" in resp.headers.get("Content-Type", "")
@@ -90,8 +92,12 @@ async def test_api_accounts_endpoint_headers():
 async def test_api_accounts_and_legacy_accounts_parity():
     """Verify that /api/accounts and /accounts return identical payload for JSON clients."""
     async with _client() as client:
-        resp_legacy = await client.get("/accounts", headers={"Accept": "application/json"})
-        resp_api = await client.get("/api/accounts", headers={"Accept": "application/json"})
+        resp_legacy = await client.get(
+            "/accounts", headers={"Accept": "application/json"}
+        )
+        resp_api = await client.get(
+            "/api/accounts", headers={"Accept": "application/json"}
+        )
         assert resp_legacy.status_code == 200
         assert resp_api.status_code == 200
         assert resp_legacy.json() == resp_api.json()
@@ -110,7 +116,9 @@ async def test_issue_5_cache_isolation_regression():
         assert "Accept" in html_resp.headers.get("Vary", "")
         assert "no-store" in html_resp.headers.get("Cache-Control", "")
 
-        json_resp = await client.get("/accounts", headers={"Accept": "application/json"})
+        json_resp = await client.get(
+            "/accounts", headers={"Accept": "application/json"}
+        )
         assert json_resp.status_code == 200
         assert "application/json" in json_resp.headers.get("Content-Type", "")
         assert "Accept" in json_resp.headers.get("Vary", "")
@@ -122,7 +130,9 @@ async def test_issue_5_cache_isolation_regression():
 async def test_api_accounts_active_endpoint():
     """Verify subroutes under /api/accounts like /api/accounts/active work."""
     async with _client() as client:
-        resp = await client.get("/api/accounts/active", headers={"Accept": "application/json"})
+        resp = await client.get(
+            "/api/accounts/active", headers={"Accept": "application/json"}
+        )
         assert resp.status_code == 200
         assert "Accept" in resp.headers.get("Vary", "")
         assert "no-store" in resp.headers.get("Cache-Control", "")

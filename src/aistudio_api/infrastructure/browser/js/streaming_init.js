@@ -8,12 +8,10 @@
         try { existing.abort(); } catch (e) {}
     }
 
-    const timeoutMs = (args.timeout || 600) * 1000;
     const abortController = new AbortController();
     const state = {
         reader: null,
         abortController: abortController,
-        idleTimer: null,
     };
     streams[rid] = state;
 
@@ -26,15 +24,7 @@
         }
     }
 
-    function clearIdleTimer() {
-        if (state.idleTimer) {
-            clearTimeout(state.idleTimer);
-            state.idleTimer = null;
-        }
-    }
-
     function cleanup() {
-        clearIdleTimer();
         try {
             if (window.__AISTUDIO__?.streams) delete window.__AISTUDIO__.streams[rid];
             if (window.__AISTUDIO__?.streamAbort) delete window.__AISTUDIO__.streamAbort[rid];
@@ -52,16 +42,6 @@
     aborts[rid] = doAbort;
     state.abort = doAbort;
 
-    function resetIdleTimer() {
-        clearIdleTimer();
-        if (timeoutMs > 0) {
-            state.idleTimer = setTimeout(() => {
-                push({type: 'error', message: 'timeout'});
-                doAbort();
-            }, timeoutMs);
-        }
-    }
-    resetIdleTimer();
     const headers = Object.assign({}, args.headers || {});
 
     window.fetch(args.url, {
@@ -72,7 +52,6 @@
         signal: abortController.signal,
     }).then(response => {
         // Status received
-        resetIdleTimer();
         push({type: 'status', status: response.status || 0});
 
         if (!response.body) {
@@ -99,7 +78,6 @@
                     return;
                 }
                 if (value) {
-                    resetIdleTimer();
                     const text = decoder.decode(value, {stream: true});
                     if (text) {
                         push({type: 'chunk', text: text});

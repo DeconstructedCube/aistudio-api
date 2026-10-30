@@ -85,7 +85,9 @@ async def test_free_account_requesting_paid_model_fast_fails_when_no_pro_account
         patch.object(runtime_state, "client", mock_client),
     ):
         with pytest.raises(HTTPException) as exc_info:
-            await ensure_active_account(attempt=0, model="gemini-3.1-flash-image-preview")
+            await ensure_active_account(
+                attempt=0, model="gemini-3.1-flash-image-preview"
+            )
 
         assert exc_info.value.status_code == 403
         assert "需要 Google AI Studio Pro" in str(exc_info.value.detail)
@@ -130,7 +132,9 @@ async def test_plus_account_requesting_pro_model_preempts_to_pro_account():
         mock_rotator.get_next_account.assert_awaited_once()
         kwargs = mock_rotator.get_next_account.call_args[1]
         assert "Pro" in kwargs["required_tiers"]
-        mock_service.activate_account.assert_awaited_once_with("acc_pro", mock_client.session)
+        mock_service.activate_account.assert_awaited_once_with(
+            "acc_pro", mock_client.session
+        )
 
 
 @pytest.mark.asyncio
@@ -170,5 +174,10 @@ async def test_pro_account_requesting_ultra_model_preempts_to_ultra_account():
 
         mock_rotator.get_next_account.assert_awaited_once()
         kwargs = mock_rotator.get_next_account.call_args[1]
-        assert "Ultra" in kwargs["required_tiers"] and "Pro" not in kwargs["required_tiers"]
-        mock_service.activate_account.assert_awaited_once_with("acc_ultra", mock_client.session)
+        assert (
+            "Ultra" in kwargs["required_tiers"]
+            and "Pro" not in kwargs["required_tiers"]
+        )
+        mock_service.activate_account.assert_awaited_once_with(
+            "acc_ultra", mock_client.session
+        )

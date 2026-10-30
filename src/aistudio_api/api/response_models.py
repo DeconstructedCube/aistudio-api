@@ -114,6 +114,7 @@ class StatsResponse(BaseModel):
     models: dict[str, ModelStatsResponse]
     totals: StatsTotalsResponse
 
+
 class GeminiModelResponse(BaseModel):
     name: str
     version: str | None = "001"

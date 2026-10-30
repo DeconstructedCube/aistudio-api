@@ -95,7 +95,7 @@ class SessionReadinessGate:
         self._last_error = None
         self._event.clear()
 
-    async def wait_ready(self, timeout_s: float = 120.0) -> SessionContext:
+    async def wait_ready(self) -> SessionContext:
         """Wait until session is READY, or fail fast if transition failed."""
         if self.is_ready() and self._active_context is not None:
             return self._active_context
@@ -105,12 +105,7 @@ class SessionReadinessGate:
                 f"Session transition failed: {self._last_error}"
             ) from self._last_error
 
-        try:
-            await asyncio.wait_for(self._event.wait(), timeout=timeout_s)
-        except TimeoutError as err:
-            raise TimeoutError(
-                f"Timed out waiting for session readiness after {timeout_s}s"
-            ) from err
+        await self._event.wait()
 
         if self._state == SessionState.READY and self._active_context is not None:
             if self._active_context.is_usable():

@@ -35,6 +35,7 @@ class ModelStatsItem:
     finish_reasons: dict[str, int] = field(default_factory=dict)
     last_used: str | None = None
 
+
 @dataclass
 class RuntimeState:
     client: AIStudioClient | None = None
@@ -171,5 +172,6 @@ class RuntimeState:
             self.save_stats()
         else:
             self._schedule_debounced_save()
+
 
 runtime_state = RuntimeState()

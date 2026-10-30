@@ -42,7 +42,7 @@ async def test_session_readiness_gate_state_machine():
         gate.set_ready(ctx)
 
     task = asyncio.create_task(open_gate())
-    ready_ctx = await gate.wait_ready(timeout_s=2.0)
+    ready_ctx = await gate.wait_ready()
     await task
     assert ready_ctx == ctx
     assert gate.is_ready()
@@ -51,7 +51,7 @@ async def test_session_readiness_gate_state_machine():
     gate.set_failed(RuntimeError("Test error"))
     assert gate.state == SessionState.FAILED
     with pytest.raises(RuntimeError, match="Session transition failed: Test error"):
-        await gate.wait_ready(timeout_s=1.0)
+        await gate.wait_ready()
 
 
 @pytest.mark.asyncio

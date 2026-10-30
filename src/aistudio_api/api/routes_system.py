@@ -276,7 +276,6 @@ async def get_system_config() -> dict[str, object]:
         "browser_headless": settings.browser_headless,
         "proxy_configured": bool(settings.proxy_url),
         "auth_enabled": settings.auth_enabled,
-        "timeout_stream": settings.timeout_stream,
         "yaml_content": yaml_content,
         "log_level": get_log_level(),
         "dump_requests": is_dump_requests_enabled(),

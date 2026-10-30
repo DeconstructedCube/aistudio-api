@@ -135,5 +135,6 @@ def get_account_service():
         )
     return runtime_state.account_service
 
+
 def get_runtime_state():
     return runtime_state

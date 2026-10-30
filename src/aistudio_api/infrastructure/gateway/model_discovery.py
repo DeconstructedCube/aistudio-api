@@ -331,7 +331,11 @@ class ModelDiscoveryService:
         if not isinstance(raw_modes, list) or not raw_modes:
             return True
         norm_tier = (tier or "Free").strip().lower()
-        is_high_tier = norm_tier in ("plus", "pro", "ultra") or "ultra" in norm_tier or "pro" in norm_tier
+        is_high_tier = (
+            norm_tier in ("plus", "pro", "ultra")
+            or "ultra" in norm_tier
+            or "pro" in norm_tier
+        )
         is_ultra_tier = "ultra" in norm_tier
         for mode in raw_modes:
             if mode == 3 and is_high_tier:

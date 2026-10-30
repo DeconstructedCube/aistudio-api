@@ -28,26 +28,23 @@ EXTRACT_EMAIL_JS = _load_js("extract_email.js")
 
 
 def build_streaming_init_args(
-    *, url: str, headers: dict[str, str], body: str, timeout_s: float, rid: str
+    *, url: str, headers: dict[str, str], body: str, rid: str
 ) -> dict[str, object]:
     """Prepare argument object for STREAMING_INIT_JS evaluation."""
     return {
-        **build_hooked_request_args(
-            url=url, headers=headers, body=body, timeout_s=timeout_s
-        ),
+        **build_hooked_request_args(url=url, headers=headers, body=body),
         "rid": rid,
     }
 
 
 def build_hooked_request_args(
-    *, url: str, headers: dict[str, str], body: str, timeout_s: float
+    *, url: str, headers: dict[str, str], body: str
 ) -> dict[str, object]:
     """Prepare argument object for HOOKED_REQUEST_JS evaluation."""
     args: dict[str, object] = {
         "url": url,
         "headers": headers,
         "body": body,
-        "timeout": timeout_s,
     }
     if any(
         key.lower() == "content-encoding" and value.lower() != "identity"

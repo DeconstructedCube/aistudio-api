@@ -64,13 +64,13 @@ onMounted(() => {
       <div class="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-xs">
         <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
           <Cpu class="w-4 h-4 text-emerald-600" />
-          <span>流式响应超时</span>
+          <span>推理流式传输</span>
         </div>
-        <div class="text-base font-bold text-gray-900 font-mono">
-          {{ config?.timeout_stream || 600 }}s
+        <div class="text-base font-bold text-gray-900">
+          无时长限制
         </div>
         <div class="text-[11px] text-gray-400 mt-1">
-          单次流式生成最大等待时间
+          支持超长思考与百万 Token 输出
         </div>
       </div>
 
