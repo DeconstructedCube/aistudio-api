@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from pathlib import Path
@@ -115,16 +116,78 @@ def get_aistudio_urls(
     return [AI_STUDIO_URL, AI_STUDIO_URL_FALLBACK]
 
 
-async def load_cookies_to_page(page: CDPPage, auth_file: str | None) -> bool:
-    """Inject cookies from auth_file into target page with session-conflict filtering."""
+_NATIVE_CREDENTIAL_NAMES: frozenset[str] = frozenset(
+    {"SID", "__Secure-1PSID", "LSID"}
+)
+
+
+def _cookie_expiry(cookie: dict[str, object]) -> float:
+    """Return a cookie's expiry timestamp, or -1 for session cookies."""
+    try:
+        return float(str(cookie.get("expires")))
+    except (TypeError, ValueError):
+        return -1.0
+
+
+async def _profile_has_live_credentials(page: CDPPage) -> bool:
+    """True when the browser profile already holds a usable Google session.
+
+    A profile that logged in natively carries Google's DBSC device binding,
+    which a CDP ``setCookies`` overwrite cannot reproduce. Overwriting it
+    downgrades the session and breaks silent renewal.
+    """
+    try:
+        cookies = await page.get_cookies()
+    except Exception:
+        return False
+    now = time.time()
+    for cookie in cookies:
+        if not isinstance(cookie, dict) or not cookie.get("value"):
+            continue
+        if str(cookie.get("name") or "") not in _NATIVE_CREDENTIAL_NAMES:
+            continue
+        expires = _cookie_expiry(cookie)
+        if expires > 0 and expires < now:
+            continue
+        return True
+    return False
+
+
+async def load_cookies_to_page(
+    page: CDPPage,
+    auth_file: str | None,
+    *,
+    force_inject: bool = False,
+    switching_account: bool | None = None,
+) -> bool:
+    """Inject cookies from auth_file into target page with session-conflict filtering.
+
+    The cookie jar is only flushed when the page actually moves to a different
+    account: clearing it on every reconnect wipes the native profile state
+    (including DBSC) negotiated for the very same account.
+    """
     if not auth_file or not Path(auth_file).is_file():
         return False
+    previous_auth = getattr(page, "account_auth_file", None)
+    if switching_account is None:
+        switching_account = previous_auth is not None and previous_auth != auth_file
     page.account_auth_file = auth_file
     try:
         data = json.loads(Path(auth_file).read_text(encoding="utf-8"))
         cookies = data.get("cookies") or []
         if not cookies:
             return False
+
+        if (
+            not force_inject
+            and not switching_account
+            and await _profile_has_live_credentials(page)
+        ):
+            log.info(
+                "浏览器原生 Profile 已持有有效 Google 凭据，跳过覆盖注入 (auth_file=%s)",
+                auth_file,
+            )
+            return True
 
         cleaned_cookies = [
             c
@@ -358,6 +421,43 @@ async def verify_account_identity(page: CDPPage, auth_file: str | None) -> bool:
     return is_verified
 
 
+def _cookie_key(cookie: dict[str, object]) -> tuple[str, str, str]:
+    """Identity of a cookie inside the jar: name + domain + path."""
+    return (
+        str(cookie.get("name") or ""),
+        str(cookie.get("domain") or ""),
+        str(cookie.get("path") or "/"),
+    )
+
+
+def merge_cookie_sets(
+    existing: list[dict[str, object]],
+    fresh: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """Merge a freshly scraped cookie set over the persisted one.
+
+    The browser can only report cookies reachable from the current document,
+    so a plain overwrite silently deletes credentials living on another domain
+    (``accounts.google.com`` root cookies while the page is on AI Studio).
+    Fresh values win; persisted cookies absent from the scrape are kept until
+    they actually expire.
+    """
+    now = time.time()
+    merged: dict[tuple[str, str, str], dict[str, object]] = {}
+    for cookie in existing:
+        if not isinstance(cookie, dict) or not cookie.get("name"):
+            continue
+        expires = _cookie_expiry(cookie)
+        if expires > 0 and expires < now:
+            continue
+        merged[_cookie_key(cookie)] = dict(cookie)
+    for cookie in fresh:
+        if not isinstance(cookie, dict) or not cookie.get("name"):
+            continue
+        merged[_cookie_key(cookie)] = dict(cookie)
+    return list(merged.values())
+
+
 async def save_browser_cookies(
     page: CDPPage,
     auth_file: str | None,
@@ -371,17 +471,37 @@ async def save_browser_cookies(
         if current_cookies is None:
             if page.is_closed():
                 return
+            current_url = getattr(page, "url", "") or ""
+            if is_login_page_url(current_url):
+                log.warning(
+                    "页面停留在 Google 登录页，跳过 Cookie 回写以防覆盖有效凭据 (url=%s)",
+                    current_url,
+                )
+                return
             current_cookies = await page.get_cookies()
         if not current_cookies:
             return
         auth_path = Path(auth_file)
-        origins = []
+        existing_cookies: list[dict[str, object]] = []
+        origins: list[object] = []
         if auth_path.exists():
             with suppress(Exception):
                 existing = json.loads(auth_path.read_text(encoding="utf-8"))
                 origins = existing.get("origins", [])
-        atomic_write_json(auth_path, {"cookies": current_cookies, "origins": origins})
-        log.info("已保存 %d 个 Cookie 至 %s", len(current_cookies), auth_file)
+                raw_existing = existing.get("cookies")
+                if isinstance(raw_existing, list):
+                    existing_cookies = [
+                        c for c in raw_existing if isinstance(c, dict)
+                    ]
+        merged = merge_cookie_sets(existing_cookies, current_cookies)
+        atomic_write_json(auth_path, {"cookies": merged, "origins": origins})
+        log.info(
+            "已保存 %d 个 Cookie 至 %s (本次采集 %d 个，合并保留 %d 个)",
+            len(merged),
+            auth_file,
+            len(current_cookies),
+            max(len(merged) - len(current_cookies), 0),
+        )
     except Exception as e:
         log.debug("保存 Cookie 失败: %s", e)
 

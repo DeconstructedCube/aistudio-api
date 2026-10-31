@@ -60,6 +60,17 @@ BLOCKED_URL_PATTERNS: list[str] = [
     "*CreatePrompt*",
 ]
 
+# Domains whose cookies must survive a scrape: Google keeps the credentials that
+# can silently renew an expired session on ``accounts.google.com``, and a page
+# scoped ``Network.getCookies`` never reports them.
+COOKIE_QUERY_URLS: tuple[str, ...] = (
+    "https://aistudio.google.com/",
+    "https://accounts.google.com/",
+    "https://myaccount.google.com/",
+    "https://www.google.com/",
+    "https://google.com/",
+)
+
 
 class CDPError(Exception):
     """Exception raised for CDP JSON-RPC errors."""
@@ -614,17 +625,41 @@ class CDPPage:
             return False
 
     async def get_cookies(self) -> list[dict[str, object]]:
-        """Retrieve cookies via CDP Network domain."""
-        res = await self.cdp.send("Network.getCookies")
-        raw_cookies = res.get("cookies")
-        if isinstance(raw_cookies, list):
+        """Retrieve every cookie held by the browser profile, all domains.
+
+        ``Network.getCookies`` without a ``urls`` filter only answers for the
+        currently loaded document, which silently drops the
+        ``accounts.google.com`` root credentials whenever the page sits on
+        ``aistudio.google.com``. Prefer the browser-scoped
+        ``Storage.getCookies`` and fall back to an explicit multi-domain query.
+        """
+        raw_cookies = await self._fetch_all_cookies()
+        if raw_cookies:
             self._cached_cookies = {
                 str(c.get("name") or ""): str(c.get("value") or "")
                 for c in raw_cookies
                 if c.get("name")
             }
-            return raw_cookies
-        return []
+        return raw_cookies
+
+    async def _fetch_all_cookies(self) -> list[dict[str, object]]:
+        """Scrape the whole browser cookie jar, degrading gracefully."""
+        with contextlib.suppress(Exception):
+            res = await self.cdp.send("Storage.getCookies")
+            scoped = res.get("cookies")
+            if isinstance(scoped, list) and scoped:
+                return [c for c in scoped if isinstance(c, dict)]
+        try:
+            res = await self.cdp.send(
+                "Network.getCookies", {"urls": list(COOKIE_QUERY_URLS)}
+            )
+        except Exception as e:
+            log.debug("获取 Cookie 失败: %s", e)
+            return []
+        scoped = res.get("cookies")
+        if not isinstance(scoped, list):
+            return []
+        return [c for c in scoped if isinstance(c, dict)]
 
     async def set_cookies(
         self, cookies: list[dict[str, object]] | list[dict[str, str]]
@@ -668,8 +703,17 @@ class CDPPage:
                 elif ss_str == "strict":
                     item["sameSite"] = "Strict"
 
-            if "expires" in c and c["expires"] is not None:
-                item["expires"] = float(str(c["expires"]))
+            # CDP reads ``expires <= 0`` as "expired in 1970" and drops the
+            # cookie on arrival, while getCookies reports session cookies as
+            # ``expires: -1``. Omit the field so they stay session cookies.
+            expires = c.get("expires")
+            if expires is not None:
+                try:
+                    expires_val = float(str(expires))
+                except (TypeError, ValueError):
+                    expires_val = 0.0
+                if expires_val > 0:
+                    item["expires"] = expires_val
 
             formatted.append(item)
 
