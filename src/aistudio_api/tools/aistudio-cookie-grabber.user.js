@@ -5,6 +5,8 @@
 // @description  在 Google AI Studio 网页上一键自动抓取浏览器登录的全部账号 Cookie、authUser 索引与权益等级，并支持一键直接同步到本地 aistudio-api 网关服务。
 // @author       omp & Lianues
 // @match        https://aistudio.google.com/*
+// @match        https://aistudio.google.com*
+// @match        http://aistudio.google.com/*
 // @grant        GM_cookie
 // @grant        GM_setClipboard
 // @grant        GM_xmlhttpRequest
@@ -17,7 +19,7 @@
 // @connect      accounts.google.com
 // @connect      ogs.google.com
 // @connect      alkalimakersuite-pa.clients6.google.com
-// @run-at       document-end
+// @run-at       document-idle
 // ==/UserScript==
 
 (function () {
@@ -232,7 +234,7 @@
       position: 'fixed',
       bottom: '24px',
       right: '24px',
-      zIndex: '999999',
+      zIndex: '2147483647',
       display: 'flex',
       flexDirection: 'column',
       gap: '8px',
@@ -324,14 +326,23 @@
     container.appendChild(btnSyncAll);
     container.appendChild(btnCopyBundle);
     container.appendChild(statusText);
-    document.body.appendChild(container);
+    return container;
   }
 
-  if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    createFloatingUI();
-  } else {
-    window.addEventListener('DOMContentLoaded', createFloatingUI);
+  console.log('%c[AIStudio Sync Tool] 助手脚本已成功激活！', 'color:#2563eb;font-weight:bold;font-size:14px;');
+
+  let containerInstance = null;
+  function ensureFloatingUI() {
+    if (!document.body) return;
+    if (document.getElementById('aistudio-cookie-grabber-panel')) return;
+    if (!containerInstance) {
+      containerInstance = createFloatingUI();
+    }
+    document.body.appendChild(containerInstance);
   }
+
+  setInterval(ensureFloatingUI, 1000);
+  ensureFloatingUI();
 
   GM_registerMenuCommand('🚀 一键同步浏览器全部账号到 aistudio-api', async () => {
     try {
