@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         AccountMeta,
         AccountStore,
     )
+from aistudio_api.infrastructure.gateway.model_defaults import normalize_model_name
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("rotator")
@@ -56,7 +57,7 @@ def normalize_model_key(model: str | None) -> str | None:
     """统一模型标识（去除 models/ 前缀并转小写），确保单模型统计准确隔离。"""
     if not model:
         return None
-    return model.removeprefix("models/").lower()
+    return normalize_model_name(model)
 
 
 @dataclass(slots=True)

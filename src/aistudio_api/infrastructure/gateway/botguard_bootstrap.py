@@ -67,15 +67,14 @@ ENABLE_TEMPORARY_CHAT_JS = """(() => {
         });
         if (moreBtn && moreBtn.getAttribute('aria-expanded') !== 'true') {
             moreBtn.click();
-            setTimeout(() => {
-                const menuItems = Array.from(document.querySelectorAll('[role="menuitem"], .mat-mdc-menu-item'));
-                const item = menuItems.find(el => {
-                    const s = ((el.innerText || '') + ' ' + (el.getAttribute('aria-label') || '')).toLowerCase();
-                    return s.includes('temporary') || s.includes('临时');
-                });
-                if (item) item.click();
-            }, 150);
-            return true;
+            const menuItem = Array.from(document.querySelectorAll('[role="menuitem"], .mat-mdc-menu-item')).find(item => {
+                const s = ((item.innerText || '') + ' ' + (item.getAttribute('aria-label') || '')).toLowerCase();
+                return s.includes('temporary') || s.includes('临时');
+            });
+            if (menuItem) {
+                menuItem.click();
+                return true;
+            }
         }
     } catch(e) {}
     return false;
@@ -84,40 +83,7 @@ ENABLE_TEMPORARY_CHAT_JS = """(() => {
 async def enable_temporary_chat(page: CDPPage) -> bool:
     """Enable Temporary Chat mode in AI Studio to prevent polluting user history."""
     try:
-        return bool(
-            await page.evaluate(
-                """(() => {
-                    const clickable = Array.from(document.querySelectorAll('button, [role="button"], mat-slide-toggle, a'));
-                    const tempBtn = clickable.find(el => {
-                        const s = ((el.innerText || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('mattooltip') || '')).toLowerCase();
-                        return (s.includes('temporary chat') || s.includes('temporary mode') || s.includes('turn on temporary') || s.includes('开启临时'))
-                            && !s.includes('data use policy');
-                    });
-                    if (tempBtn) {
-                        tempBtn.click();
-                        return true;
-                    }
-
-                    const moreBtn = clickable.find(el => {
-                        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-                        const txt = (el.innerText || '').trim();
-                        return aria === 'view more actions' || txt === 'more_vert';
-                    });
-                    if (moreBtn && moreBtn.getAttribute('aria-expanded') !== 'true') {
-                        moreBtn.click();
-                        const menuItem = Array.from(document.querySelectorAll('[role="menuitem"], .mat-mdc-menu-item')).find(item => {
-                            const s = ((item.innerText || '') + ' ' + (item.getAttribute('aria-label') || '')).toLowerCase();
-                            return s.includes('temporary') || s.includes('临时');
-                        });
-                        if (menuItem) {
-                            menuItem.click();
-                            return true;
-                        }
-                    }
-                    return false;
-                })()"""
-            )
-        )
+        return bool(await page.evaluate(ENABLE_TEMPORARY_CHAT_JS))
     except Exception as e:
         log.debug("尝试激活 Temporary chat 异常: %s", e)
         return False

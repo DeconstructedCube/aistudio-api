@@ -345,10 +345,7 @@ class AccountStore:
     def _find_registered_account(
         self, registry: Registry, account_id: str
     ) -> AccountMeta | None:
-        for stored_id, meta in registry.accounts.items():
-            if stored_id == account_id:
-                return meta
-        return None
+        return registry.accounts.get(account_id)
 
     def get_account(self, account_id: str) -> AccountMeta | None:
         """获取单个账号。"""

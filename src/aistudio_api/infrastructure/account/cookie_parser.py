@@ -8,6 +8,10 @@ import re
 import time
 import uuid
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import httpx
 
 from aistudio_api.infrastructure.utils.common import mask_email
 from aistudio_api.infrastructure.utils.logger import get_logger
@@ -345,6 +349,8 @@ def parse_emails_from_ogs_html(
 async def probe_account_emails_map(
     raw_or_dict: object,
     auth_user: str = "0",
+    *,
+    client: httpx.AsyncClient | None = None,
 ) -> dict[str, str]:
     """通过 Google OneGoogleWidget / AI Studio 页面探测全部已登录子账号的邮箱映射。"""
     cookie_dict = (
@@ -366,24 +372,31 @@ async def probe_account_emails_map(
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
         "Cookie": cookie_header,
     }
+
+    async def _do_fetch(http_client: httpx.AsyncClient) -> dict[str, str]:
+        resp = await http_client.get(
+            f"https://ogs.google.com/u/{u_index}/widget/account",
+            headers=headers,
+        )
+        if resp.status_code == 200:
+            emails = parse_emails_from_ogs_html(resp.text, u_index)
+            if emails:
+                return emails
+        resp_ai = await http_client.get(
+            f"https://aistudio.google.com/u/{u_index}/prompts/new_chat",
+            headers=headers,
+        )
+        if resp_ai.status_code == 200:
+            return parse_emails_from_ogs_html(resp_ai.text, u_index)
+        return {}
+
     try:
+        if client is not None:
+            return await _do_fetch(client)
         async with httpx.AsyncClient(
             timeout=8.0, proxy=settings.proxy_url, follow_redirects=True
-        ) as client:
-            resp = await client.get(
-                f"https://ogs.google.com/u/{u_index}/widget/account",
-                headers=headers,
-            )
-            if resp.status_code == 200:
-                emails = parse_emails_from_ogs_html(resp.text, u_index)
-                if emails:
-                    return emails
-            resp_ai = await client.get(
-                f"https://aistudio.google.com/u/{u_index}/prompts/new_chat",
-                headers=headers,
-            )
-            if resp_ai.status_code == 200:
-                return parse_emails_from_ogs_html(resp_ai.text, u_index)
+        ) as new_client:
+            return await _do_fetch(new_client)
     except Exception as e:
         logger.debug("通过 HTTP 探测子账号 u/%s 邮箱失败: %s", u_index, e)
     return {}
@@ -474,8 +487,10 @@ async def probe_google_accounts_infinite(
 
     auth_user_idx = 0
     consecutive_failures = 0
-    emails_map = await probe_account_emails_map(cookie_dict, auth_user="0")
     async with httpx.AsyncClient(timeout=10.0, proxy=settings.proxy_url) as client:
+        emails_map = await probe_account_emails_map(
+            cookie_dict, auth_user="0", client=client
+        )
         while True:
             u_index = str(auth_user_idx)
             auth_header = calculate_sapisid_hash(cookie_dict)
@@ -514,7 +529,7 @@ async def probe_google_accounts_infinite(
                     if not detected_email:
                         try:
                             extra_map = await probe_account_emails_map(
-                                cookie_dict, auth_user=u_index
+                                cookie_dict, auth_user=u_index, client=client
                             )
                             emails_map.update(extra_map)
                             detected_email = emails_map.get(u_index)

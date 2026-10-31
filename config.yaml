@@ -30,7 +30,7 @@ rotator:
     rate_limited_short: 60           # 偶发 429 临时避让冷却 (秒)
     rate_limited_drip: 300           # 滴灌隔离冷却 (秒)
     rate_limited_drip_extended: 600  # 多次滴灌隔离冷却 (秒)
-    auth_error: 300                  # 遇到 403 权限拒绝临时隔离 (秒)
+    # 403 认证异常采用动态软惩罚机制 (auth_errors 加权 +200)，不加硬冷却锁，允许标签页自愈重试
 
 # 付费模型准入与主动抢切规则 (彻底解耦硬编码关键词)
 paid_model_rules:

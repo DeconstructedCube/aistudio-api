@@ -241,7 +241,7 @@ async def test_rotator_auth_error_failover():
     assert next_acc is not None
     assert next_acc.id == "acc_2"
 
-    # 新进请求（未指定 failed_account_id）也应该自动规避仍在 auth_cooldown 的 acc_1，直接选择 acc_2
+    # 新进请求（未指定 failed_account_id）也因 acc_1 具有 auth_errors 惩罚分 (+200) 而自动优先选择健康的 acc_2
     new_req_acc = await rotator.get_next_account(
         model="gemini-3.8-flash",
         current_account_id=None,

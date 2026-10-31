@@ -306,3 +306,4 @@ async def test_streaming_metadata_event_does_not_block_failover():
     # 验证重试成功完成
     assert attempt_count == 2
     assert any("Hello world after retry" in str(c) for c in chunks)
+

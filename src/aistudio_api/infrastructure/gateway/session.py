@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
@@ -367,6 +368,10 @@ class BrowserSession:
         ctx: SessionContext | None = None,
     ) -> str:
         active_ctx = ctx or await self.ensure_ready()
+        # 严格遵守 Google AI Studio 前端 JS 逆向逻辑 (见 live_m=_b.js: _.gD / _.jn / _.VC):
+        # 1. 仅提取 contents (字段 2)，绝不包含 system_instruction
+        # 2. 遍历每个 Part: 文本 -> getText(), 内联图片 -> getData().Fe(), 文件 -> getId(), 其余 -> ""
+        # 3. 数组所有元素以单空格 " " 拼接后计算 sha256(utf-8).hexdigest()
         hash_parts: list[str] = []
         for content in contents:
             for part in content.parts:
@@ -480,8 +485,6 @@ class BrowserSession:
             if self._stream_cleanup_count % 10 == 0:
                 with suppress(Exception):
                     await target_page.collect_garbage()
-                import gc
-
                 gc.collect()
 
     async def import_cookies(

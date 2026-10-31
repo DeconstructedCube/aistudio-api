@@ -78,6 +78,7 @@ def clean_upstream_error_message(raw_msg: str) -> str:
     if not raw_msg:
         return ""
     text = raw_msg.strip()
+    # 若不包含 JSPB/batchexecute 特征结构，直接保留原始错误文本
     if "[,[" not in text and "[null,[" not in text and not text.startswith("[,"):
         return text
     inner = text

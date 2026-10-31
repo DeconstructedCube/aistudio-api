@@ -201,29 +201,34 @@ _.l(requestProto, 5, t);             // 3. 将 Token 注入 Protobuf 字段 5 (W
    };
    ```
 
-2. **生成 BotGuard 快照 (`_.jp` / `_.Dp` / `snapKey`)**：
+2. **生成 BotGuard 快照 (`_.Pn` / `_.jp` / `_.Dp` / `snapKey`)**：
    前端调用被检测到的专属签名函数（在 `default_MakerSuite` 中动态匹配注册）：
    ```javascript
-   // 实测最新版本 (2026-09-28 live 验证):
-   _.jp = function(a, b) {
+   // 实测最新版本 (2026-10-27 live AST 验证 - live_m=_b.js):
+   _.Pn = function(a, b) {
        return _.y(function*() {
            yield a.H; // 等待 BotGuardService 初始化 Promise
            return a.A
-               ? (yield Vqb(a.A), a.A.snapshot({ Bcc: { content: b } }))
+               ? (yield Fxb(a.A), a.A.snapshot({ BFc: { content: b } }))
                : "";
+       });
+   };
+   _.gD = function(a) {
+       return _.y(function*() {
+           var b = _.Ck(a, _.au, 2).flatMap(c => c.Rg()).map(_.jn);
+           return _.VC(b.join(" "));
        });
    };
    // 历史版本混淆符号参考:
-   _.Dp = function(service, contentHash) {
-       return _.z(function*() {
-           yield service.H;
-           return service.A
-               ? (yield JUa(service.A), service.A.snapshot({ e9b: { content: contentHash } }))
-               : "";
-       });
-   };
+   // 2026-09-28: _.jp = (a, b) => a.A.snapshot({ Bcc: { content: b } })
+   // 更早版本:   _.Dp = (a, b) => a.A.snapshot({ e9b: { content: b } })
    ```
-   > **符号混淆与动态匹配**：Google 构建版本更新时会重置混淆名（如类名 `_.QC`、签名函数 `_.jp`、参数键 `Bcc` 等），因此系统通过源码特征（`.snapshot`、`content`、`yield`）动态定位函数，避免硬编码混淆符号。
+   > **关键事实说明（严格对齐网页源码 AST 分析）**：
+   > 1. `_.Ck(a, _.au, 2)` 仅访问请求 Protobuf 的字段 2（即 `contents` 消息体），**绝不包含**字段 6（`system_instruction`）。
+   > 2. `_.jn` 仅对文本 (tag 2)、内联数据 (tag 3)、文件 (tag 6) 提取字符串，其余非文本 Part（函数调用、执行结果等）**统一返回空字符串 `""`**。
+   > 3. 数组所有元素以单空格 `" "` 进行 `join`，**不作过滤**，随后计算 SHA-256 Hex 摘要。
+   >
+   > **符号混淆与动态匹配**：Google 构建版本更新时会重置混淆名（如类名 `_.QC`/`_.nC`、签名函数 `_.Pn`/`_.jp`、参数键 `BFc`/`Bcc` 等），因此系统通过源码特征（`.snapshot`、`content`、`yield`）动态定位函数，避免硬编码混淆符号。
    >
    > **生命周期与状态**：
    > - 快照 Token 与单次请求内容及时间戳绑定，不跨请求复用。
@@ -324,7 +329,7 @@ flowchart TD
 当 BotGuard 校验失败（快照缺失、快照过期、内容哈希不一致或身份冲突）时，服务端返回 **HTTP 403**，响应体为 JSON 数组 `[,[7,"The caller does not have permission"]]`（对应 gRPC 状态码 7 `PERMISSION_DENIED`）。
 
 网关针对该报错建立两级自愈机制：
-1. **多账号故障转移（Failover）**：网关自动对触发 403 的故障账号设置 300 秒短时隔离（`auth_cooldown`），优先调度下一个健康账号，避免在受限账号上无效重试。
+1. **多账号故障转移（Failover）**：网关自动对触发 403 的故障账号增加调度惩罚分（`auth_errors * 200.0`），优先调度下一个健康账号，同时不加硬冷却锁，允许同账号通过换标签页或在位重握手自愈。
 2. **单账号在位重建（In-Place Recovery）**：当无备用账号可用时，网关清空请求模板缓存，重载 Cookie 并通过 `ensure_botguard_service(force_refresh=True)` 重新执行页面导航与 WAA 挑战握手，恢复服务可用性。
 
 ---

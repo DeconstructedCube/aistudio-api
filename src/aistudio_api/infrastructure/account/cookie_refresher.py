@@ -12,8 +12,6 @@ from aistudio_api.infrastructure.utils.logger import get_logger
 
 log = get_logger("cookie_refresher")
 
-# Keep browser injection behavior close to the original implementation that was
-# known to produce a working login session after the browser visited Google.
 AUTH_COOKIE_NAMES = {
     "SID",
     "SSID",
