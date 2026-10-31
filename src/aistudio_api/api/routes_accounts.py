@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path as FastApiPath
@@ -572,7 +573,23 @@ async def import_cookies(
     account_service: AccountService = Depends(get_account_service),
     runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> ImportCookiesResponse:
-    """从 cookie 导入账号（支持 JSON 数组、Netscape 或 KV）。"""
+    """从 cookie 导入账号（支持 JSON 数组、Netscape、KV 或油猴导出的 JSON 对象）。"""
+    raw_text = req.cookies.strip()
+    if raw_text.startswith("{") and raw_text.endswith("}"):
+        with contextlib.suppress(Exception):
+            parsed_tm = json.loads(raw_text)
+            if isinstance(parsed_tm, dict):
+                if "authUser" in parsed_tm and req.auth_user == "0":
+                    req.auth_user = str(parsed_tm["authUser"])
+                if "g1Tier" in parsed_tm and not req.tier:
+                    tm_tier = str(parsed_tm["g1Tier"]).upper()
+                    if tm_tier == "TIER1":
+                        req.tier = "Pro"
+                    elif tm_tier == "TIER2":
+                        req.tier = "Ultra"
+                    elif tm_tier == "TIER0":
+                        req.tier = "Free"
+
     storage_state = parse_cookie_string(req.cookies)
     raw_cookies = storage_state.get("cookies")
     cookie_list: list[dict[str, object]] = (
