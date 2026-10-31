@@ -126,6 +126,7 @@ async def health():
 
 
 @public_router.get("/tools/aistudio-cookie-grabber.user.js")
+@public_router.get("/api/tools/aistudio-cookie-grabber.user.js")
 async def get_tampermonkey_script() -> Response:
     """提供 AI Studio 多账号一键自动抓取与同步油猴脚本。"""
     from pathlib import Path
