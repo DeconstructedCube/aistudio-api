@@ -575,21 +575,54 @@ async def import_cookies(
 ) -> ImportCookiesResponse:
     """从 cookie 导入账号（支持 JSON 数组、Netscape、KV 或油猴导出的 JSON 对象）。"""
     raw_text = req.cookies.strip()
-    if raw_text.startswith("{") and raw_text.endswith("}"):
+    if raw_text.startswith(("{", "[")):
         with contextlib.suppress(Exception):
-            parsed_tm = json.loads(raw_text)
-            if isinstance(parsed_tm, dict):
-                if "authUser" in parsed_tm and req.auth_user == "0":
-                    req.auth_user = str(parsed_tm["authUser"])
-                if "g1Tier" in parsed_tm and not req.tier:
-                    tm_tier = str(parsed_tm["g1Tier"]).upper()
+            parsed_json = json.loads(raw_text)
+            # Check if this is a multi-account bundle
+            bundle_list: list[object] | None = None
+            if isinstance(parsed_json, dict) and "accounts" in parsed_json and isinstance(parsed_json["accounts"], list):
+                bundle_list = parsed_json["accounts"]
+            elif isinstance(parsed_json, list) and len(parsed_json) > 0 and isinstance(parsed_json[0], dict) and "cookies" in parsed_json[0]:
+                bundle_list = parsed_json
+
+            if bundle_list:
+                bundle_req = ImportBundleRequest(
+                    accounts=[
+                        BundleAccountItem(
+                            name=str(a.get("name") or "Google Account"),
+                            email=a.get("email") if isinstance(a.get("email"), str) else None,
+                            cookies=str(a.get("cookies") or ""),
+                            auth_user=str(a.get("auth_user") or a.get("authUser") or "0"),
+                            tier=str(a.get("tier") or a.get("g1Tier") or "Free"),
+                        )
+                        for a in bundle_list
+                        if isinstance(a, dict) and a.get("cookies")
+                    ]
+                )
+                bundle_res = await import_bundle(bundle_req, account_service, runtime_state)
+                first_id = bundle_res.accounts[0].id if bundle_res.accounts else "bundle"
+                return ImportCookiesResponse(
+                    account_id=first_id,
+                    name=f"已成功批量导入 {bundle_res.imported_count} 个账号",
+                    cookie_count=bundle_res.imported_count,
+                    auth_user="0",
+                    domain_summary={},
+                )
+
+            # Single account JSON export (Tampermonkey)
+            if isinstance(parsed_json, dict):
+                if "authUser" in parsed_json and req.auth_user == "0":
+                    req.auth_user = str(parsed_json["authUser"])
+                if "g1Tier" in parsed_json and not req.tier:
+                    tm_tier = str(parsed_json["g1Tier"]).upper()
                     if tm_tier == "TIER1":
                         req.tier = "Pro"
                     elif tm_tier == "TIER2":
                         req.tier = "Ultra"
                     elif tm_tier == "TIER0":
                         req.tier = "Free"
-
+                if "email" in parsed_json and not req.email:
+                    req.email = str(parsed_json["email"])
     storage_state = parse_cookie_string(req.cookies)
     raw_cookies = storage_state.get("cookies")
     cookie_list: list[dict[str, object]] = (
