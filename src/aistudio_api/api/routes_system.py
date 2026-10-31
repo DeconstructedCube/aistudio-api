@@ -7,7 +7,7 @@ import time
 from typing import TYPE_CHECKING
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from aistudio_api.api.dependencies import get_runtime_state
@@ -123,28 +123,6 @@ def stats_response() -> StatsResponse:
 @public_router.get("/health", response_model=HealthResponse)
 async def health():
     return health_response()
-
-
-@public_router.get("/tools/aistudio-cookie-grabber.user.js")
-@public_router.get("/api/tools/aistudio-cookie-grabber.user.js")
-async def get_tampermonkey_script() -> Response:
-    """提供 AI Studio 多账号一键自动抓取与同步油猴脚本。"""
-    from pathlib import Path
-
-    script_path = (
-        Path(__file__).resolve().parent.parent
-        / "tools"
-        / "aistudio-cookie-grabber.user.js"
-    )
-    if not script_path.is_file():
-        raise HTTPException(status_code=404, detail="脚本不存在")
-    return Response(
-        content=script_path.read_text(encoding="utf-8"),
-        media_type="application/javascript; charset=utf-8",
-        headers={
-            "Content-Disposition": "inline; filename=aistudio-cookie-grabber.user.js"
-        },
-    )
 
 @protected_router.get("/stats", response_model=StatsResponse)
 async def stats():

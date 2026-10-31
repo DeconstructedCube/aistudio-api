@@ -17,7 +17,6 @@ import {
   Trash2,
   Folder,
   Check,
-  Sparkles,
 } from 'lucide-vue-next'
 const accountsStore = useAccountsStore()
 const systemStore = useSystemStore()
@@ -127,16 +126,6 @@ async function handleDeletePreset(presetId: string, name: string) {
           <ArrowRightLeft class="w-4 h-4" />
           <span>切换下一账号</span>
         </Button>
-
-        <a
-          href="/api/tools/aistudio-cookie-grabber.user.js"
-          target="_blank"
-          class="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-xl text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200 transition-colors"
-          title="点击一键在浏览器安装或更新 AI Studio 多账号自动抓取助手"
-        >
-          <Sparkles class="w-4 h-4 text-brand-600" />
-          <span>安装多账号抓取助手</span>
-        </a>
 
         <Button
           variant="primary"

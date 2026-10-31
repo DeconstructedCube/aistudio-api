@@ -149,20 +149,6 @@ async function handleSubmit() {
         </button>
       </div>
 
-      <!-- Helper Banner -->
-      <div class="flex items-center justify-between p-2.5 bg-brand-50/70 border border-brand-200/60 rounded-xl text-xs">
-        <div class="flex items-center gap-2 text-brand-900">
-          <Sparkles class="w-4 h-4 text-brand-600 shrink-0" />
-          <span>在浏览器安装助手脚本，可一键自动抓取并同步全部账号</span>
-        </div>
-        <a
-          href="/api/tools/aistudio-cookie-grabber.user.js"
-          target="_blank"
-          class="font-semibold text-brand-700 hover:text-brand-800 underline shrink-0"
-        >
-          安装油猴助手 →
-        </a>
-      </div>
       <!-- Mode: File Import -->
       <div
         v-if="activeTab === 'file'"
