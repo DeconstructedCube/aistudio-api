@@ -58,7 +58,7 @@ def require_web_auth(request: Request) -> None:
     ):
         return
     client_ip = request.client.host if request.client else "unknown"
-    logger.warning("管理控制台鉴权失败: 来自 %s 的密码无效", client_ip)
+    logger.warning("管理控制台鉴权失败: 客户端=%s", client_ip)
     raise HTTPException(
         status_code=401,
         detail="管理控制台鉴权失败，请输入正确的管理密码",
@@ -82,7 +82,7 @@ def require_api_key(request: Request) -> None:
     token = _extract_request_token(request)
     if not token:
         client_ip = request.client.host if request.client else "unknown"
-        logger.warning("API 鉴权失败: 来自 %s 的请求缺少 API Key", client_ip)
+        logger.warning("API 鉴权失败: 客户端=%s, 缺少 API Key", client_ip)
         raise HTTPException(
             status_code=401,
             detail={
@@ -104,7 +104,7 @@ def require_api_key(request: Request) -> None:
     ):
         return
     client_ip = request.client.host if request.client else "unknown"
-    logger.warning("API 鉴权失败: 来自 %s 的 API Key 无效", client_ip)
+    logger.warning("API 鉴权失败: 客户端=%s, API Key 无效", client_ip)
     raise HTTPException(
         status_code=401,
         detail={
@@ -117,6 +117,7 @@ def require_api_key(request: Request) -> None:
 
 def get_client() -> AIStudioClient:
     if runtime_state.client is None:
+        logger.error("客户端未初始化，无法处理请求")
         raise HTTPException(
             503,
             detail={"message": "Client not initialized", "type": "service_unavailable"},
@@ -126,6 +127,7 @@ def get_client() -> AIStudioClient:
 
 def get_account_service():
     if runtime_state.account_service is None:
+        logger.error("账号服务未初始化，无法处理请求")
         raise HTTPException(
             503,
             detail={

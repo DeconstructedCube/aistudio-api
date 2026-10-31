@@ -70,7 +70,7 @@ def test_account_rotator_state_persistence(tmp_path, monkeypatch):
     rotator1.record_rate_limited(
         "acc_test1", "gemini-3.7-flash"
     )  # triggers 3rd 429 -> locks to midnight
-    rotator1.record_auth_error("acc_test2", "gemini-3.7-flash", cooldown_seconds=600.0)
+    rotator1.record_auth_error("acc_test2", "gemini-3.7-flash")
 
     assert rotator_file.is_file()
     saved = json.loads(rotator_file.read_text(encoding="utf-8"))
@@ -79,7 +79,7 @@ def test_account_rotator_state_persistence(tmp_path, monkeypatch):
     assert saved["acc_test1"]["total_rate_limited"] == 3
     assert "gemini-3.7-flash" in saved["acc_test1"]["daily_models"]
     assert saved["acc_test1"]["daily_models"]["gemini-3.7-flash"]["requests"] == 4
-    assert saved["acc_test2"]["auth_cooldown"] > 0
+    assert saved["acc_test2"]["auth_errors"] == 1
 
     # Simulate restart by creating a new AccountRotator instance
     rotator2 = AccountRotator(mock_store)
@@ -87,7 +87,7 @@ def test_account_rotator_state_persistence(tmp_path, monkeypatch):
     assert all_stats["acc_test1"]["requests"] == 4
     assert all_stats["acc_test1"]["rate_limited"] == 3
     assert not rotator2._stats["acc_test1"].is_available("gemini-3.7-flash")
-    assert not rotator2._stats["acc_test2"].is_available("gemini-3.7-flash")
+    assert rotator2._stats["acc_test2"].is_available("gemini-3.7-flash")
 
 
 def test_resolve_config_file_initializes_from_template_when_missing(

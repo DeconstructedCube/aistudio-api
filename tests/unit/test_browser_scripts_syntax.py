@@ -22,7 +22,7 @@ from aistudio_api.infrastructure.browser.scripts import (
     HOOKED_REQUEST_JS,
     INSTALL_HOOKS_JS,
     SNAPSHOT_GENERATE_JS,
-    STOP_GENERATION_JS,
+    SNAPSHOT_PROBE_JS,
     STREAM_CLEANUP_JS,
     STREAMING_INIT_JS,
 )
@@ -177,13 +177,13 @@ def test_evaluate_wrapper_expressions_parse_cleanly():
 
     scripts = [
         ("INSTALL_HOOKS_JS", INSTALL_HOOKS_JS, None),
-        ("SNAPSHOT_GENERATE_JS", SNAPSHOT_GENERATE_JS, "sample_hash"),
+        ("SNAPSHOT_GENERATE_JS", SNAPSHOT_GENERATE_JS, {"prompt": "test", "hash": "sample_hash"}),
         ("STREAMING_INIT_JS", STREAMING_INIT_JS, {"rid": "r1", "url": "http://x"}),
         ("STREAM_CLEANUP_JS", STREAM_CLEANUP_JS, "r1"),
         ("DIALOG_CLEANUP_JS", DIALOG_CLEANUP_JS, None),
         ("DOM_GC_CLEANUP_JS", DOM_GC_CLEANUP_JS, None),
         ("CHECK_IDENTITY_JS", CHECK_IDENTITY_JS, {"email": "a@b.com"}),
-        ("STOP_GENERATION_JS", STOP_GENERATION_JS, None),
+        ("SNAPSHOT_PROBE_JS", SNAPSHOT_PROBE_JS, {"hash": "h1", "timeoutMs": 1000}),
         ("EXTRACT_EMAIL_JS", EXTRACT_EMAIL_JS, None),
         ("HOOKED_REQUEST_JS", HOOKED_REQUEST_JS, None),
     ]

@@ -55,7 +55,7 @@ def _dump_stream_exchange(
     }
     path = out_dir / f"aistudio_stream_generate_content_{safe_model}_{timestamp}.json"
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
-    logger.info("已落盘流式原始请求/响应: %s", path)
+    logger.debug("已将流式原始请求与响应数据保存到文件: %s", path)
 
 
 def _summarize_error_body(raw_response: str, limit: int = 500) -> str:
@@ -89,7 +89,7 @@ class StreamingGateway:
         if self._session is None:
             raise RuntimeError("browser session is required for streaming xhr replay")
         modified_body = captured.body
-
+        logger.debug("开始流式处理: model=%s, 请求体长度=%d", model, len(modified_body))
         parser = IncrementalJSONStreamParser()
         latest_usage: dict[str, object] | None = None
         latest_finish_reason: int | None = None
@@ -128,7 +128,8 @@ class StreamingGateway:
                     candidate = parse_response_chunk(parsed_chunk)
                     if (
                         candidate.finish_reason is not None
-                        and candidate.finish_reason != WIRE_FINISH_REASON_CONTINUING
+                        and candidate.finish_reason
+                        not in (0, WIRE_FINISH_REASON_CONTINUING)
                     ):
                         latest_finish_reason = candidate.finish_reason
                     if candidate.thinking:
@@ -143,6 +144,30 @@ class StreamingGateway:
                         yield ("body", candidate.text)
                     if candidate.thought_signature:
                         yield ("thought_signature", candidate.thought_signature)
+        for parsed_chunk in parser.finish():
+            usage = parse_chunk_usage(parsed_chunk)
+            if usage:
+                latest_usage = usage
+            candidate = parse_response_chunk(parsed_chunk)
+            if (
+                candidate.finish_reason is not None
+                and candidate.finish_reason
+                not in (0, WIRE_FINISH_REASON_CONTINUING)
+            ):
+                latest_finish_reason = candidate.finish_reason
+            if candidate.thinking:
+                yield ("thinking", candidate.thinking)
+            if candidate.reasoning_images:
+                yield ("reasoning_images", candidate.reasoning_images)
+            if candidate.function_calls:
+                yield ("tool_calls", candidate.function_calls)
+            if candidate.images:
+                yield ("images", candidate.images)
+            if candidate.text:
+                yield ("body", candidate.text)
+            if candidate.thought_signature:
+                yield ("thought_signature", candidate.thought_signature)
+        logger.debug("流式数据流接收结束: model=%s, 分块到达=%s", model, has_received_chunks)
         raw_response = "".join(raw_parts)
         _dump_stream_exchange(
             model=model,
@@ -169,5 +194,7 @@ class StreamingGateway:
             )
         if latest_finish_reason is not None:
             yield ("finish_reason", latest_finish_reason)
+        else:
+            yield ("finish_reason", 1)
         yield ("usage", latest_usage)
         yield ("done", None)

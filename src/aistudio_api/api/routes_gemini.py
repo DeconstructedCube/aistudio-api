@@ -25,7 +25,7 @@ async def generate_content(
     req: GeminiGenerateContentRequest,
     client: AIStudioClient = Depends(get_client),
 ):
-    logger.info("收到 Gemini generateContent 请求: model=%s", model_path)
+    logger.info("收到 generateContent 请求: model=%s", model_path)
     return await handle_gemini_generate_content(model_path, req, client, stream=False)
 
 
@@ -35,5 +35,5 @@ async def stream_generate_content(
     req: GeminiGenerateContentRequest,
     client: AIStudioClient = Depends(get_client),
 ):
-    logger.info("收到 Gemini streamGenerateContent 流式请求: model=%s", model_path)
+    logger.info("收到 streamGenerateContent 请求: model=%s", model_path)
     return await handle_gemini_generate_content(model_path, req, client, stream=True)

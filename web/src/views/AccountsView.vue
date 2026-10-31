@@ -125,7 +125,7 @@ async function handleDeletePreset(presetId: string, name: string) {
           @click="handleForceNext"
         >
           <ArrowRightLeft class="w-4 h-4" />
-          <span>顺延切号</span>
+          <span>切换下一账号</span>
         </Button>
 
         <Button
@@ -239,6 +239,9 @@ async function handleDeletePreset(presetId: string, name: string) {
         <h3 class="font-bold text-gray-900 text-base">
           保存账号预设
         </h3>
+        <div class="p-2.5 bg-brand-50/70 border border-brand-200/60 rounded-xl text-xs text-brand-900">
+          当前方案将包含 <strong>{{ accountsStore.accounts.filter(a => a.enabled !== false).length }}</strong> 个已启用账号
+        </div>
         <div class="space-y-3 text-xs">
           <div>
             <label class="block font-medium text-gray-700 mb-1">方案名称</label>

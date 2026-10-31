@@ -30,11 +30,14 @@
     }
     if (!snapKey) return 'no_snapshot_fn';
 
-    // Hook snapshot function to capture service
+    // Hook snapshot function to capture real service
     if (!dms[snapKey].__api_hooked) {
         const origSnap = dms[snapKey];
         dms[snapKey] = function(...args) {
-            window.__AISTUDIO__.service = args[0];
+            const svc = args[0];
+            if (svc && (typeof svc === 'object' || typeof svc === 'function')) {
+                window.__AISTUDIO__.service = svc;
+            }
             const result = origSnap.apply(this, args);
             if (result instanceof Promise) {
                 return result.then(s => {

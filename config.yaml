@@ -8,7 +8,7 @@ logging:
   level: INFO
   # 是否转储每次 API 请求与响应的完整报文详情 (支持通过环境变量 DEBUG=true 触发)
   dump_requests: false
-  # 是否将请求与响应转储落盘为独立文件 (支持环境变量 AISTUDIO_DUMP_FILE=true 触发)
+  # 是否将请求与响应转储持久化保存为独立文件 (支持环境变量 AISTUDIO_DUMP_FILE=true 触发)
   dump_to_file: false
   # 转储文件保存目录 (默认为项目根目录下 dumps/)
   dump_dir: dumps

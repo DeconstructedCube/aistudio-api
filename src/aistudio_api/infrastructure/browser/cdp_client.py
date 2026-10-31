@@ -152,7 +152,7 @@ class CDPConnection:
                         log.debug("CDP 目标正常关闭: %s", reason)
                     else:
                         log.warning(
-                            "CDP 目标崩溃或断开: %s (参数=%s)",
+                            "CDP 目标异常退出: method=%s, params=%s",
                             method,
                             msg.get("params"),
                         )
@@ -330,7 +330,7 @@ class CDPPage:
 
         # Listen for renderer crash and inspector detached events to fail fast
         def on_crashed(params: dict[str, object]) -> None:
-            log.warning("CDP 页面渲染器崩溃: %s", params)
+            log.warning("页面渲染进程崩溃: params=%s", params)
             self._is_closed = True
             self.cdp.fail_pending_futures(
                 RuntimeError("Page target crashed (renderer terminated)")
@@ -341,7 +341,7 @@ class CDPPage:
             if reason == "target_closed":
                 log.debug("CDP 页面检查器已分离 (目标关闭)")
             else:
-                log.warning("CDP 页面检查器已分离: %s", reason)
+                log.warning("页面检查器断开连接: reason=%s", reason)
             self._is_closed = True
             self.cdp.fail_pending_futures(
                 RuntimeError(f"Page inspector detached: {reason}")
@@ -675,9 +675,9 @@ class CDPPage:
 
         try:
             await self.cdp.send("Network.setCookies", {"cookies": formatted})
-            log.debug("已通过 CDP 成功注入 %d 个 Cookie", len(formatted))
+            log.debug("已通过 CDP 注入 Cookie: 数量=%d", len(formatted))
         except Exception as e:
-            log.warning("批量通过 CDP 注入 Cookie 失败 (%s)，正在尝试逐条重试", e)
+            log.warning("批量注入 Cookie 失败，改为逐条重试: 错误=%s", e)
             for item in formatted:
                 try:
                     await self.cdp.send("Network.setCookies", {"cookies": [item]})
@@ -863,10 +863,11 @@ class CDPClient:
                 page = CDPPage(conn, target_id)
                 await page.init_domains(block_assets=block_assets)
                 self.page = page
+                log.info("已连接至浏览器页面: target_id=%s", page.target_id)
                 return page
             except Exception as e:
                 last_exc = e
-                log.debug("连接页面第 %d 次尝试失败: %s", attempt + 1, e)
+                log.debug("连接页面失败: 尝试=%d, 错误=%s", attempt + 1, e)
                 if attempt < 2:
                     await asyncio.sleep(0.3)
         raise RuntimeError(
@@ -888,6 +889,7 @@ class CDPClient:
             await conn.connect()
             page = CDPPage(conn, target_id)
             await page.init_domains(block_assets=block_assets)
+            log.info("已创建新浏览器页面: target_id=%s", page.target_id)
             return page
         except Exception:
             await conn.close()

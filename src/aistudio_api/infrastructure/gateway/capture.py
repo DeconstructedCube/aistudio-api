@@ -36,7 +36,7 @@ class RequestCaptureService:
     def clear_templates(self) -> None:
         """清空捕获的请求模板（账号切换或强制刷新时调用）。"""
         self._templates.clear()
-        logger.info("已清空捕获模板缓存")
+        logger.info("已清空请求模板缓存")
 
     async def capture(
         self,
@@ -97,7 +97,7 @@ class RequestCaptureService:
             snapshot=snapshot,
         )
         logger.info(
-            "Hook 拦截成功: model=%s, snapshot=%s chars, body=%s chars",
+            "捕获请求模板成功: model=%s, 快照长度=%d, 请求体长度=%d",
             captured.model,
             len(captured.snapshot),
             len(captured.body),
@@ -141,5 +141,5 @@ class RequestCaptureService:
                 model=model,
             )
             self._templates[model] = template
-            logger.info("Hook 模板已就绪并缓存: model=%s", model)
+            logger.info("请求模板已就绪并缓存: model=%s", model)
             return template

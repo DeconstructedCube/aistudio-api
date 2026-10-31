@@ -44,8 +44,14 @@ function onFileChange(event: Event) {
     selectedFileContent.value = text
     try {
       const parsed = JSON.parse(text)
-      const list = Array.isArray(parsed) ? parsed : (parsed.accounts || parsed.profiles || [])
-      detectedCount.value = Array.isArray(list) ? list.length : 0
+      if (Array.isArray(parsed)) {
+        detectedCount.value = parsed.length
+      } else if (Array.isArray(parsed.cookies)) {
+        detectedCount.value = 1
+      } else {
+        const list = parsed.accounts || parsed.profiles || []
+        detectedCount.value = Array.isArray(list) ? list.length : 1
+      }
     } catch {
       detectedCount.value = null
     }

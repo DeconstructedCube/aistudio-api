@@ -146,7 +146,7 @@ async function handleSave() {
       <div class="p-4 bg-gray-50/60 border border-gray-200/70 rounded-2xl space-y-2">
         <div class="flex items-center gap-1.5 text-xs font-semibold text-gray-700">
           <HardDrive class="w-3.5 h-3.5 text-brand-600" />
-          <span>报文持久化落盘</span>
+          <span>报文持久化保存</span>
         </div>
         <ConfigSwitch
           :model-value="dumpToFile"

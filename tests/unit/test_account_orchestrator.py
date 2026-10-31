@@ -185,7 +185,6 @@ async def test_try_switch_account_single_account_recovery():
         recovered = await try_switch_account(
             model="gemini-3.8-flash",
             failed_account_id="acc_1",
-            is_auth_error=True,
         )
         assert recovered is True
         mock_client.clear_templates.assert_called_once()
@@ -232,7 +231,6 @@ async def test_try_switch_account_session_expired_strictly_forbids_in_place_retr
         result = await try_switch_account(
             model="gemini-3.8-flash",
             failed_account_id="acc_1",
-            is_auth_error=True,
             is_session_expired=True,
         )
         # 严禁原地重试，必须返回 False
@@ -281,7 +279,6 @@ async def test_try_switch_account_session_expired_switches_to_healthy_account():
         result = await try_switch_account(
             model="gemini-3.8-flash",
             failed_account_id="acc_1",
-            is_auth_error=True,
             is_session_expired=True,
         )
         assert result is True

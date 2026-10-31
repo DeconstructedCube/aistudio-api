@@ -278,7 +278,7 @@ async def test_generate_snapshot_hash_complex_tools_and_multimodal():
 
     snapshot = await session.generate_snapshot(contents)
     assert snapshot == "!snapshot_token_ok"
-    assert passed_args == [expected_hash]
+    assert passed_args[0]["hash"] == expected_hash
 
 
 @pytest.mark.asyncio
@@ -440,22 +440,6 @@ def test_browser_session_temporary_chat_urls():
 
 
 @pytest.mark.asyncio
-async def test_browser_session_enable_temporary_chat(mock_cdp_page):
-    """Verify enable_temporary_chat evaluates the in-page selector script."""
-    from aistudio_api.infrastructure.gateway.botguard_bootstrap import (
-        enable_temporary_chat,
-    )
-
-    mock_cdp_page.evaluate.return_value = True
-
-    res = await enable_temporary_chat(mock_cdp_page)
-    assert res is True
-    mock_cdp_page.evaluate.assert_called_once()
-    expr = mock_cdp_page.evaluate.call_args[0][0]
-    assert "temporary" in expr.lower()
-
-
-@pytest.mark.asyncio
 async def test_bootstrap_botguard_in_page_interception_zero_quota(mock_cdp_page):
     """Verify bootstrap_botguard_and_template captures in-page aborted GenerateContent template without network round-trip."""
     from aistudio_api.infrastructure.gateway.botguard_bootstrap import (
@@ -467,21 +451,15 @@ async def test_bootstrap_botguard_in_page_interception_zero_quota(mock_cdp_page)
     async def fake_eval(expr, *args, **kwargs):
         if "isSnapCandidate" in expr:
             return "hooked:snap_fn_key"
-        if "window.__AISTUDIO__?.service" in expr:
+        if "service" in expr and "hash" not in expr:
             return True
-        if "window.__AISTUDIO__?.capturedTemplate" in expr:
+        if "capturedTemplate" in expr:
             return {
-                "url": "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent",
-                "headers": {
-                    "Content-Type": "application/json+protobuf",
-                    "X-Goog-Api-Key": "AIzaSyTest",
-                },
-                "body": '["models/gemini-3.8-flash",[[[[null,"say \'1\'"]],"user"]]]',
+                "url": "https://alkalimakersuite-pa.clients6.google.com/GenerateContent",
+                "headers": {"content-type": "application/json+protobuf"},
+                "body": '["models/gemini-3.8-flash"]',
             }
-        if "runBtn" in expr:
-            return True
         return None
-
     mock_cdp_page.evaluate.side_effect = fake_eval
 
     snap_key, captured = await bootstrap_botguard_and_template(

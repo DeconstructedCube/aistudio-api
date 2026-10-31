@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
 from fastapi import HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -174,16 +175,15 @@ async def handle_attempt_exception(
         ) from exc
 
     if isinstance(exc, SessionExpiredError):
-        logger.warning("账号会话失效，已被重定向到登录页: %s", exc)
+        logger.warning("账号登录已失效，被重定向到登录页: %s", exc)
         client.clear_templates()
         if not has_yielded_data and await try_switch_account(
             model=target_model,
             failed_account_id=failed_id,
-            is_auth_error=True,
             is_session_expired=True,
         ):
             logger.info(
-                "已切换至其他可用健康账号重试 (%d/%d)", attempt + 1, MAX_RETRIES
+                "已切换账号重试: 尝试=%d/%d", attempt + 1, MAX_RETRIES
             )
             return True
         raise HTTPException(
@@ -195,14 +195,31 @@ async def handle_attempt_exception(
         ) from exc
 
     if isinstance(exc, AuthError):
-        logger.warning("账号 403 权限拒绝: %s", exc)
+        logger.warning("账号权限被拒绝 (HTTP 403): %s", exc)
         client.clear_templates()
         record_rotator_event("auth_error", model=target_model)
-        if not has_yielded_data and await try_switch_account(
-            model=target_model, failed_account_id=failed_id, is_auth_error=True
-        ):
-            logger.info("切换至可用账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
+
+        # 1. 首次 403: 不刷新网页，直接重新走一遍签名与请求流程
+        if attempt == 0 and not has_yielded_data:
+            logger.warning(
+                "账号 403: 当前账号重新走签名流程重试 (尝试=%d/%d)",
+                attempt + 1,
+                MAX_RETRIES,
+            )
             return True
+
+        # 2. 当前账号重试依然 403: 尝试切换至备用账号重试一次
+        if attempt == 1 and not has_yielded_data and await try_switch_account(
+            model=target_model, failed_account_id=failed_id
+        ):
+            logger.warning(
+                "当前账号 403 重新签名仍未通过，已切换至备用账号重试 (尝试=%d/%d)",
+                attempt + 1,
+                MAX_RETRIES,
+            )
+            return True
+
+        # 3. 严格遵守重试次数限制，不再盲目重试，直接抛给下游
         raise HTTPException(
             403, detail={"message": str(exc), "type": "auth_error"}
         ) from exc
@@ -213,14 +230,14 @@ async def handle_attempt_exception(
         if not has_yielded_data and await try_switch_account(
             model=target_model, failed_account_id=failed_id
         ):
-            logger.info(
-                "429 触发限额，切换账号 (%d/%d): model=%s",
+            logger.warning(
+                "触发 429 配额限制，切换账号重试: 尝试=%d/%d, model=%s",
                 attempt + 1,
                 MAX_RETRIES,
                 target_model,
             )
             return True
-        logger.warning("全部账号在模型 %s 上均处于冷却状态", target_model)
+        logger.warning("所有账号在模型 %s 上均处于冷却状态", target_model)
         raise HTTPException(
             429,
             detail={
@@ -235,7 +252,7 @@ async def handle_attempt_exception(
         and attempt == 0
         and not has_yielded_data
     ):
-        logger.warning("Gemini 收到 204，清理模板缓存后重试一次")
+        logger.warning("收到上游 204 空响应，清理模板后重试")
         client.clear_templates()
         return True
 
@@ -247,26 +264,25 @@ async def handle_attempt_exception(
         and attempt < MAX_RETRIES - 1
     ):
         logger.warning(
-            "检测到 Google 上游偶发 404 (Ambiguous RPC method)，当场立即重试 (%d/%d): %s",
+            "上游偶发 404 方法未找到，立即重试: 尝试=%d/%d, 错误=%s",
             attempt + 1,
             MAX_RETRIES,
             clean_upstream_error_message(str(exc)),
         )
         client.clear_templates()
         return True
-
     if is_browser_session_hang_error(exc):
         logger.warning(
-            "模板或 BotGuard 捕获超时 (%d/%d): %s，切换账号重试",
+            "会话就绪超时，切换账号重试: 尝试=%d/%d, 错误=%s",
             attempt + 1,
             MAX_RETRIES,
             exc,
         )
         client.clear_templates()
         if not has_yielded_data and await try_switch_account(
-            model=target_model, failed_account_id=failed_id, is_auth_error=False
+            model=target_model, failed_account_id=failed_id
         ):
-            logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
+            logger.info("已切换账号重试: 尝试=%d/%d", attempt + 1, MAX_RETRIES)
             return True
         if (
             attempt < 2
@@ -279,7 +295,7 @@ async def handle_attempt_exception(
         if isinstance(exc, BrowserTransportError):
             runtime_state.record(target_model, "errors")
             record_rotator_event("error", model=target_model)
-            logger.warning("Gemini 浏览器传输层中断 (502): %s", exc)
+            logger.warning("浏览器传输中断 (502): %s", exc)
             raise HTTPException(
                 502, detail={"message": str(exc), "type": "upstream_error"}
             ) from exc
@@ -293,7 +309,7 @@ async def handle_attempt_exception(
             if status_code == 404
             else "upstream_error"
         )
-        logger.warning("Gemini 上游请求错误 (%d): %s", status_code, clean_msg)
+        logger.warning("上游返回请求错误: status=%d, message=%s", status_code, clean_msg)
         raise HTTPException(
             status_code, detail={"message": clean_msg, "type": error_type}
         ) from exc
@@ -301,15 +317,15 @@ async def handle_attempt_exception(
     if isinstance(exc, AistudioError):
         runtime_state.record(target_model, "errors")
         record_rotator_event("error", model=target_model)
-        logger.warning("Gemini 服务端异常: %s", exc)
+        logger.warning("服务端处理异常: %s", exc)
         raise HTTPException(
             500, detail={"message": str(exc), "type": "server_error"}
         ) from exc
 
     runtime_state.record(target_model, "errors")
     record_rotator_event("error", model=target_model)
-    logger.error("Gemini 未知严重异常: %s", exc)
-    logger.debug("Gemini 异常堆栈详情:", exc_info=True)
+    logger.error("请求处理发生未捕获异常: %s", exc)
+    logger.debug("异常堆栈详情:", exc_info=True)
     raise HTTPException(
         500, detail={"message": str(exc), "type": "server_error"}
     ) from exc
@@ -334,10 +350,11 @@ async def handle_gemini_generate_content(
         try:
             normalized = normalize_gemini_request(req, model_path)
             logger.info(
-                "Gemini 生成请求: model=%s, 对话轮数=%s, 流式=否, 尝试第 %d 次",
+                "处理非流式生成请求: model=%s, 对话轮数=%d, 尝试=%d/%d",
                 normalized.model,
                 len(req.contents),
                 attempt + 1,
+                MAX_RETRIES,
             )
             output = await client.generate_content(
                 model=normalized.model,
@@ -365,6 +382,15 @@ async def handle_gemini_generate_content(
                 "success",
                 usage=output.usage,
                 finish_reason=final_fr,
+            )
+            pt = output.usage.get("prompt_tokens") if output.usage else 0
+            ct = output.usage.get("completion_tokens") if output.usage else 0
+            logger.info(
+                "非流式请求完成: model=%s, finish_reason=%s, 输入tokens=%s, 输出tokens=%s",
+                normalized.model,
+                final_fr,
+                pt,
+                ct,
             )
             return GeminiGenerateContentResponse(
                 candidates=[
@@ -532,9 +558,10 @@ def _build_gemini_streaming_response(
 ) -> StreamingResponse:
     async def stream_response():
         normalized = None
+        stream_start_time = time.perf_counter()
         try:
             logger.info(
-                "Gemini 流式请求: model=%s, 对话轮数=%s",
+                "处理流式生成请求: model=%s, 对话轮数=%d",
                 model_path,
                 len(req.contents),
             )
@@ -546,6 +573,7 @@ def _build_gemini_streaming_response(
             last_stream_error: Exception | None = None
             for stream_attempt in range(MAX_RETRIES):
                 has_yielded_data = False
+                last_stream_error = None
                 final_usage = None
                 final_finish_reason = "STOP"
                 latest_response_id = None
@@ -573,11 +601,12 @@ def _build_gemini_streaming_response(
                         if event_type == "usage":
                             final_usage = text if isinstance(text, dict) else None
                         elif event_type == "finish_reason":
-                            final_finish_reason = (
-                                to_gemini_finish_reason(text)
-                                if isinstance(text, int)
-                                else str(text)
-                            )
+                            if text not in (None, 0, 22):
+                                final_finish_reason = (
+                                    to_gemini_finish_reason(text)
+                                    if isinstance(text, int)
+                                    else str(text)
+                                )
                         elif event_type == "response_id":
                             latest_response_id = str(text)
                         elif event_type == "thought_signature":
@@ -592,6 +621,13 @@ def _build_gemini_streaming_response(
                             )
                             buffered_thought_sig = None
                             if chunk:
+                                if not has_yielded_data:
+                                    ttft_ms = (time.perf_counter() - stream_start_time) * 1000
+                                    logger.info(
+                                        "流式响应开始推送: model=%s, 首包耗时=%.1fms",
+                                        normalized.model,
+                                        ttft_ms,
+                                    )
                                 has_yielded_data = True
                                 yield chunk
                     stream_completed = True
@@ -620,6 +656,17 @@ def _build_gemini_streaming_response(
                     usage=final_usage,
                     finish_reason=final_finish_reason,
                 )
+            elapsed_total_ms = (time.perf_counter() - stream_start_time) * 1000
+            pt = final_usage.get("prompt_tokens") if final_usage else 0
+            ct = final_usage.get("completion_tokens") if final_usage else 0
+            logger.info(
+                "流式请求完成: model=%s, 耗时=%.1fms, finish_reason=%s, 输入tokens=%s, 输出tokens=%s",
+                target_model,
+                elapsed_total_ms,
+                final_finish_reason,
+                pt,
+                ct,
+            )
             yield format_sse_usage(
                 final_usage,
                 finish_reason=final_finish_reason,
@@ -627,8 +674,8 @@ def _build_gemini_streaming_response(
                 response_id=latest_response_id,
             )
         except Exception as exc:
+            logger.warning("流式生成异常: model=%s, error=%s", model_path, exc)
             yield format_sse_error(exc)
-
     return StreamingResponse(
         stream_response(),
         media_type="text/event-stream",

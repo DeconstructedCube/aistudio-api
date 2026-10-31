@@ -64,13 +64,13 @@ onMounted(() => {
       <div class="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-xs">
         <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
           <Cpu class="w-4 h-4 text-emerald-600" />
-          <span>推理流式传输</span>
+          <span>日志输出模式</span>
         </div>
-        <div class="text-base font-bold text-gray-900">
-          无时长限制
+        <div class="text-base font-bold text-gray-900 font-mono">
+          {{ config?.log_level || 'INFO' }}
         </div>
         <div class="text-[11px] text-gray-400 mt-1">
-          支持超长思考与百万 Token 输出
+          报文持久化: {{ config?.dump_to_file ? '已启用' : '未启用' }}
         </div>
       </div>
 

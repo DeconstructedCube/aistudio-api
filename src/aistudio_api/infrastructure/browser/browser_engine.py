@@ -599,7 +599,7 @@ def cleanup_stale_chromium(
     killed_pids: list[int] = []
     if candidate_pids:
         log.info(
-            "发现 %d 个遗留或孤儿浏览器进程待清理: %s",
+            "发现 %d 个孤儿浏览器进程，开始清理: pids=%s",
             len(candidate_pids),
             sorted(candidate_pids),
         )
@@ -868,6 +868,7 @@ class ChromiumProcess:
 
     def terminate(self, timeout_s: float = 3.0) -> None:
         """Terminate the Chromium subprocess tree and companion watchdog safely."""
+        log.debug("正在终止 Chromium 进程: pid=%s, port=%d", getattr(self.process, "pid", None), self.port)
         _ACTIVE_CHROMIUM_PROCESSES.discard(self)
 
         # Close Windows Job Object if present (kills job processes on handle close)
@@ -960,7 +961,7 @@ def launch_chromium_process(
         extra_args=extra_args,
     )
     cmd = [executable, *args]
-    log.info("正在启动 CloakBrowser 进程: %s (调试端口 %d)", executable, port)
+    log.info("启动浏览器进程: %s, 调试端口=%d", executable, port)
 
     preexec = _setup_child_pdeathsig if platform.system() != "Windows" else None
     proc = subprocess.Popen(

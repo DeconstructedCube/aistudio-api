@@ -60,7 +60,7 @@ def _load_dump_requests_env() -> bool:
 
 
 def _load_dump_to_file_env() -> bool:
-    """检查 AISTUDIO_DUMP_FILE / AISTUDIO_DUMP_TO_FILE 环境变量是否启用请求转储落盘。"""
+    """检查 AISTUDIO_DUMP_FILE / AISTUDIO_DUMP_TO_FILE 环境变量是否启用将请求转储持久化保存到文件。"""
     val = _load_env("AISTUDIO_DUMP_FILE", "AISTUDIO_DUMP_TO_FILE")
     if val is None:
         return False

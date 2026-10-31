@@ -44,7 +44,7 @@ def _refresh_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
     try:
         from curl_cffi import requests
     except ImportError:
-        log.warning("未安装 curl_cffi，保持原始 Cookie 返回")
+        log.warning("未安装 curl_cffi，保留原始 Cookie")
         return dict(cookies)
     from aistudio_api.config import settings
 
@@ -63,13 +63,13 @@ def _refresh_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
             timeout=15,
             allow_redirects=True,
         )
-        log.debug("Google ServiceLogin 探活响应: HTTP %d", resp.status_code)
+        log.debug("Google 登录探活响应: status=%d", resp.status_code)
     except Exception as e:
         log.warning("刷新会话 Cookie 失败: %s", e)
         return dict(cookies)
 
     all_cookies = dict(session.cookies)
-    log.info("会话 Cookie 刷新完成: 共 %d 个", len(all_cookies))
+    log.info("Cookie 刷新完成: 数量=%d", len(all_cookies))
     return all_cookies
 
 
@@ -105,15 +105,15 @@ def load_cookies_from_string(cookie_string: str) -> list[dict[str, object]]:
             }
         )
     log.info(
-        "Cookie 合并完成: 原始=%d, 刷新=%d, 合并后=%d",
+        "Cookie 合并完成: 原始数量=%d, 刷新数量=%d, 合并后数量=%d",
         len(parsed),
         len(refreshed),
         len(merged),
     )
     if skipped_names:
-        log.info(
+        log.debug(
             "跳过 Host-only Cookie 注入: %s",
             sorted(skipped_names),
         )
-    log.info("Cookie 解析完成，共 %d 个有效凭据", len(cookies))
+    log.info("Cookie 解析完成: 有效凭据数=%d", len(cookies))
     return cookies

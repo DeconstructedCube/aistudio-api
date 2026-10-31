@@ -44,8 +44,10 @@
         // 2.2 点击该弹窗内部的主操作确认按钮
         const confirmKeywords = [
             '同意', '我同意', '继续', '确认', '开始', '开始构建', '开始使用', '接受',
+            '开启', '开启临时', '开启临时聊天', '启用', '下一步', '完成', '我了解', '我已知晓',
             'agree', 'accept', 'i agree', 'continue', 'confirm', 'get started',
-            'start building', 'code and chat', 'got it', 'ok', 'dismiss', 'close'
+            'start building', 'code and chat', 'got it', 'ok', 'dismiss', 'close',
+            'turn on', 'turn on temporary', 'turn on temporary chat', 'enable', 'next', 'done'
         ];
 
         // 仅在弹窗内部查找操作按钮

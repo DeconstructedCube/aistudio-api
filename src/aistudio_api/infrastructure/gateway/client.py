@@ -78,7 +78,7 @@ class AIStudioClient:
         """预热浏览器后端并加载 AI Studio 页面及捕获 BotGuard 服务。"""
         if self._session is not None:
             await self._session.ensure_botguard_service()
-            logger.info("浏览器预热完成")
+            logger.info("浏览器预热就绪")
 
     async def switch_auth(self, auth_file: str | None) -> None:
         """切换账号的 auth 文件并清空模板缓存。"""
@@ -121,7 +121,7 @@ class AIStudioClient:
         }
         path = out_dir / f"aistudio_{kind}_{safe_model}_{timestamp}.json"
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
-        logger.info("已落盘原始请求/响应: %s", path)
+        logger.debug("已将原始请求与响应数据保存到文件: %s", path)
 
     async def capture_request(
         self,
@@ -225,7 +225,7 @@ class AIStudioClient:
         sanitize_plain_text: bool = True,
     ) -> ModelOutput:
         async with self._session.request_scope():
-            logger.info("拦截请求: %r", f"{capture_prompt[:20]}...")
+            logger.debug("开始捕获请求: model=%s", model)
             captured = await self.capture_request(
                 prompt=capture_prompt,
                 model=model,
@@ -285,8 +285,8 @@ class AIStudioClient:
     ) -> ModelOutput:
         async with self._session.request_scope():
             logger.info(
-                "生图请求: %r, images=%s",
-                f"{prompt[:20]}...",
+                "处理生图请求: model=%s, 图片数=%d",
+                model,
                 len(images) if images else 0,
             )
             request_contents = contents or [
@@ -354,7 +354,7 @@ class AIStudioClient:
                     else Path(f"{save_path}.{ext}")
                 )
                 path.write_bytes(img.data)
-                logger.info("图片已保存: %s (%s bytes)", path, img.size)
+                logger.info("生图文件已保存: 路径=%s, 大小=%d 字节", path, img.size)
 
             return output
 

@@ -57,9 +57,7 @@ export const useAccountsStore = defineStore('accounts', () => {
 
       if (activeRes.status === 'fulfilled') {
         activeAccount.value = activeRes.value
-      } else if (accounts.value.length > 0 && !activeAccount.value) {
-        activeAccount.value = accounts.value[0]
-      } else if (accounts.value.length === 0) {
+      } else {
         activeAccount.value = null
       }
     } finally {

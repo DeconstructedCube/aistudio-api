@@ -18,10 +18,25 @@ STREAMING_INIT_JS = _load_js("streaming_init.js")
 STREAM_CLEANUP_JS = _load_js("stream_cleanup.js")
 HOOKED_REQUEST_JS = _load_js("hooked_request.js")
 SNAPSHOT_GENERATE_JS = _load_js("snapshot_generate.js")
-CHECK_IDENTITY_JS = _load_js("check_identity.js")
 STOP_GENERATION_JS = _load_js("stop_generation.js")
+SNAPSHOT_PROBE_JS = _load_js("snapshot_probe.js")
+CHECK_IDENTITY_JS = _load_js("check_identity.js")
 DOM_GC_CLEANUP_JS = _load_js("dom_gc_cleanup.js")
 EXTRACT_EMAIL_JS = _load_js("extract_email.js")
+
+
+def build_snapshot_args(*, prompt: str, content_hash: str) -> dict[str, str]:
+    return {
+        "prompt": prompt,
+        "hash": content_hash,
+    }
+
+
+def build_snapshot_probe_args(*, content_hash: str, timeout_ms: int = 12000) -> dict[str, object]:
+    return {
+        "hash": content_hash,
+        "timeoutMs": timeout_ms,
+    }
 
 
 def build_streaming_init_args(

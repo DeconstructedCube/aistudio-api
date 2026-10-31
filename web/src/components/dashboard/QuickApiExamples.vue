@@ -1,20 +1,28 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Code2, Terminal, Copy, Check } from 'lucide-vue-next'
 import { useClipboard } from '@/composables/useClipboard.ts'
 
 const { copied, copy } = useClipboard()
 
-const codeSnippets = [
+const baseUrl = computed(() => {
+  if (typeof window !== 'undefined' && window.location.origin) {
+    return window.location.origin
+  }
+  return 'http://localhost:8080'
+})
+
+const codeSnippets = computed(() => [
   {
-    title: 'cURL',
+    title: 'cURL (标准 HTTP)',
     lang: 'bash',
-    code: `curl http://localhost:8080/v1beta/models/gemini-3.8-flash:generateContent \\
+    code: `curl ${baseUrl.value}/v1beta/models/gemini-3.8-flash:generateContent \\
   -H "x-goog-api-key: your-api-key" \\
   -H "Content-Type: application/json" \\
   -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'`,
   },
   {
-    title: 'Python SDK',
+    title: 'Python (Google GenAI SDK)',
     lang: 'python',
     code: `from google import genai
 
@@ -22,7 +30,7 @@ client = genai.Client(
     api_key="your-api-key",
     http_options={
         "api_version": "v1beta",
-        "base_url": "http://localhost:8080",
+        "base_url": "${baseUrl.value}",
     },
 )
 
@@ -32,7 +40,7 @@ response = client.models.generate_content(
 )
 print(response.text)`,
   },
-]
+])
 
 function handleCopy(code: string, index: number) {
   void copy(code, index, '已复制调用示例到剪贴板')

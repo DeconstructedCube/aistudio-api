@@ -360,7 +360,7 @@ async function handleDetectTier() {
 
           <button
             type="button"
-            class="p-1 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+            class="p-1 text-gray-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer border-l border-gray-100 pl-1.5 ml-1"
             title="删除此子账号"
             @click="emit('delete')"
           >

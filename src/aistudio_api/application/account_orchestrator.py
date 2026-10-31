@@ -33,7 +33,6 @@ async def try_switch_account(
     failed_account_id: str | None = None,
     required_tiers: tuple[str, ...] | list[str] | None = None,
     *,
-    is_auth_error: bool = False,
     is_session_expired: bool = False,
 ) -> bool:
     """尝试切换到下一个对目标 model 可用的账号。防止并发级联切号。"""
@@ -48,7 +47,7 @@ async def try_switch_account(
             required_tiers = tuple(tiers)
 
     # 乐观快速预检：若无需记录永久失效/短时隔离，且当前活跃账号已被并发请求切换至健康状态，直接免锁复用
-    if failed_account_id and not is_session_expired and not is_auth_error:
+    if failed_account_id and not is_session_expired:
         rotator = runtime_state.rotator
         account_service = runtime_state.account_service
         if rotator is not None and account_service is not None:
@@ -92,7 +91,7 @@ async def try_switch_account(
             and rotator.is_account_available(current_id, model=model)
         ):
             logger.info(
-                "已有并发请求完成切号或会话自愈，直接复用当前健康账号: %s (model=%s)",
+                "并发请求已完成切号，复用当前账号: account=%s, model=%s",
                 current_id,
                 model,
             )
@@ -101,8 +100,6 @@ async def try_switch_account(
         # 遇到登录态失效时，永久禁用该账号并拒绝原地重试
         if failed_account_id and is_session_expired:
             rotator.record_session_expired(failed_account_id, model=model)
-        elif failed_account_id and is_auth_error:
-            rotator.record_auth_error(failed_account_id, model=model)
 
         # 双重检查 2：如果已经由并发协程切换到了新账号，且新账号对当前 model 可用，则直接复用
         if (
@@ -116,7 +113,7 @@ async def try_switch_account(
             and rotator.is_account_available(current_id, model=model)
         ):
             logger.info(
-                "已有并发请求完成切号，直接复用当前健康账号: %s (model=%s)",
+                "并发请求已完成切号，复用当前账号: account=%s, model=%s",
                 current_id,
                 model,
             )
@@ -132,7 +129,13 @@ async def try_switch_account(
         if next_account is None:
             if is_session_expired:
                 logger.error(
-                    "账号 %s 登录态失效且无其他可用备用账号，禁止原地重试",
+                    "账号 %s 登录态失效且无其他可用账号，停止重试",
+                    failed_account_id,
+                )
+            else:
+                logger.warning(
+                    "未找到可用备用账号: model=%s, failed_account=%s",
+                    model,
                     failed_account_id,
                 )
             return False
@@ -145,6 +148,12 @@ async def try_switch_account(
             if result is not None:
                 rotator.clear_cooldown(next_account.id, model=model)
                 _last_switch_time = time.time()
+                logger.info(
+                    "账号切换成功: %s -> %s, model=%s",
+                    current_id,
+                    next_account.id,
+                    model,
+                )
             return result is not None
         # 登录态失效严禁在原账号原地重试
         if is_session_expired and (
@@ -156,7 +165,7 @@ async def try_switch_account(
         # 单账号模式或所有其他账号均不可用时（非登录态失效，如偶发 403 鉴权波动），如果指定了 failed_account_id，强制刷新当前会话与 BotGuard
         if failed_account_id and failed_account_id == current_id:
             logger.info(
-                "无其他可用备用账号，重新刷新当前账号会话与 BotGuard: %s",
+                "无其他可用备用账号，重置当前账号会话: account=%s",
                 current_id,
             )
             client.clear_templates()
@@ -207,10 +216,10 @@ async def ensure_active_account(attempt: int, model: str | None = None) -> None:
             cur_tier = (current.tier if current else None) or "Free"
             if not current or cur_tier not in allowed_tiers:
                 logger.info(
-                    "检测到模型 %s 需 %s 权限，当前账号 %s 为 %s，主动切换至付费账号",
+                    "模型 %s 需要 %s 权益，当前账号 %s 为 %s，切换至付费账号",
                     model,
                     req_tier,
-                    current.id if current else "None",
+                    current.id if current else "none",
                     cur_tier,
                 )
                 switched = await try_switch_account(
@@ -221,8 +230,9 @@ async def ensure_active_account(attempt: int, model: str | None = None) -> None:
                 )
                 if not switched:
                     logger.warning(
-                        "请求付费模型 %s 时，账号池中无就绪的 Pro/Ultra 账号，本地 Fast-Fail 403",
+                        "请求模型 %s 需要 %s 付费权益，但账号池中无就绪的可用账号",
                         model,
+                        req_tier,
                     )
                     raise HTTPException(
                         status_code=403,

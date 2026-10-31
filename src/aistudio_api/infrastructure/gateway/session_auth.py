@@ -121,10 +121,6 @@ async def load_cookies_to_page(page: CDPPage, auth_file: str | None) -> bool:
         return False
     page.account_auth_file = auth_file
     try:
-        with suppress(Exception):
-            await page.cdp.send("Network.clearBrowserCookies")
-            await page.cdp.send("Network.clearBrowserCache")
-
         data = json.loads(Path(auth_file).read_text(encoding="utf-8"))
         cookies = data.get("cookies") or []
         if not cookies:
