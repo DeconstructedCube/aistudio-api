@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from aistudio_api.infrastructure.browser.cdp_client import CDPPage
     from aistudio_api.infrastructure.gateway.session import BrowserSession
 
 from aistudio_api.infrastructure.account.cookie_parser import (
@@ -198,25 +197,7 @@ class ModelDiscoveryService:
             ):
                 return self._cached_models
 
-            # 1. 优先通过当前激活的浏览器 Page 会话发 XHR 拉取 ListModels
-            if session is not None:
-                try:
-                    page = getattr(session, "page", None) or getattr(
-                        session, "_page", None
-                    )
-                    if page is not None and not page.is_closed():
-                        models = await self._fetch_via_page(page)
-                        if models:
-                            self._cached_models = models
-                            self._last_fetched_at = time.time()
-                            logger.info(
-                                "通过 Page XHR 动态更新了 %d 个模型", len(models)
-                            )
-                            return models
-                except Exception as e:
-                    logger.debug("通过页面 XHR 拉取模型列表失败: %s", e)
-
-            # 2. 次选通过直接 HTTP 协议拉取
+            # 1. 通过直接 HTTP 协议拉取
             effective_cookies = cookies
             effective_auth_user = auth_user
             effective_tier = "Free"
@@ -443,42 +424,6 @@ class ModelDiscoveryService:
             if isinstance(modes, list) and 3 in modes:
                 return ["Pro", "Ultra", "Ultra_20X"]
         return []
-
-    async def _fetch_via_page(self, page: CDPPage) -> list[dict[str, object]]:
-        """在 CDP Page 环境中直接执行 XHR 拉取 ListModels（自动带齐浏览器完整凭据）。"""
-        script = """
-        () => {
-            return new Promise((resolve) => {
-                const xhr = new XMLHttpRequest();
-                xhr.open('POST', 'https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/ListModels');
-                xhr.setRequestHeader('Content-Type', 'application/json+protobuf');
-                xhr.setRequestHeader('X-User-Agent', 'grpc-web-javascript/0.1');
-                xhr.setRequestHeader('X-Goog-Api-Key', 'AIzaSyDdP816MREB3SkjZO04QXbjsigfcI0GWOs');
-                xhr.setRequestHeader('X-Goog-Ext-519733851-bin', 'CAESAUwwATgEQABQBGICSlBwAHgBkAEAmAEB');
-                xhr.withCredentials = true;
-                xhr.timeout = 10000;
-                xhr.onload = () => {
-                    if (xhr.status === 200) {
-                        try {
-                            resolve({ok: true, data: JSON.parse(xhr.responseText)});
-                        } catch(e) {
-                            resolve({ok: false, error: String(e)});
-                        }
-                    } else {
-                        resolve({ok: false, status: xhr.status});
-                    }
-                };
-                xhr.onerror = () => resolve({ok: false, error: 'network_error'});
-                xhr.ontimeout = () => resolve({ok: false, error: 'timeout'});
-                xhr.send('[]');
-            });
-        }
-        """
-        res = await page.evaluate(script, timeout_s=12.0)
-        if not isinstance(res, dict) or not res.get("ok"):
-            return []
-        raw_data = res.get("data")
-        return self._parse_raw_models(raw_data)
 
     async def _fetch_via_http(
         self,

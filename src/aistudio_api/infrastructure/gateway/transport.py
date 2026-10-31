@@ -1,4 +1,8 @@
-"""XHR replay and streaming event collection transport layer."""
+"""Direct HTTP streaming and non-streaming transport layer.
+
+Provides high-performance, browserless HTTP communication with Google AI Studio
+using connection pooling and chunk streaming.
+"""
 
 from __future__ import annotations
 
@@ -9,117 +13,36 @@ import uuid
 from collections.abc import AsyncGenerator
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+import httpx
+
+from aistudio_api.config import settings
 from aistudio_api.domain.errors import BrowserTransportError
 from aistudio_api.infrastructure.account.cookie_parser import (
     calculate_sapisid_hash,
     get_tier_header_value,
 )
-from aistudio_api.infrastructure.browser.scripts import (
-    HOOKED_REQUEST_JS,
-    STREAM_CLEANUP_JS,
-    STREAMING_INIT_JS,
-    build_hooked_request_args,
-    build_streaming_init_args,
-)
-
-if TYPE_CHECKING:
-    from aistudio_api.infrastructure.browser.cdp_client import CDPPage
-
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("transport")
 
 
-def _ensure_net_trace(page: CDPPage) -> None:
-    """Subscribe to $rpc/ CDP network events to attribute fetch failures."""
-    if getattr(page, "has_net_trace", False):
-        return
-    page.has_net_trace = True
-    logger.debug("已为页面注册 $rpc/ 网络跟踪监听器")
-    def on_request(data: dict[str, object]) -> None:
-        url = str(data.get("url") or "")
-        rid = str(data.get("request_id") or "")
-        if "$rpc/" not in url or not rid:
-            return
-        page.rpc_net_requests[rid] = {"url": url, "sent_at": time.time()}
-        while len(page.rpc_net_requests) > 32:
-            page.rpc_net_requests.pop(next(iter(page.rpc_net_requests)))
-
-    def on_response(data: dict[str, object]) -> None:
-        entry = page.rpc_net_requests.get(str(data.get("request_id") or ""))
-        if entry is None:
-            return
-        entry["resp_status"] = int(str(data.get("status") or 0))
-        entry["resp_at"] = time.time()
-
-    def on_loading_failed(params: dict[str, object]) -> None:
-        entry = page.rpc_net_requests.get(str(params.get("requestId") or ""))
-        if entry is None:
-            return
-        entry.update(
-            {
-                "error_text": str(params.get("errorText") or ""),
-                "canceled": bool(params.get("canceled")),
-                "blocked_reason": params.get("blockedReason"),
-                "failed_at": time.time(),
-            }
-        )
-        page.rpc_net_failures.append(dict(entry))
-        del page.rpc_net_failures[:-8]
-
-    with suppress(Exception):
-        page.on_request(on_request)
-        page.on_response(on_response)
-        page.on_loading_failed(on_loading_failed)
-
-
-def _log_rpc_net_evidence(page: CDPPage, where: str) -> None:
-    """Log recent $rpc/ Network.loadingFailed evidence when in-page fetch fails."""
-    failures = getattr(page, "rpc_net_failures", None) or []
-    if not failures:
-        logger.warning(
-            "请求传输失败: 场景=%s, 未捕获到网络层失败事件",
-            where,
-        )
-        return
-    now = time.time()
-    parts = []
-    for f in failures[-3:]:
-        tail = str(f.get("url") or "").rsplit("/", 1)[-1][:80]
-        failed_at = f.get("failed_at")
-        age = now - failed_at if isinstance(failed_at, (int, float)) else -1.0
-        parts.append(
-            f"{tail} err={f.get('error_text') or '-'} canceled={bool(f.get('canceled'))} "
-            f"blocked={f.get('blocked_reason') or '-'} resp={f.get('resp_status') or 'none'} "
-            f"age={age:.1f}s"
-        )
-    logger.warning(
-        "请求传输失败: 场景=%s, 网络层事件: %s",
-        where,
-        " | ".join(parts),
-    )
-
-def _transport_error(page: CDPPage, message: str) -> BrowserTransportError:
-    exc = BrowserTransportError(message)
-    exc.net_evidence = list(getattr(page, "rpc_net_failures", None) or [])[-8:]
-    return exc
-
-
 def _get_auth_cookies(auth_file: str | None = None) -> dict[str, str] | None:
-    """Read fallback credentials from the page's bound auth_file or active account."""
+    """Read credentials from the bound auth_file or active account."""
     try:
         if auth_file:
             bound_path = Path(auth_file)
             if bound_path.is_file():
                 data = json.loads(bound_path.read_text(encoding="utf-8"))
                 cookies = data.get("cookies") or []
-                return {
-                    str(c.get("name") or ""): str(c.get("value") or "")
-                    for c in cookies
-                    if c.get("name")
-                }
+                if isinstance(cookies, list):
+                    return {
+                        str(c.get("name") or ""): str(c.get("value") or "")
+                        for c in cookies
+                        if isinstance(c, dict) and c.get("name")
+                    }
+                if isinstance(cookies, dict):
+                    return {str(k): str(v) for k, v in cookies.items() if k}
         from aistudio_api.infrastructure.account.account_store import AccountStore
 
         store = AccountStore()
@@ -130,18 +53,21 @@ def _get_auth_cookies(auth_file: str | None = None) -> dict[str, str] | None:
         if auth_path and auth_path.is_file():
             data = json.loads(auth_path.read_text(encoding="utf-8"))
             cookies = data.get("cookies") or []
-            return {
-                str(c.get("name") or ""): str(c.get("value") or "")
-                for c in cookies
-                if c.get("name")
-            }
+            if isinstance(cookies, list):
+                return {
+                    str(c.get("name") or ""): str(c.get("value") or "")
+                    for c in cookies
+                    if isinstance(c, dict) and c.get("name")
+                }
+            if isinstance(cookies, dict):
+                return {str(k): str(v) for k, v in cookies.items() if k}
     except Exception:
         pass
     return None
 
 
 def _get_active_account_tier() -> str:
-    """读取当前活跃账号的订阅权益等级 (Free / Pro / Ultra / Plus)。"""
+    """Read active account's subscription tier."""
     try:
         from aistudio_api.infrastructure.account.account_store import AccountStore
 
@@ -155,12 +81,13 @@ def _get_active_account_tier() -> str:
 
 
 async def _ensure_authorization_header(
-    page: CDPPage,
+    page: object | None,
     headers: dict[str, str],
     auth_user: str = "0",
     tier: str | None = None,
+    auth_file: str | None = None,
 ) -> dict[str, str]:
-    """Ensure fresh SAPISIDHASH Authorization, X-Goog-AuthUser, and X-AIStudio-G1-Tier headers are populated."""
+    """Ensure SAPISIDHASH Authorization, X-Goog-AuthUser, and X-AIStudio-G1-Tier are set."""
     incoming_auth = ""
     for k, v in headers.items():
         if k.lower() == "authorization" and v:
@@ -184,244 +111,144 @@ async def _ensure_authorization_header(
     tier_header = get_tier_header_value(effective_tier)
     if tier_header:
         clean_headers["X-AIStudio-G1-Tier"] = tier_header
-    cookie_dict = getattr(page, "_cached_cookies", None)
+
+    cookie_dict: dict[str, str] | None = None
+    if page is not None and hasattr(page, "_cached_cookies"):
+        cookie_dict = getattr(page, "_cached_cookies", None)
     if not cookie_dict or not any("SAPISID" in k for k in cookie_dict):
-        with suppress(Exception):
-            await page.get_cookies()
-            cookie_dict = getattr(page, "_cached_cookies", None)
-    # 2. 如果 CDP 出现超时波动或未取到 SAPISID，优先从页面绑定的 auth.json 回退读取凭据
-    if not cookie_dict or not any("SAPISID" in k for k in cookie_dict):
-        disk_cookies = _get_auth_cookies(getattr(page, "account_auth_file", None))
-        if disk_cookies and any("SAPISID" in k for k in disk_cookies):
-            cookie_dict = disk_cookies
-            page._cached_cookies = cookie_dict
-    fresh_auth = calculate_sapisid_hash(cookie_dict) if cookie_dict else ""
-    if fresh_auth:
-        clean_headers["Authorization"] = fresh_auth
+        bound_file = auth_file or getattr(page, "account_auth_file", None)
+        cookie_dict = _get_auth_cookies(bound_file)
+
+    if cookie_dict:
+        fresh_auth = calculate_sapisid_hash(cookie_dict)
+        if fresh_auth:
+            clean_headers["Authorization"] = fresh_auth
+        if "Cookie" not in clean_headers:
+            clean_headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookie_dict.items() if v)
     elif incoming_auth:
         clean_headers["Authorization"] = incoming_auth
 
     return clean_headers
 
 
-class XHRStreamTransport:
-    """Handles in-browser XHR request execution, streaming event collection, and resource cleanup."""
+class HTTPStreamTransport:
+    """Direct HTTP streaming and non-streaming transport layer."""
 
-    def __init__(self) -> None:
+    def __init__(self, proxy_url: str | None = None, timeout: float = 120.0) -> None:
+        self.proxy_url = proxy_url or settings.proxy_url
+        self.timeout = timeout
         self._queues: dict[str, asyncio.Queue[dict[str, object]]] = {}
+        self._client: httpx.AsyncClient | None = None
 
     @property
     def in_flight_count(self) -> int:
-        """Return number of currently active streaming requests."""
         return len(self._queues)
 
     def abort_stream(self, rid: str, reason: str = "stream_aborted") -> bool:
-        """Abort a specific streaming request by rid if it is active."""
         q = self._queues.get(rid)
         if q is not None:
             try:
                 q.put_nowait({"type": "error", "message": reason})
                 return True
             except asyncio.QueueFull:
-                logger.warning("Abort stream failed: queue full (rid=%s)", rid)
                 return False
         return False
 
     def close(self, reason: str = "transport_closed") -> None:
-        """Close transport and notify any remaining in-flight queues on process exit."""
         for q in list(self._queues.values()):
             with suppress(Exception):
                 q.put_nowait({"type": "error", "message": reason})
         self._queues.clear()
 
-    def _ensure_page_binding(self, page: CDPPage) -> None:
-        if getattr(page, "has_stream_binding", False):
-            return
-        page.has_stream_binding = True
-
-        def on_stream_push(payload_str: str) -> None:
-            try:
-                data = json.loads(payload_str)
-                if isinstance(data, dict):
-                    rid = str(data.get("rid") or "")
-                    q = self._queues.get(rid)
-                    if q is not None:
-                        try:
-                            q.put_nowait(data)
-                        except asyncio.QueueFull:
-                            logger.warning(
-                                "流式队列积压已满: rid=%s",
-                                rid,
-                            )
-            except Exception as e:
-                logger.debug("处理流式推送数据失败: %s", e)
-        if hasattr(page, "on_binding"):
-            page.on_binding("__aistudio_stream_push__", on_stream_push)
-        elif hasattr(page, "cdp") and hasattr(page.cdp, "on"):
-
-            def listener(params: dict[str, object]) -> None:
-                if params.get("name") == "__aistudio_stream_push__":
-                    on_stream_push(str(params.get("payload") or ""))
-
-            page.cdp.on("Runtime.bindingCalled", listener)
+    async def _get_client(self) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout, connect=15.0),
+                proxy=self.proxy_url,
+                limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+            )
+        return self._client
 
     async def send_hooked_request(
         self,
-        page: CDPPage,
+        page: object = None,
         *,
         url: str,
         headers: dict[str, str],
         body: str,
         auth_user: str = "0",
         tier: str | None = None,
+        auth_file: str | None = None,
     ) -> tuple[int, bytes]:
-        """Replay request via XHR inside the browser page context."""
+        """Execute non-streaming HTTP request directly."""
         t0 = time.perf_counter()
         clean_headers = await _ensure_authorization_header(
-            page, headers, auth_user=auth_user, tier=tier
+            page, headers, auth_user=auth_user, tier=tier, auth_file=auth_file
         )
-        _ensure_net_trace(page)
         logger.debug(
-            "发送非流式 XHR: url=%s, 请求体长度=%d, auth_user=%s",
+            "Sending HTTP POST: url=%s, body_len=%d, auth_user=%s",
             url,
             len(body),
             auth_user,
         )
-        args = build_hooked_request_args(
-            url=url,
-            headers=clean_headers,
-            body=body,
-        )
 
-        result = await page.evaluate(HOOKED_REQUEST_JS, args, timeout_s=None)
-        res_dict: dict[str, object] = result if isinstance(result, dict) else {}
-        status = int(str(res_dict.get("status") or 0))
-        raw_text = str(res_dict.get("body") or "")
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        if status == 0:
-            _log_rpc_net_evidence(page, "replay")
-            raise _transport_error(page, f"replay failed: {raw_text}")
-        logger.debug(
-            "非流式 XHR 响应完成: status=%d, 耗时=%.1fms, 响应长度=%d",
-            status,
-            elapsed_ms,
-            len(raw_text),
-        )
-        return status, raw_text.encode("utf-8")
+        client = await self._get_client()
+        try:
+            resp = await client.post(url, headers=clean_headers, content=body.encode("utf-8"))
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            logger.debug(
+                "HTTP POST completed: status=%d, time=%.1fms, resp_len=%d",
+                resp.status_code,
+                elapsed_ms,
+                len(resp.content),
+            )
+            return resp.status_code, resp.content
+        except Exception as exc:
+            logger.error("HTTP request failed: url=%s, err=%s", url, exc)
+            raise BrowserTransportError(f"HTTP request failed: {exc}") from exc
 
     async def send_streaming_request(
         self,
-        page: CDPPage,
+        page: object = None,
         *,
         url: str,
         headers: dict[str, str],
         body: str,
         auth_user: str = "0",
         tier: str | None = None,
+        auth_file: str | None = None,
     ) -> AsyncGenerator[tuple[str, object], None]:
-        """Send a streaming request, yielding ('status', int) and ('chunk', bytes) events.
-
-        Guarantees V8 window cleanup on termination/timeout and prevents silent truncation.
-        """
-        t0 = time.perf_counter()
+        """Stream HTTP response chunks directly."""
         clean_headers = await _ensure_authorization_header(
-            page, headers, auth_user=auth_user, tier=tier
+            page, headers, auth_user=auth_user, tier=tier, auth_file=auth_file
         )
-        _ensure_net_trace(page)
         rid = uuid.uuid4().hex[:8]
-        logger.debug(
-            "开始流式 XHR 传输: rid=%s, url=%s, auth_user=%s",
-            rid,
-            url,
-            auth_user,
-        )
+        logger.debug("Starting streaming HTTP request: rid=%s, url=%s", rid, url)
 
-        # Ensure native binding on page and register local async queue
-        if not getattr(page, "has_stream_binding", False):
-            self._ensure_page_binding(page)
-            if hasattr(page, "add_binding"):
-                with suppress(Exception):
-                    await page.add_binding("__aistudio_stream_push__")
-            elif hasattr(page, "cdp") and hasattr(page.cdp, "send"):
-                with suppress(Exception):
-                    await page.cdp.send(
-                        "Runtime.addBinding", {"name": "__aistudio_stream_push__"}
-                    )
+        client = await self._get_client()
         queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
         self._queues[rid] = queue
 
-        init_args = build_streaming_init_args(
-            url=url,
-            headers=clean_headers,
-            body=body,
-            rid=rid,
-        )
-        await page.evaluate(STREAMING_INIT_JS, init_args)
-
-        status_sent = False
-        is_terminal = False
-        chunk_count = 0
-        total_bytes = 0
         try:
-            while not is_terminal:
-                if page.is_closed() is True:
-                    raise BrowserTransportError("Browser page closed during streaming")
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=1.0)
-                except TimeoutError:
-                    if page.is_closed() is True:
-                        raise BrowserTransportError(
-                            "Browser page closed during streaming"
-                        ) from None
-                    continue
-                etype = str(event.get("type") or "")
-                if etype == "status":
-                    status = int(str(event.get("status") or 0))
-                    yield ("status", status)
-                    status_sent = True
-                elif etype == "chunk":
-                    text = str(event.get("text") or "")
-                    if text:
-                        chunk_count += 1
-                        chunk_bytes = text.encode("utf-8")
-                        total_bytes += len(chunk_bytes)
-                        yield ("chunk", chunk_bytes)
-                elif etype == "error":
-                    message = str(event.get("message") or "unknown error")
-                    _log_rpc_net_evidence(page, "streaming")
-                    raise _transport_error(page, f"streaming request failed: {message}")
-                elif etype in ("done", "aborted"):
-                    while not queue.empty():
-                        try:
-                            remaining_event = queue.get_nowait()
-                            if str(remaining_event.get("type") or "") == "chunk":
-                                r_text = str(remaining_event.get("text") or "")
-                                if r_text:
-                                    chunk_count += 1
-                                    chunk_bytes = r_text.encode("utf-8")
-                                    total_bytes += len(chunk_bytes)
-                                    yield ("chunk", chunk_bytes)
-                        except asyncio.QueueEmpty:
-                            break
-                    is_terminal = True
-                    elapsed_ms = (time.perf_counter() - t0) * 1000
-                    logger.debug(
-                        "流式 XHR 传输结束: rid=%s, 分块数=%d, 总字节数=%d, 耗时=%.1fms",
-                        rid,
-                        chunk_count,
-                        total_bytes,
-                        elapsed_ms,
-                    )
-                    break
-            if not status_sent:
-                _log_rpc_net_evidence(page, "streaming-no-status")
-                raise _transport_error(
-                    page, "streaming request timeout: no response status"
-                )
+            req = client.build_request("POST", url, headers=clean_headers, content=body.encode("utf-8"))
+            resp = await client.send(req, stream=True)
+            yield ("status", resp.status_code)
+
+            if resp.status_code != 200:
+                err_body = await resp.aread()
+                yield ("chunk", err_body)
+                return
+
+            async for chunk in resp.aiter_bytes():
+                if chunk:
+                    yield ("chunk", chunk)
+
+        except Exception as exc:
+            logger.warning("Streaming request encountered exception: %s", exc)
+            yield ("error", str(exc))
         finally:
             self._queues.pop(rid, None)
-            if not page.is_closed():
-                with suppress(Exception, asyncio.CancelledError):
-                    await asyncio.shield(
-                        page.evaluate(STREAM_CLEANUP_JS, rid, timeout_s=5.0)
-                    )
+
+
+# Alias for 100% backwards compatibility
+XHRStreamTransport = HTTPStreamTransport

@@ -46,11 +46,6 @@ async def lifespan(_app: FastAPI):
     from aistudio_api.application.account_rotator import init_rotator
     from aistudio_api.application.account_service import AccountService
     from aistudio_api.infrastructure.account.account_store import AccountStore
-    from aistudio_api.infrastructure.browser.browser_engine import (
-        install_process_cleanup_handlers,
-    )
-
-    install_process_cleanup_handlers()
 
     client = AIStudioClient(
         port=runtime_state.browser_port,

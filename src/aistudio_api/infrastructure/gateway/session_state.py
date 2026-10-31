@@ -7,10 +7,6 @@ import itertools
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from aistudio_api.infrastructure.browser.cdp_client import CDPPage
 
 
 class SessionState(StrEnum):
@@ -22,14 +18,15 @@ class SessionState(StrEnum):
 
 @dataclass
 class SessionContext:
-    """Encapsulates a fully-bootstrapped, verified AI Studio page context."""
+    """Encapsulates active authentication context and metadata for AI Studio gateway."""
 
-    page: CDPPage
-    snap_key: str
-    auth_user: str
-    auth_file: str | None
-    base_template: dict[str, object]
+    page: object | None = None
+    snap_key: str = "waa_proof"
+    auth_user: str = "0"
+    auth_file: str | None = None
+    base_template: dict[str, object] = field(default_factory=dict)
     tier: str = "Free"
+    cookies: dict[str, str] = field(default_factory=dict)
     context_id: int = field(default_factory=itertools.count(1).__next__)
     created_at: float = field(default_factory=time.time)
     in_flight: int = 0
@@ -42,7 +39,10 @@ class SessionContext:
             self.drain_event.set()
 
     def is_usable(self) -> bool:
-        return not self.page.is_closed() and bool(self.snap_key)
+        is_closed_fn = getattr(self.page, "is_closed", None)
+        if callable(is_closed_fn):
+            return not is_closed_fn()
+        return bool(self.auth_file or self.cookies or self.base_template)
 
 
 class SessionReadinessGate:
@@ -100,21 +100,23 @@ class SessionReadinessGate:
         if self.is_ready() and self._active_context is not None:
             return self._active_context
 
-        if self._state == SessionState.FAILED and self._last_error:
-            raise RuntimeError(
-                f"Session transition failed: {self._last_error}"
-            ) from self._last_error
+        if self._state == SessionState.FAILED:
+            if self._last_error is not None:
+                raise RuntimeError(
+                    f"Session transition failed: {self._last_error}"
+                ) from self._last_error
+            raise RuntimeError("Session initialization failed")
 
         await self._event.wait()
 
-        if self._state == SessionState.READY and self._active_context is not None:
-            if self._active_context.is_usable():
-                return self._active_context
-            raise RuntimeError("Session active page closed unexpectedly")
+        if self._state == SessionState.FAILED:
+            if self._last_error is not None:
+                raise RuntimeError(
+                    f"Session transition failed: {self._last_error}"
+                ) from self._last_error
+            raise RuntimeError("Session initialization failed")
 
-        if self._state == SessionState.FAILED and self._last_error:
-            raise RuntimeError(
-                f"Session transition failed: {self._last_error}"
-            ) from self._last_error
+        if self._active_context is None or not self._active_context.is_usable():
+            raise RuntimeError("Session context not usable after readiness signal")
 
-        raise RuntimeError(f"Session not ready: current state={self._state}")
+        return self._active_context

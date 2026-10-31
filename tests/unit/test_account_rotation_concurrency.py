@@ -23,10 +23,8 @@ from aistudio_api.infrastructure.gateway.capture import (
     RequestCaptureService,
 )
 from aistudio_api.infrastructure.gateway.session import (
-    DEFAULT_BOOTSTRAP_TEMPLATE,
     BrowserSession,
 )
-from aistudio_api.infrastructure.gateway.session_state import SessionContext
 
 
 @pytest.mark.asyncio
@@ -312,62 +310,6 @@ def test_get_seconds_until_pacific_midnight():
 
 
 @pytest.mark.asyncio
-async def test_goto_aistudio_net_err_aborted_tolerance():
-    """当 page.goto 遭遇 net::ERR_ABORTED 但已在 aistudio 时，视为有效抵达并容错。"""
-    from aistudio_api.infrastructure.browser.cdp_client import CDPPage
-    from aistudio_api.infrastructure.gateway.session_auth import navigate_to_aistudio
-
-    page = MagicMock(spec=CDPPage)
-    page.url = "https://aistudio.google.com/prompts/new_chat"
-    page.goto = AsyncMock(
-        side_effect=RuntimeError("Navigation failed: net::ERR_ABORTED")
-    )
-    page.evaluate = AsyncMock(
-        side_effect=lambda expr, *a, **kw: (
-            "https://aistudio.google.com/prompts/new_chat"
-            if "location.href" in expr
-            else (True if "default_MakerSuite" in expr else None)
-        )
-    )
-    page.wait_for_timeout = AsyncMock()
-
-    mock_verify = AsyncMock()
-    mock_save = AsyncMock()
-    await navigate_to_aistudio(
-        page,
-        auth_user="0",
-        auth_file=None,
-        verify_identity_cb=mock_verify,
-        save_cookies_cb=mock_save,
-    )
-    assert mock_verify.called
-
-
-@pytest.mark.asyncio
-async def test_ensure_botguard_available_regions_fast_fail():
-    """检测到 available-regions 时立刻抛出 RuntimeError，无需等待 20s 超时。"""
-    from aistudio_api.infrastructure.browser.cdp_client import CDPPage
-
-    page = MagicMock(spec=CDPPage)
-    page.url = "https://aistudio.google.com/available-regions"
-    page.is_closed = MagicMock(return_value=False)
-    page.evaluate = AsyncMock(return_value=False)
-
-    session = BrowserSession(port=9222)
-    session.set_ready_context(
-        SessionContext(
-            page=page,
-            snap_key="snap_key",
-            auth_user="0",
-            auth_file=None,
-            base_template=dict(DEFAULT_BOOTSTRAP_TEMPLATE),
-        )
-    )
-    with pytest.raises(RuntimeError, match="地区限制"):
-        await session.ensure_botguard_service()
-
-
-@pytest.mark.asyncio
 async def test_runtime_state_record_model_stats():
     """测试 RuntimeState.record 正确更新 stats，不抛出 TypeError 'Field' object is not subscriptable。"""
     from aistudio_api.api.state import RuntimeState
@@ -411,72 +353,9 @@ async def test_capture_model_preservation_when_template_differs():
     assert captured is not None
     # 确认 captured.model 是用户请求的模型，而不是模板的 gemini-3.7-flash
     assert captured.model == "models/gemini-3.8-flash"
-    import json
 
     body = json.loads(captured.body)
     assert body[0] == "models/gemini-3.8-flash"
-
-
-@pytest.mark.asyncio
-async def test_browser_session_send_streaming_batch_events():
-    """测试流式回放支持批量事件以提升并发吞吐。"""
-    from aistudio_api.infrastructure.browser.cdp_client import CDPPage
-
-    page = MagicMock(spec=CDPPage)
-    page.url = "https://aistudio.google.com/prompts/new_chat"
-    page.is_closed = MagicMock(return_value=False)
-    binding_callback = None
-
-    def mock_on_binding(name, cb):
-        nonlocal binding_callback
-        if name == "__aistudio_stream_push__":
-            binding_callback = cb
-
-    page.on_binding = MagicMock(side_effect=mock_on_binding)
-
-    events = [
-        {"type": "status", "status": 200},
-        {"type": "chunk", "text": "hello "},
-        {"type": "chunk", "text": "world"},
-        {"type": "done"},
-    ]
-
-    async def fake_eval(expr, args=None, *a, **kwargs):
-        if "default_MakerSuite" in expr or "INSTALL_HOOKS" in expr:
-            return "already_hooked"
-        if "service" in expr:
-            return True
-        if isinstance(args, dict) and "rid" in args and binding_callback:
-            rid = args["rid"]
-            for ev in events:
-                ev_copy = dict(ev)
-                ev_copy["rid"] = rid
-                binding_callback(json.dumps(ev_copy))
-            return None
-        return None
-
-    page.evaluate = AsyncMock(side_effect=fake_eval)
-    session = BrowserSession(port=9222)
-    session.set_ready_context(
-        SessionContext(
-            page=page,
-            snap_key="snap_key",
-            auth_user="0",
-            auth_file=None,
-            base_template=dict(DEFAULT_BOOTSTRAP_TEMPLATE),
-        )
-    )
-    results = []
-    async for tag, data in session.send_streaming_request(
-        url="https://example.com",
-        headers={},
-        body="[]",
-    ):
-        results.append((tag, data))
-
-    assert ("status", 200) in results
-    assert ("chunk", b"hello ") in results
-    assert ("chunk", b"world") in results
 
 
 @pytest.mark.asyncio
@@ -534,22 +413,17 @@ async def test_model_requests_midnight_reset():
 
 @pytest.mark.asyncio
 async def test_ensure_authorization_header_concurrency_and_fallback():
-    """并发请求或 CDP 超时异常时，_ensure_authorization_header 绝不丢失已有 Authorization 头部。"""
-    from aistudio_api.infrastructure.browser.cdp_client import CDPPage
+    """并发请求或异常时，_ensure_authorization_header 绝不丢失已有 Authorization 头部。"""
     from aistudio_api.infrastructure.gateway.transport import (
         _ensure_authorization_header,
     )
-
-    page = MagicMock(spec=CDPPage)
-    page.get_cookies = AsyncMock(side_effect=TimeoutError("CDP busy under concurrency"))
 
     headers = {
         "Content-Type": "application/json",
         "Authorization": "SAPISIDHASH 1789397237_abcdef0123456789",
     }
 
-    # 当 CDP 出现超时波动时，绝不能将原有的 Authorization 剥离留空
-    result = await _ensure_authorization_header(page, headers, auth_user="0")
+    result = await _ensure_authorization_header(None, headers, auth_user="0")
     assert "Authorization" in result
     assert result["Authorization"] == "SAPISIDHASH 1789397237_abcdef0123456789"
     assert result["X-Goog-AuthUser"] == "0"
