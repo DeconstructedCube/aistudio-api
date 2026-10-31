@@ -11,7 +11,7 @@ if TYPE_CHECKING:
         AccountPreset,
         AccountStore,
     )
-    from aistudio_api.infrastructure.gateway.session import BrowserSession
+    from aistudio_api.infrastructure.gateway.session import GatewaySession
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("account")
@@ -45,7 +45,7 @@ class AccountService:
     async def activate_account(
         self,
         account_id: str,
-        browser_session: BrowserSession,
+        session: GatewaySession,
     ) -> AccountMeta | None:
         """切换到指定账号。"""
         account = self._store.get_account(account_id)
@@ -59,11 +59,10 @@ class AccountService:
 
         self._store.set_active_account(account_id)
         logger.info("已切换活跃账号持久化状态: %s", account_id)
-        await browser_session.switch_auth(str(auth_path))
-        await browser_session.ensure_botguard_service()
+        await session.switch_auth(str(auth_path))
+        await session.ensure_ready()
         logger.info("已切换到账号: %s (%s)", account_id, account.name)
         return account
-
     def delete_account(self, account_id: str) -> bool:
         """删除账号。"""
         return self._store.delete_account(account_id)

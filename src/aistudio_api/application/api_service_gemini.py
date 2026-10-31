@@ -34,7 +34,7 @@ from aistudio_api.domain.errors import (
     RequestError,
     SessionExpiredError,
     UsageLimitExceeded,
-    is_browser_session_hang_error,
+    is_session_hang_error,
     is_transient_rpc_error,
     parse_upstream_grpc_error,
 )
@@ -272,7 +272,7 @@ async def handle_attempt_exception(
         )
         client.clear_templates()
         return True
-    if is_browser_session_hang_error(exc):
+    if is_session_hang_error(exc):
         logger.warning(
             "会话就绪超时，切换账号重试: 尝试=%d/%d, 错误=%s",
             attempt + 1,
@@ -291,12 +291,12 @@ async def handle_attempt_exception(
             and client._session is not None
             and client._session._in_flight <= 1
         ):
-            await client._session._close_internal()
+            await client._session.close()
             return True
         if isinstance(exc, BrowserTransportError):
             runtime_state.record(target_model, "errors")
             record_rotator_event("error", model=target_model)
-            logger.warning("浏览器传输中断 (502): %s", exc)
+            logger.warning("上游服务传输中断 (502): %s", exc)
             raise HTTPException(
                 502, detail={"message": str(exc), "type": "upstream_error"}
             ) from exc

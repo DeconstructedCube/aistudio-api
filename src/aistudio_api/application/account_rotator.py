@@ -301,7 +301,7 @@ class AccountStats:
         self.auth_errors += 1
         self.last_auth_error = now
         self.last_used = now
-        # Clean cutover: 403 是浏览器/WAA 会话故障，绝不给账号加冷却锁
+        # Clean cutover: 403 是临时鉴权/WAA 会话故障，绝不给账号加冷却锁
         self.auth_cooldown = 0.0
         m_stats = self.get_model_daily(model)
         m_stats.requests += 1

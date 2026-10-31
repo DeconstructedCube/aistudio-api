@@ -42,10 +42,10 @@ def test_multimodal_zero_disk_io_pipeline():
 @pytest.mark.asyncio
 async def test_generate_image_tools_selection():
     """Verify tool override precedence and use_default_tools handling."""
-    client = AIStudioClient(port=9222)
+    client = AIStudioClient()
     captured_tools = []
 
-    async def mock_capture_request(*args, **kwargs):
+    async def mock_capture_request(*_args, **kwargs):
         captured_tools.append(kwargs.get("tools"))
         return CapturedRequest(
             url="http://example.com",

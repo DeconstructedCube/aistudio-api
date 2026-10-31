@@ -51,12 +51,11 @@
 | **Downstream Parameter Fault Tolerance** | `drop_unsupported_params` automatically drops unsupported safety categories (e.g. `HARM_CATEGORY_CIVIC_INTEGRITY`) and tools to prevent 400 errors |
 | **Multi-Account Probing** | Extracts and verifies sub-accounts (`u/0`, `u/1`...) automatically when importing a multi-session Cookie |
 | **Built-in Tools** | Supports official tools such as Google Search, Google Maps, and Code Execution sandbox |
-| **Pure Python CDP** | Direct Chrome DevTools Protocol communication over asynchronous WebSockets without Node.js, Playwright, or Selenium |
+| **Browserless WAA Engine** | Completely decoupled from Chromium/proot, powered by [aistudio-pg-bridge](https://github.com/Lianues/aistudio-pg-bridge) signing API and HTTP/2 connection pooling |
 | **Web Management Console** | Built-in web dashboard for account management (supporting text and JSON bundle file imports), live request metrics, and runtime `config.yaml` hot reloading |
 | **Android Companion App** | Native Android app (`android/`) built with Jetpack Compose, featuring isolated multi-profile management, on-demand WebView, Bitwarden autofill, and one-click bundle export |
 > [!NOTE]
-> **Memory Footprint**: The standalone Python backend consumes ~35 - 45 MB RAM. With a single controlled Chromium instance, total actual system memory (PSS) is ~350 - 450 MB on Termux proot (~250 - 350 MB on native Linux). On Android Termux, ≥ 1 GB free RAM is recommended.
-
+> **Memory Footprint**: Operating completely browserless, resident memory is only ~35 - 50 MB with sub-second cold start, running smoothly even on lightweight mobile Termux environments or entry-level servers.
 ## Architecture & Documentation
 
 ```
@@ -68,12 +67,12 @@
 │              FastAPI HTTP Gateway (Port 8080)          │
 ├───────────────────────────┬────────────────────────────┤
 │    Account Rotator        │    Chat & Wire Codec       │
-│  (Sticky & 429 Isolation) │ (Protobuf-JSON & BotGuard) │
+│  (Sticky & 429 Isolation) │   (Protobuf-JSON / WAA)    │
 └───────────────────────────┼────────────────────────────┘
-                            │ CDP WebSocket
+                            │ Proof Mint & HTTP/2 Stream
 ┌───────────────────────────▼────────────────────────────┐
-│      Controlled Chromium Instance (CloakBrowser)       │
-│       In-Page XHR Replay (withCredentials=true)        │
+│         Browserless WAA Engine (aistudio-pg-bridge API)│
+│       Async Connection Pooling (HTTPStreamTransport)   │
 └───────────────────────────┬────────────────────────────┘
                             │ HTTPS / RPC
 ┌───────────────────────────▼────────────────────────────┐
@@ -107,14 +106,11 @@ pkg update -y && pkg install -y git
 git clone https://github.com/DeconstructedCube/aistudio-api.git
 cd aistudio-api
 
-# Step 3: Initialize Python environment & sync dependencies (auto-resolves prebuilt Android wheels)
+# Step 3: Initialize Python environment & sync dependencies
 bash scripts/setup-env.sh
 uv sync
 
-# Step 4: Setup managed CloakBrowser runtime (first run only, takes ~1-2 min)
-bash scripts/setup-browser.sh
-
-# Step 5: Start server
+# Step 4: Start server
 uv run python main.py server --port 8080
 ```
 
@@ -142,10 +138,7 @@ cd aistudio-api
 # Step 3: Sync dependencies
 uv sync
 
-# Step 4: Install CloakBrowser (first run only)
-scripts\install-browser.bat
-
-# Step 5: Start server
+# Step 4: Start server
 uv run python main.py server --port 8080
 ```
 
@@ -168,10 +161,7 @@ cd aistudio-api
 # Step 3: Sync dependencies
 uv sync
 
-# Step 4: Install CloakBrowser (first run only)
-bash scripts/setup-browser.sh
-
-# Step 5: Start server
+# Step 4: Start server
 uv run python3 main.py server --port 8080
 ```
 
@@ -181,8 +171,6 @@ Open **`http://localhost:8080`** in your browser to access the Web Console.
 
 ### Docker Deployment
 
-CloakBrowser is bundled in the container image for immediate use:
-
 ```bash
 docker run -d \
   --name aistudio-api \
@@ -191,7 +179,6 @@ docker run -d \
   -v aistudio-api-data:/app/data \
   ghcr.io/deconstructedcube/aistudio-api:latest
 ```
-
 Or run with Docker Compose:
 
 ```bash
@@ -219,10 +206,7 @@ Open `http://localhost:8080` in your browser to access the Web Console.
 | `AISTUDIO_CONFIG_FILE` | string | `config.yaml` | Path to model rules and default tools configuration YAML |
 | `AISTUDIO_PERSIST_STATS` | bool | `true` | Persist request and token usage metrics across service restarts |
 | `AISTUDIO_PERSIST_ROTATOR` | bool | `true` | Persist account 429 rate limit dates & cooldowns across restarts |
-| `AISTUDIO_BROWSER_EXECUTABLE` | string | Auto | Path to CloakBrowser executable (`/opt/cloakbrowser/chrome` in Docker) |
-| `AISTUDIO_BROWSER_PORT` | int | `9222` | Chromium remote debugging port (CDP) |
-| `AISTUDIO_BROWSER_HEADLESS` | bool | `true` | Run Chromium in headless mode |
-| `AISTUDIO_PROOT_NAME` | string | `aistudio-api` | Dedicated proot-distro container name for Termux |
+| `AISTUDIO_PROOF_SERVER_URL` | string | `https://waa.spinsnow.fun` | WAA proof signing server URL powered by [aistudio-pg-bridge](https://github.com/Lianues/aistudio-pg-bridge) (default public relay or self-hosted) |
 | `AISTUDIO_DEFAULT_TEXT_MODEL` | string | `gemini-3.7-flash` | Default text model |
 | `AISTUDIO_DEFAULT_IMAGE_MODEL` | string | `gemini-3.1-flash-image-preview` | Default image generation model |
 | `AISTUDIO_TIMEZONE` | string | Auto | Browser fingerprint & Wire protocol timezone (`America/Los_Angeles` by default) |

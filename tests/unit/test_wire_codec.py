@@ -147,12 +147,11 @@ def test_modify_body_sanitizes_plain_text_generation_config():
         prompt="hello",
     )
 
-    assert '"text/plain"' in rewritten
+    assert json.loads(rewritten)[3][7] is None
     assert '"application/json"' not in rewritten
     assert "[6]" not in rewritten
     assert json.loads(rewritten)[3][16] == [1, None, None, 3]
     assert len(json.loads(rewritten)[3]) <= 17 or json.loads(rewritten)[3][17] is None
-
 
 def test_modify_body_enables_thinking_for_any_model():
     original = '["models/original",[[[[null,"old"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"!snap",null,null]'

@@ -19,7 +19,6 @@ DEFAULT_TEXT_MODEL = os.getenv("AISTUDIO_DEFAULT_TEXT_MODEL", "gemini-3.7-flash"
 DEFAULT_IMAGE_MODEL = os.getenv(
     "AISTUDIO_DEFAULT_IMAGE_MODEL", "gemini-3.1-flash-image-preview"
 )
-DEFAULT_BROWSER_PORT = 9222
 
 
 def _load_env(*names: str) -> str | None:
@@ -36,12 +35,6 @@ def _load_bool_env(*names: str, default: bool) -> bool:
         return default
     return value not in ("0", "false", "False")
 
-
-def _load_int_env(*names: str, default: int) -> int:
-    value = _load_env(*names)
-    if value is None:
-        return default
-    return int(value)
 
 
 def _load_web_password() -> str | None:
@@ -240,11 +233,6 @@ def resolve_locale() -> str:
 @dataclass(slots=True)
 class Settings:
     port: int = int(os.getenv("AISTUDIO_PORT", "8080"))
-    browser_port: int = _load_int_env(
-        "AISTUDIO_BROWSER_PORT", default=DEFAULT_BROWSER_PORT
-    )
-    browser_headless: bool = _load_bool_env("AISTUDIO_BROWSER_HEADLESS", default=True)
-    browser_executable_path: str | None = os.getenv("AISTUDIO_BROWSER_EXECUTABLE")
     proof_server_url: str = os.getenv(
         "AISTUDIO_PROOF_SERVER_URL", "https://waa.spinsnow.fun"
     )

@@ -7,17 +7,13 @@ import json
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
 
 from aistudio_api.config import settings
 from aistudio_api.infrastructure.gateway.session_auth import (
-    derive_profile_dir,
     extract_account_email,
     extract_account_tier,
     get_auth_user_from_meta,
     get_tier_from_meta,
-    is_aistudio_page_url,
-    is_login_page_url,
     load_cookies_from_auth_file,
 )
 from aistudio_api.infrastructure.gateway.session_state import (
@@ -32,8 +28,6 @@ from aistudio_api.infrastructure.waa.signer import WaaSigner
 
 log = get_logger("session")
 
-_is_login_page_url = is_login_page_url
-_is_aistudio_page_url = is_aistudio_page_url
 
 DEFAULT_BOOTSTRAP_TEMPLATE: dict[str, object] = {
     "url": "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent",
@@ -51,15 +45,13 @@ DEFAULT_BOOTSTRAP_TEMPLATE: dict[str, object] = {
 }
 
 
-class BrowserSession:
+class GatewaySession:
     """Manages authentication state, WAA request signing, and transport routing."""
 
-    def __init__(self, port: int = 9222):
-        self.port = port
+    def __init__(self):
         self._auth_file: str | None = settings.auth_file or None
         self._auth_user: str | None = None
         self._tier: str | None = None
-        self._profile_dir = derive_profile_dir(self._auth_file)
 
         self._gate = SessionReadinessGate()
         self._transition_lock = asyncio.Lock()
@@ -82,11 +74,6 @@ class BrowserSession:
     @property
     def active_context(self) -> SessionContext | None:
         return self._gate.active_context
-
-    @property
-    def page(self) -> Any:
-        """Compatibility property returning None or page stub."""
-        return self._gate.active_context.page if self._gate.active_context else None
 
     @property
     def snap_key(self) -> str | None:
@@ -125,7 +112,7 @@ class BrowserSession:
 
     async def extract_account_email(self) -> str | None:
         """Extract email for current active account."""
-        return await extract_account_email(self.page, auth_file=self._auth_file)
+        return await extract_account_email(auth_file=self._auth_file)
 
     async def extract_account_tier(self) -> str | None:
         """Extract subscription tier for current active account."""
@@ -158,12 +145,8 @@ class BrowserSession:
 
         return await self._gate.wait_ready()
 
-    async def ensure_context(self) -> Any:
-        """Compatibility method ensuring session is ready."""
-        ctx = await self.ensure_ready()
-        return ctx.page or ctx
 
-    async def is_alive(self, _timeout_s: float = 1.5) -> bool:
+    async def is_alive(self) -> bool:
         """Check if session is operational."""
         return self._gate.is_ready()
 
@@ -201,7 +184,6 @@ class BrowserSession:
             self._auth_file = auth_file
             self._auth_user = target_auth_user
             self._tier = target_tier
-            self._profile_dir = derive_profile_dir(auth_file)
 
             base_template = dict(DEFAULT_BOOTSTRAP_TEMPLATE)
             raw_headers = base_template.get("headers")
@@ -214,7 +196,6 @@ class BrowserSession:
             base_template["headers"] = base_headers
 
             new_context = SessionContext(
-                page=None,
                 snap_key="waa_proof",
                 auth_user=target_auth_user,
                 auth_file=auth_file,
@@ -231,15 +212,6 @@ class BrowserSession:
                 target_tier,
             )
             return new_context
-
-    async def ensure_botguard_service(self, force_refresh: bool = False) -> Any:
-        """Ensure signing engine is initialized."""
-        if force_refresh or not self._gate.is_ready():
-            await self.transition_to_account(
-                self._auth_file, force_refresh=force_refresh
-            )
-        ctx = await self.ensure_ready()
-        return ctx.page or ctx
 
     async def capture_template(
         self, model: str, ctx: SessionContext | None = None
@@ -271,6 +243,7 @@ class BrowserSession:
         self,
         contents: list[AistudioContent],
         ctx: SessionContext | None = None,
+        model: str = "models/gemini-3.7-flash",
     ) -> str:
         """Generate fresh WAA proof token for request contents."""
         active_ctx = ctx or await self.ensure_ready()
@@ -284,6 +257,7 @@ class BrowserSession:
                 cookies=cookies,
                 auth_user=auth_user,
                 tier=tier,
+                model=model,
             )
 
     async def send_hooked_request(
@@ -305,7 +279,6 @@ class BrowserSession:
         ctx.in_flight += 1
         try:
             return await self._transport.send_hooked_request(
-                page=ctx.page,
                 url=captured_url,
                 headers=captured_headers,
                 body=body,
@@ -335,7 +308,6 @@ class BrowserSession:
         ctx.in_flight += 1
         try:
             async for event in self._transport.send_streaming_request(
-                page=ctx.page,
                 url=captured_url,
                 headers=captured_headers,
                 body=body,
@@ -347,18 +319,18 @@ class BrowserSession:
         finally:
             ctx.decr_in_flight()
 
-    async def cleanup_stream_page(self, _page: object = None) -> None:
-        """Compatibility no-op in browserless architecture."""
-        return
-
     async def import_cookies(
         self, cookie_string: str, auth_file: str | None = None
     ) -> int:
-        from aistudio_api.infrastructure.account.cookie_refresher import (
-            load_cookies_from_string,
+        from aistudio_api.infrastructure.account.cookie_parser import (
+            parse_cookie_string,
         )
 
-        pw_cookies = await asyncio.to_thread(load_cookies_from_string, cookie_string)
+        state = parse_cookie_string(cookie_string, discard_transient=True)
+        raw_cookies = state.get("cookies")
+        pw_cookies: list[dict[str, object]] = (
+            raw_cookies if isinstance(raw_cookies, list) else []  # type: ignore[assignment]
+        )
         target_auth = auth_file or self._auth_file
         if not target_auth:
             return len(pw_cookies)
@@ -374,20 +346,13 @@ class BrowserSession:
             self._gate.active_context.cookies = cookies_dict
         return len(pw_cookies)
 
-    async def _close_internal(self) -> None:
-        """Internal close alias."""
-        await self.close()
-
     async def close(self) -> None:
-        """Close transport and reset readiness."""
+        """Close transport, signer, and reset readiness."""
         self._transport.close()
+        await self._signer.close()
         self._gate.reset()
-
-
-GatewaySession = BrowserSession
 
 __all__ = [
     "DEFAULT_BOOTSTRAP_TEMPLATE",
-    "BrowserSession",
     "GatewaySession",
 ]

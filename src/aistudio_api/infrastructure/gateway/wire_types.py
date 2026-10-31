@@ -246,7 +246,7 @@ class AistudioGenerationConfig:
             self.thinking_config = AistudioThinkingConfig.default().to_wire()
 
     def sanitize_for_plain_text(self):
-        self.response_mime_type = "text/plain"
+        self.response_mime_type = None
         self.response_schema = None
         self.thinking_config = None
 

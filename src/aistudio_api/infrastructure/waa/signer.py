@@ -1,8 +1,8 @@
-"""WAA proof signing services.
+"""WAA proof signing client powered by aistudio-pg-bridge.
 
-Supports:
-1. RemoteProofSigner: mints proof via remote proof server (e.g. spinsnow or self-hosted relay).
-2. WaaSigner: Unified signer facade providing get_snapshot / generate_proof.
+Connects to Lianues/aistudio-pg-bridge (https://github.com/Lianues/aistudio-pg-bridge)
+or compatible WAA proof servers (e.g. https://waa.spinsnow.fun) to mint proof tokens
+without local browser or heavy JavaScript runtime dependencies.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def extract_content_digest(contents: list[AistudioContent]) -> tuple[str, str]:
 
 
 class RemoteProofSigner:
-    """Signs requests using external WAA proof server (spinsnow / self-hosted)."""
+    """Signs requests using external WAA proof server (aistudio-pg-bridge / spinsnow)."""
 
     def __init__(
         self,
@@ -63,21 +63,38 @@ class RemoteProofSigner:
         self.server_url = server_url.rstrip("/")
         self.proxy_url = proxy_url
         self.timeout = timeout
+        self._client: httpx.AsyncClient | None = None
         self._lock = asyncio.Lock()
 
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or lazily initialize shared HTTP client with connection pooling."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                timeout=self.timeout,
+                proxy=self.proxy_url,
+                limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+            )
+        return self._client
+
+    async def close(self) -> None:
+        """Close shared HTTP client."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+
     async def check_health(self, cookies: dict[str, str], auth_user: str = "0") -> bool:
-        """Check if account is warm / ready on proof server."""
+        """Check if account is warm / ready in proof server pool."""
         cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items() if v)
         headers = {
             "X-Google-Cookies": cookie_header,
             "X-Goog-AuthUser": str(auth_user),
         }
         try:
-            async with httpx.AsyncClient(timeout=5.0, proxy=self.proxy_url) as client:
-                res = await client.get(f"{self.server_url}/health", headers=headers)
-                if res.status_code == 200:
-                    data = res.json()
-                    return bool(data.get("ok"))
+            client = await self._get_client()
+            res = await client.get(f"{self.server_url}/health", headers=headers, timeout=5.0)
+            if res.status_code == 200:
+                data = res.json()
+                return bool(data.get("ok"))
         except Exception as e:
             logger.debug("Proof server health check failed: %s", e)
         return False
@@ -91,9 +108,8 @@ class RemoteProofSigner:
         model: str = "models/gemini-3.7-flash",
         prompt: str = "",
         wire_contents: list[Any] | None = None,
-        _content_hash: str = "",
     ) -> str:
-        """Request proof from remote proof server."""
+        """Request proof from remote proof server with automatic retry on transient failure."""
         cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items() if v)
         if not cookie_header:
             raise ValueError("Cannot mint proof: cookies are empty")
@@ -111,38 +127,72 @@ class RemoteProofSigner:
         if wire_contents is not None:
             payload["wireContents"] = wire_contents
 
-        t0 = time.perf_counter()
-        async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy_url) as client:
-            resp = await client.post(
-                f"{self.server_url}/v1/proof/mint",
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
-            elapsed_ms = (time.perf_counter() - t0) * 1000
+        max_attempts = 2
+        last_error: Exception | None = None
 
-        if resp.status_code != 200:
-            raise BrowserTransportError(
-                f"Remote proof server returned HTTP {resp.status_code}: {resp.text[:300]}"
-            )
+        for attempt in range(1, max_attempts + 1):
+            try:
+                t0 = time.perf_counter()
+                client = await self._get_client()
+                resp = await client.post(
+                    f"{self.server_url}/v1/proof/mint",
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                elapsed_ms = (time.perf_counter() - t0) * 1000
 
-        data = resp.json()
-        if not data.get("ok") or not data.get("proof"):
-            err_msg = data.get("error") or "unknown proof server error"
-            raise BrowserTransportError(f"Remote proof minting failed: {err_msg}")
+                if resp.status_code != 200:
+                    raise BrowserTransportError(
+                        f"Remote proof server returned HTTP {resp.status_code}: {resp.text[:300]}"
+                    )
 
-        proof = str(data["proof"])
-        pool_state = str(data.get("poolState") or "unknown")
-        logger.debug(
-            "Proof generated successfully: poolState=%s, len=%d, time=%.1fms",
-            pool_state,
-            len(proof),
-            elapsed_ms,
+                data = resp.json()
+                if not data.get("ok") or not data.get("proof"):
+                    err_msg = data.get("error") or "unknown proof server error"
+                    raise BrowserTransportError(f"Remote proof minting failed: {err_msg}")
+
+                proof = str(data["proof"])
+                pool_state = str(data.get("poolState") or "unknown")
+                logger.debug(
+                    "Proof generated successfully: poolState=%s, len=%d, time=%.1fms",
+                    pool_state,
+                    len(proof),
+                    elapsed_ms,
+                )
+                return proof
+
+            except (httpx.TransportError, httpx.TimeoutException) as e:
+                last_error = e
+                logger.warning(
+                    "Remote proof server connection error on attempt %d/%d: %s",
+                    attempt,
+                    max_attempts,
+                    e,
+                )
+                # Reset client on connection errors to discard stale connections
+                await self.close()
+                if attempt < max_attempts:
+                    await asyncio.sleep(0.5)
+            except BrowserTransportError:
+                raise
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "Remote proof server unexpected error on attempt %d/%d: %s",
+                    attempt,
+                    max_attempts,
+                    e,
+                )
+                if attempt < max_attempts:
+                    await asyncio.sleep(0.5)
+
+        raise BrowserTransportError(
+            f"Remote proof minting failed after {max_attempts} attempts: {last_error}"
         )
-        return proof
 
 
 class WaaSigner:
-    """Unified WAA signing facade with automatic signer resolution."""
+    """Unified WAA signing facade backed by RemoteProofSigner."""
 
     def __init__(
         self,
@@ -153,6 +203,10 @@ class WaaSigner:
         self._remote_signer = RemoteProofSigner(server_url=url, proxy_url=proxy_url)
         self._cache: dict[str, tuple[str, float]] = {}  # hash -> (proof, timestamp)
         self._cache_ttl = 60.0  # seconds
+
+    async def close(self) -> None:
+        """Close underlying remote signer resources."""
+        await self._remote_signer.close()
 
     async def generate_snapshot(
         self,
@@ -179,5 +233,4 @@ class WaaSigner:
             model=model,
             prompt=prompt,
             wire_contents=wire_contents,
-            _content_hash=content_hash,
         )

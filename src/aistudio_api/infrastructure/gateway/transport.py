@@ -81,7 +81,6 @@ def _get_active_account_tier() -> str:
 
 
 async def _ensure_authorization_header(
-    page: object | None,
     headers: dict[str, str],
     auth_user: str = "0",
     tier: str | None = None,
@@ -112,12 +111,7 @@ async def _ensure_authorization_header(
     if tier_header:
         clean_headers["X-AIStudio-G1-Tier"] = tier_header
 
-    cookie_dict: dict[str, str] | None = None
-    if page is not None and hasattr(page, "_cached_cookies"):
-        cookie_dict = getattr(page, "_cached_cookies", None)
-    if not cookie_dict or not any("SAPISID" in k for k in cookie_dict):
-        bound_file = auth_file or getattr(page, "account_auth_file", None)
-        cookie_dict = _get_auth_cookies(bound_file)
+    cookie_dict = _get_auth_cookies(auth_file)
 
     if cookie_dict:
         fresh_auth = calculate_sapisid_hash(cookie_dict)
@@ -171,7 +165,6 @@ class HTTPStreamTransport:
 
     async def send_hooked_request(
         self,
-        page: object = None,
         *,
         url: str,
         headers: dict[str, str],
@@ -183,7 +176,7 @@ class HTTPStreamTransport:
         """Execute non-streaming HTTP request directly."""
         t0 = time.perf_counter()
         clean_headers = await _ensure_authorization_header(
-            page, headers, auth_user=auth_user, tier=tier, auth_file=auth_file
+            headers, auth_user=auth_user, tier=tier, auth_file=auth_file
         )
         logger.debug(
             "Sending HTTP POST: url=%s, body_len=%d, auth_user=%s",
@@ -209,7 +202,6 @@ class HTTPStreamTransport:
 
     async def send_streaming_request(
         self,
-        page: object = None,
         *,
         url: str,
         headers: dict[str, str],
@@ -220,7 +212,7 @@ class HTTPStreamTransport:
     ) -> AsyncGenerator[tuple[str, object], None]:
         """Stream HTTP response chunks directly."""
         clean_headers = await _ensure_authorization_header(
-            page, headers, auth_user=auth_user, tier=tier, auth_file=auth_file
+            headers, auth_user=auth_user, tier=tier, auth_file=auth_file
         )
         rid = uuid.uuid4().hex[:8]
         logger.debug("Starting streaming HTTP request: rid=%s, url=%s", rid, url)
@@ -250,5 +242,3 @@ class HTTPStreamTransport:
             self._queues.pop(rid, None)
 
 
-# Alias for 100% backwards compatibility
-XHRStreamTransport = HTTPStreamTransport

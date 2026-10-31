@@ -13,7 +13,7 @@ from aistudio_api.domain.errors import (
     classify_error,
 )
 from aistudio_api.infrastructure.gateway.capture import CapturedRequest
-from aistudio_api.infrastructure.gateway.session import BrowserSession
+from aistudio_api.infrastructure.gateway.session import GatewaySession
 from aistudio_api.infrastructure.gateway.stream_parser import (
     IncrementalJSONStreamParser,
 )
@@ -75,7 +75,7 @@ def _summarize_error_body(raw_response: str, limit: int = 500) -> str:
 
 
 class StreamingGateway:
-    def __init__(self, session: BrowserSession | None = None):
+    def __init__(self, session: GatewaySession | None = None):
         self._session = session
 
     async def stream_chat(

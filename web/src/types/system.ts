@@ -1,7 +1,6 @@
 export interface SystemConfig {
   port: number
-  browser_port: number
-  browser_headless: boolean
+  proof_server_url?: string
   proxy_configured: boolean
   auth_enabled: boolean
   yaml_content: string

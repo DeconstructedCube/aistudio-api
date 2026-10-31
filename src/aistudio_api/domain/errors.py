@@ -119,8 +119,8 @@ def is_transient_rpc_error(exc: Exception) -> bool:
     return False
 
 
-def is_browser_session_hang_error(exc: Exception) -> bool:
-    """识别由于 CDP 断开、模板捕获超时、页面传输中断或 BotGuard 握手未就绪引起的会话异常。"""
+def is_session_hang_error(exc: Exception) -> bool:
+    """识别由于会话中断、签名超时、传输异常引起的会话故障。"""
     if isinstance(exc, BrowserTransportError):
         return True
     if isinstance(exc, (RuntimeError, TimeoutError)):
@@ -128,14 +128,11 @@ def is_browser_session_hang_error(exc: Exception) -> bool:
         return any(
             k in err
             for k in (
-                "template capture",
-                "botguard",
                 "timeout",
-                "cdp",
                 "closed",
                 "aborted",
                 "snapshot",
-                "hook install",
+                "connection",
             )
         )
     return False

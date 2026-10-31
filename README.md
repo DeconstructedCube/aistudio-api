@@ -51,12 +51,11 @@
 | **下游参数容错与丢弃** | 支持配置 `drop_unsupported_params` 自动过滤下游传入的非标准安全分类（如 `HARM_CATEGORY_CIVIC_INTEGRITY`）与不兼容工具，避免 400 阻断 |
 | **批量子账号探活** | 导入单个包含多个 Google 身份的 Cookie 后，自动递归探活子账号（`u/0`, `u/1`...）并分别建档 |
 | **内置搜索与工具** | 支持 Google Search 联网搜索、Google Maps、代码执行沙箱等官方扩展能力 |
-| **轻量 CDP 驱动** | 基于纯 Python 异步 WebSocket 直连 Chrome DevTools Protocol，无需 Node.js、Playwright 或 Selenium |
+| **纯净 WAA 引擎** | 彻底脱离 Chromium/proot 与本地浏览器环境，基于 aistudio-pg-bridge 高速签名 API 与 HTTP/2 连接池直连 Google |
 | **Web 管理面板** | 提供 Web 管理控制台，支持账号管理（文本与 JSON 批量导入）、调用量监控、在线编辑与热重载 `config.yaml` |
 | **Android 伴侣端** | 配套 Android 原生应用（`android/`），采用 Jetpack Compose 构建，支持多 Profile 隔离登录、Bitwarden 自动填充与一键导出凭据包 |
 > [!NOTE]
-> **内存占用参考**：纯 Python 后端服务常驻内存约 35 - 45 MB；拉起单实例受控 Chromium 后总物理内存 (PSS) 约 350 - 450 MB（宿主 Linux 下约 250 - 350 MB）。Android Termux 环境建议空闲 RAM ≥ 1 GB。
-
+> **内存占用参考**：脱离重型浏览器后，服务常驻物理内存仅约 35 - 50 MB，冷启动毫秒级，即使在入门级 Android 手机（Termux）或轻量服务器上亦可稳定高效常驻。
 ## 技术架构与文档
 
 ```
@@ -68,12 +67,12 @@
 │              FastAPI HTTP Gateway (Port 8080)          │
 ├───────────────────────────┬────────────────────────────┤
 │    Account Rotator        │    Chat & Wire Codec       │
-│  (Sticky & 429 Isolation) │ (Protobuf-JSON & BotGuard) │
+│  (Sticky & 429 Isolation) │   (Protobuf-JSON / WAA)    │
 └───────────────────────────┼────────────────────────────┘
-                            │ CDP WebSocket
+                            │ Proof Mint & HTTP/2 Stream
 ┌───────────────────────────▼────────────────────────────┐
-│      Controlled Chromium Instance (CloakBrowser)       │
-│       In-Page XHR Replay (withCredentials=true)        │
+│         Browserless WAA Engine (aistudio-pg-bridge API)│
+│       Async Connection Pooling (HTTPStreamTransport)   │
 └───────────────────────────┬────────────────────────────┘
                             │ HTTPS / RPC
 ┌───────────────────────────▼────────────────────────────┐
@@ -107,14 +106,11 @@ pkg update -y && pkg install -y git
 git clone https://github.com/DeconstructedCube/aistudio-api.git
 cd aistudio-api
 
-# 步骤 3：初始化依赖环境（自动配置手机专属加速源，无需本地编译）
+# 步骤 3：初始化依赖环境并同步安装
 bash scripts/setup-env.sh
 uv sync
 
-# 步骤 4：安装并配置受控浏览器（仅首次需要，耗时约 1~2 分钟）
-bash scripts/setup-browser.sh
-
-# 步骤 5：启动服务
+# 步骤 4：启动服务
 uv run python main.py server --port 8080
 ```
 
@@ -142,10 +138,7 @@ cd aistudio-api
 # 步骤 3：同步安装项目依赖
 uv sync
 
-# 步骤 4：安装 CloakBrowser 浏览器（仅首次需要）
-scripts\install-browser.bat
-
-# 步骤 5：启动服务
+# 步骤 4：启动服务
 uv run python main.py server --port 8080
 ```
 
@@ -168,10 +161,7 @@ cd aistudio-api
 # 步骤 3：同步安装项目依赖
 uv sync
 
-# 步骤 4：安装 CloakBrowser 浏览器（仅首次需要）
-bash scripts/setup-browser.sh
-
-# 步骤 5：启动服务
+# 步骤 4：启动服务
 uv run python3 main.py server --port 8080
 ```
 
@@ -181,8 +171,6 @@ uv run python3 main.py server --port 8080
 
 ### Docker 部署
 
-镜像已内置 CloakBrowser 运行时，支持开箱即用：
-
 ```bash
 docker run -d \
   --name aistudio-api \
@@ -191,7 +179,6 @@ docker run -d \
   -v aistudio-api-data:/app/data \
   ghcr.io/deconstructedcube/aistudio-api:latest
 ```
-
 使用 Docker Compose 启动：
 
 ```bash
@@ -220,10 +207,7 @@ docker compose up -d
 | `AISTUDIO_CONFIG_FILE` | string | `config.yaml` | 模型规则与默认工具配置文件路径 |
 | `AISTUDIO_PERSIST_STATS` | bool | `true` | 是否持久化模型调用与 Token 统计（1=开启，0=关闭） |
 | `AISTUDIO_PERSIST_ROTATOR` | bool | `true` | 是否持久化账号 429 冷却与调度状态（1=开启，0=关闭） |
-| `AISTUDIO_BROWSER_EXECUTABLE` | string | 自动探测 | 自定义 CloakBrowser 可执行文件路径（Docker 内为 `/opt/cloakbrowser/chrome`） |
-| `AISTUDIO_BROWSER_PORT` | int | `9222` | Chromium 远程调试端口 (CDP) |
-| `AISTUDIO_BROWSER_HEADLESS` | bool | `true` | 是否以无头模式运行 Chromium |
-| `AISTUDIO_PROOT_NAME` | string | `aistudio-api` | Termux 环境下专用的 proot-distro 容器名称 |
+| `AISTUDIO_PROOF_SERVER_URL` | string | `https://waa.spinsnow.fun` | WAA 证明签名服务地址，基于 [aistudio-pg-bridge](https://github.com/Lianues/aistudio-pg-bridge)（默认使用 spinsnow 公开服务，支持配置自建服务） |
 | `AISTUDIO_DEFAULT_TEXT_MODEL` | string | `gemini-3.7-flash` | 默认文本模型 |
 | `AISTUDIO_DEFAULT_IMAGE_MODEL` | string | `gemini-3.1-flash-image-preview` | 默认图像生成模型 |
 | `AISTUDIO_TIMEZONE` | string | 自动探测 | 受控浏览器指纹与 Wire 协议交互时区（默认 `America/Los_Angeles`） |

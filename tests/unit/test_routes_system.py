@@ -57,7 +57,7 @@ async def test_get_config_endpoint():
         assert resp.status_code == 200
         data = resp.json()
         assert "port" in data
-        assert "browser_port" in data
+        assert "proof_server_url" in data
         assert "yaml_content" in data
 
 

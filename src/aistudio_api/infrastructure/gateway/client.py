@@ -1,4 +1,4 @@
-"""Browser-backed AI Studio client facade."""
+"""AI Studio client gateway."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import ClassVar
 
 from aistudio_api.config import (
-    DEFAULT_BROWSER_PORT,
     DEFAULT_IMAGE_MODEL,
     DEFAULT_TEXT_MODEL,
     settings,
@@ -24,7 +23,7 @@ from aistudio_api.infrastructure.gateway.capture import (
 )
 from aistudio_api.infrastructure.gateway.model_defaults import resolve_model_defaults
 from aistudio_api.infrastructure.gateway.replay import RequestReplayService
-from aistudio_api.infrastructure.gateway.session import BrowserSession
+from aistudio_api.infrastructure.gateway.session import GatewaySession
 from aistudio_api.infrastructure.gateway.streaming import StreamingGateway
 from aistudio_api.infrastructure.gateway.wire_codec import (
     build_image_generation_search_tool,
@@ -61,24 +60,23 @@ class AIStudioClient:
         "1024x1536": ["2:3", "1K"],
     }
 
-    def __init__(self, port: int = DEFAULT_BROWSER_PORT):
-        self.port = port
-        self._session = BrowserSession(port=port)
+    def __init__(self):
+        self._session = GatewaySession()
         self._capture_service = RequestCaptureService(self._session)
         self._replay_service = RequestReplayService(session=self._session)
 
         self._streaming_gateway = StreamingGateway(session=self._session)
 
     @property
-    def session(self) -> BrowserSession:
-        """Expose active browser session facade."""
+    def session(self) -> GatewaySession:
+        """Expose active gateway session facade."""
         return self._session
 
     async def warmup(self) -> None:
-        """预热浏览器后端并加载 AI Studio 页面及捕获 BotGuard 服务。"""
+        """预热活动账号会话与签名服务。"""
         if self._session is not None:
-            await self._session.ensure_botguard_service()
-            logger.info("浏览器预热就绪")
+            await self._session.ensure_ready()
+            logger.info("网关会话预热就绪")
 
     async def switch_auth(self, auth_file: str | None) -> None:
         """切换账号的 auth 文件并清空模板缓存。"""
@@ -92,7 +90,7 @@ class AIStudioClient:
             self._capture_service.clear_templates()
 
     async def close(self) -> None:
-        """关闭浏览器后端。"""
+        """关闭会话与传输层连接。"""
         if self._session is not None:
             await self._session.close()
 

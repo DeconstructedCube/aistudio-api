@@ -197,7 +197,7 @@ class AistudioWireCodec:
 
     def encode(self, request: AistudioRequest) -> str:
         body = list(request.raw_body)
-        self._ensure_len(body, self.TIMEZONE_INDEX + 1)
+        self._ensure_len(body, self.SNAPSHOT_INDEX + 1)
 
         model = request.model
         if not model.startswith("models/"):
@@ -207,22 +207,27 @@ class AistudioWireCodec:
         body[self.SAFETY_INDEX] = request.safety_settings
         body[self.GENERATION_CONFIG_INDEX] = request.generation_config.values
         body[self.SNAPSHOT_INDEX] = request.snapshot
-        body[self.SYSTEM_INSTRUCTION_INDEX] = (
-            request.system_instruction.to_wire() if request.system_instruction else None
-        )
-        body[self.TOOLS_INDEX] = request.tools
-        body[self.EVERGREEN_MODEL_URI_INDEX] = request.evergreen_model_uri
-        body[self.REQUEST_FLAG_INDEX] = (
-            request.request_flag if request.request_flag is not None else 1
-        )
-        body[self.SESSION_TOKEN_INDEX] = request.session_token
-        body[self.TIMEZONE_INDEX] = request.location
+
+        if request.system_instruction:
+            self._ensure_len(body, self.SYSTEM_INSTRUCTION_INDEX + 1)
+            body[self.SYSTEM_INSTRUCTION_INDEX] = request.system_instruction.to_wire()
+        if request.tools:
+            self._ensure_len(body, self.TOOLS_INDEX + 1)
+            body[self.TOOLS_INDEX] = request.tools
+        if request.evergreen_model_uri:
+            self._ensure_len(body, self.EVERGREEN_MODEL_URI_INDEX + 1)
+            body[self.EVERGREEN_MODEL_URI_INDEX] = request.evergreen_model_uri
+        if request.request_flag is not None:
+            self._ensure_len(body, self.REQUEST_FLAG_INDEX + 1)
+            body[self.REQUEST_FLAG_INDEX] = request.request_flag
+        if request.session_token is not None:
+            self._ensure_len(body, self.SESSION_TOKEN_INDEX + 1)
+            body[self.SESSION_TOKEN_INDEX] = request.session_token
 
         model_defaults = resolve_model_defaults(request.model)
+        gc = body[self.GENERATION_CONFIG_INDEX]
         if model_defaults.is_image_model:
-            gc = body[self.GENERATION_CONFIG_INDEX]
             if isinstance(gc, list):
-                # Different image-capable models reject some text-model carry-over slots.
                 for idx in model_defaults.clear_generation_config_indexes:
                     if idx < len(gc):
                         gc[idx] = None
@@ -238,7 +243,7 @@ class AistudioWireCodec:
                     1,
                 ]
             else:
-                while len(body) > self.SESSION_TOKEN_INDEX + 1 and body[-1] is None:
+                while len(body) > self.SNAPSHOT_INDEX + 1 and body[-1] is None:
                     body.pop()
         return json.dumps(body, separators=(",", ":"), ensure_ascii=False)
 

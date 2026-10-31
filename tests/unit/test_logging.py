@@ -58,8 +58,8 @@ def test_logger_namespace_hierarchy():
     logger1 = get_logger("server")
     assert logger1.name == "aistudio.server"
 
-    logger2 = get_logger("aistudio.browser")
-    assert logger2.name == "aistudio.browser"
+    logger2 = get_logger("aistudio.gateway")
+    assert logger2.name == "aistudio.gateway"
 
     logger3 = get_logger("aistudio")
     assert logger3.name == "aistudio"

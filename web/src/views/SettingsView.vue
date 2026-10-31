@@ -51,13 +51,13 @@ onMounted(() => {
       <div class="bg-white border border-gray-200/80 rounded-2xl p-4 shadow-xs">
         <div class="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
           <Server class="w-4 h-4 text-blue-600" />
-          <span>服务端口 / 浏览器</span>
+          <span>服务端口</span>
         </div>
         <div class="text-base font-bold text-gray-900 font-mono">
-          :{{ config?.port || 8080 }} <span class="text-xs text-gray-400 font-normal">/ CDP :{{ config?.browser_port || 9222 }}</span>
+          :{{ config?.port || 8080 }}
         </div>
         <div class="text-[11px] text-gray-400 mt-1">
-          无头模式: {{ config?.browser_headless ? '开启 (Headless)' : '禁用' }}
+          HTTP 服务监听端口
         </div>
       </div>
 

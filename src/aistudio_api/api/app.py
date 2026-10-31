@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from aistudio_api.application.api_service_gemini import classify_gemini_error_payload
+from aistudio_api.config import settings
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 from aistudio_api.infrastructure.gateway.model_defaults import (
     get_configured_logging_settings,
@@ -47,9 +48,7 @@ async def lifespan(_app: FastAPI):
     from aistudio_api.application.account_service import AccountService
     from aistudio_api.infrastructure.account.account_store import AccountStore
 
-    client = AIStudioClient(
-        port=runtime_state.browser_port,
-    )
+    client = AIStudioClient()
     runtime_state.client = client
 
     # 初始化账号管理服务
@@ -69,8 +68,8 @@ async def lifespan(_app: FastAPI):
     if active_auth_path is not None and client.session is not None:
         client.session._auth_file = str(active_auth_path)
     logger.info(
-        "服务初始化完成: 监听浏览器调试端口=%d, 已加载账号数=%d",
-        runtime_state.browser_port,
+        "服务初始化完成: 监听端口=%d, 已加载账号数=%d",
+        settings.port,
         len(account_store.list_accounts()),
     )
     logger.debug(
@@ -81,21 +80,21 @@ async def lifespan(_app: FastAPI):
         ],
     )
 
-    # 后台预热浏览器，避免首次请求延迟
+    # 后台预热网关会话，避免首次请求延迟
     warmup_task = None
 
     async def _warmup():
         for attempt in range(3):
             try:
-                logger.debug("开始预热浏览器后端: attempt=%d", attempt + 1)
+                logger.debug("开始预热网关会话: attempt=%d", attempt + 1)
                 await client.warmup()
-                logger.debug("浏览器预热就绪: attempt=%d", attempt + 1)
+                logger.debug("网关会话预热就绪: attempt=%d", attempt + 1)
                 return
             except Exception as e:
                 if attempt < 2:
                     await asyncio.sleep(1.0)
                     continue
-                logger.warning("浏览器预热失败: %s", e)
+                logger.warning("网关会话预热失败: %s", e)
 
     warmup_task = asyncio.create_task(_warmup())
 
@@ -447,12 +446,9 @@ def main():
 
     parser = argparse.ArgumentParser(description="AI Studio API Server")
     parser.add_argument("--port", type=int, default=settings.port)
-    parser.add_argument("--browser-port", type=int, default=settings.browser_port)
     args = parser.parse_args()
-
-    runtime_state.browser_port = args.browser_port
 
     import uvicorn
 
-    logger.info("启动服务: 监听端口=%d, 浏览器调试端口=%d", args.port, runtime_state.browser_port)
+    logger.info("启动服务: 监听端口=%d", args.port)
     uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info")

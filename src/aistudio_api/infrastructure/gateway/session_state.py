@@ -20,7 +20,6 @@ class SessionState(StrEnum):
 class SessionContext:
     """Encapsulates active authentication context and metadata for AI Studio gateway."""
 
-    page: object | None = None
     snap_key: str = "waa_proof"
     auth_user: str = "0"
     auth_file: str | None = None
@@ -39,9 +38,6 @@ class SessionContext:
             self.drain_event.set()
 
     def is_usable(self) -> bool:
-        is_closed_fn = getattr(self.page, "is_closed", None)
-        if callable(is_closed_fn):
-            return not is_closed_fn()
         return bool(self.auth_file or self.cookies or self.base_template)
 
 

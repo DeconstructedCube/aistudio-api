@@ -1,62 +1,21 @@
-"""Unit tests for browserless WAA engine challenge decoding and proof signing."""
+"""Unit tests for WAA engine proof signing client (aistudio-pg-bridge / spinsnow)."""
 
 from __future__ import annotations
 
-import base64
+import hashlib
 import json
+from unittest.mock import patch
 
 import httpx
 import pytest
 
 from aistudio_api.domain.errors import BrowserTransportError
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
-from aistudio_api.infrastructure.waa.challenge import (
-    compute_interpreter_hash,
-    parse_challenge_payload,
-)
 from aistudio_api.infrastructure.waa.signer import (
     RemoteProofSigner,
+    WaaSigner,
     extract_content_digest,
 )
-
-
-def test_challenge_caesar_shift_decoding():
-    """Verify Google Caesar shift (+97 modulo 256) challenge decoding."""
-    fields = [
-        "msg_1234",  # [0] MessageID
-        ["var x = 1;"],  # [1] InterpreterJavaScript
-        ["//www.google.com/js/bg/mock_hash.js"],  # [2] InterpreterURL
-        "mock_hash_123",  # [3] InterpreterHash
-        "program_bytecode_data",  # [4] Program
-        "botguard_global",  # [5] GlobalName
-        None,  # [6]
-        '{"experiments": [1, 2]}',  # [7] ClientExperimentsStateBlob
-    ]
-    raw_json = json.dumps(fields).encode("utf-8")
-    # Shift backwards by 97 to simulate Google's obfuscation
-    shifted = bytearray(raw_json)
-    for i in range(len(shifted)):
-        shifted[i] = (shifted[i] - 97) & 0xFF
-    encoded_b64 = base64.b64encode(shifted).decode("utf-8")
-
-    outer = [None, encoded_b64]
-    challenge = parse_challenge_payload(json.dumps(outer).encode("utf-8"))
-
-    assert challenge.message_id == "msg_1234"
-    assert challenge.interpreter_javascript == "var x = 1;"
-    assert challenge.interpreter_url == "https://www.google.com/js/bg/mock_hash.js"
-    assert challenge.interpreter_hash == "mock_hash_123"
-    assert challenge.program == "program_bytecode_data"
-    assert challenge.global_name == "botguard_global"
-    assert challenge.client_experiments_state_blob == '{"experiments": [1, 2]}'
-
-
-def test_compute_interpreter_hash():
-    """Verify SHA-256 raw urlsafe base64 unpadded digest calculation."""
-    sample = b"function botguard() { return 42; }"
-    h = compute_interpreter_hash(sample)
-    assert "=" not in h
-    assert len(h) == 43
 
 
 def test_extract_content_digest_exact_alignment():
@@ -67,7 +26,6 @@ def test_extract_content_digest_exact_alignment():
     ]
     prompt, digest = extract_content_digest(contents)
     assert prompt == "hello world"
-    import hashlib
     assert digest == hashlib.sha256(b"hello world").hexdigest()
 
 
@@ -88,8 +46,6 @@ async def test_remote_proof_signer_success():
     mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     signer = RemoteProofSigner(server_url="https://mock.proof.server")
 
-    from unittest.mock import patch
-
     with patch("httpx.AsyncClient", return_value=mock_client):
         proof = await signer.mint_proof(
             cookies={"SAPISID": "test_cookie"},
@@ -101,12 +57,13 @@ async def test_remote_proof_signer_success():
         )
 
     assert proof == "!mock_minted_proof"
+    await signer.close()
 
 
 @pytest.mark.asyncio
 async def test_remote_proof_signer_error():
     """Verify RemoteProofSigner raises BrowserTransportError on upstream failure."""
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             500,
             json={"ok": False, "error": "Cookie expired or invalid"},
@@ -114,8 +71,6 @@ async def test_remote_proof_signer_error():
 
     mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     signer = RemoteProofSigner(server_url="https://mock.proof.server")
-
-    from unittest.mock import patch
 
     with patch("httpx.AsyncClient", return_value=mock_client), pytest.raises(
         BrowserTransportError, match="Cookie expired or invalid"
@@ -125,3 +80,78 @@ async def test_remote_proof_signer_error():
             auth_user="0",
             prompt="test",
         )
+    await signer.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_proof_signer_retry_on_network_error():
+    """Verify RemoteProofSigner retries on transient connection error."""
+    attempts = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("Network unreachable")
+        return httpx.Response(
+            200,
+            json={"ok": True, "proof": "!mock_recovered_proof", "poolState": "cold"},
+        )
+
+    signer = RemoteProofSigner(server_url="https://mock.proof.server")
+
+    orig_client = httpx.AsyncClient
+    with patch(
+        "aistudio_api.infrastructure.waa.signer.httpx.AsyncClient",
+        side_effect=lambda **kwargs: orig_client(
+            transport=httpx.MockTransport(handler), **kwargs
+        ),
+    ):
+        proof = await signer.mint_proof(
+            cookies={"SAPISID": "valid_cookie"},
+            prompt="retry test",
+        )
+    assert proof == "!mock_recovered_proof"
+    await signer.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_proof_signer_check_health():
+    """Verify RemoteProofSigner check_health sends X-Google-Cookies and parses ok."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/health"
+        assert request.headers["X-Google-Cookies"] == "SAPISID=active"
+        assert request.headers["X-Goog-AuthUser"] == "1"
+        return httpx.Response(200, json={"ok": True, "hotTtlMs": 3600000})
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    signer = RemoteProofSigner(server_url="https://mock.proof.server")
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        healthy = await signer.check_health(cookies={"SAPISID": "active"}, auth_user="1")
+
+    assert healthy is True
+    await signer.close()
+
+
+@pytest.mark.asyncio
+async def test_waa_signer_facade():
+    """Verify WaaSigner delegates generate_snapshot to RemoteProofSigner."""
+    signer = WaaSigner(proof_server_url="https://mock.proof.server")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True, "proof": "!facade_token"})
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        token = await signer.generate_snapshot(
+            contents=[AistudioContent(role="user", parts=[AistudioPart(text="ping")])],
+            cookies={"SAPISID": "session_cookie"},
+            auth_user="0",
+            tier="Free",
+            model="models/gemini-3.7-flash",
+        )
+
+    assert token == "!facade_token"
+    await signer.close()

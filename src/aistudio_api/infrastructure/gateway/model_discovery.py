@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from aistudio_api.infrastructure.gateway.session import BrowserSession
+    from aistudio_api.infrastructure.gateway.session import GatewaySession
 
 from aistudio_api.infrastructure.account.cookie_parser import (
     DEFAULT_API_KEY,
@@ -177,7 +177,7 @@ class ModelDiscoveryService:
         force_refresh: bool = False,
         cookies: dict[str, str] | None = None,
         auth_user: str = "0",
-        session: BrowserSession | None = None,
+        session: GatewaySession | None = None,
     ) -> list[dict[str, object]]:
         """获取可用模型列表。"""
         now = time.time()
@@ -264,7 +264,7 @@ class ModelDiscoveryService:
             return self._cached_models
 
     async def get_model_by_id(
-        self, model_id: str, session: BrowserSession | None = None
+        self, model_id: str, session: GatewaySession | None = None
     ) -> Mapping[str, object] | None:
         """根据 model_id 或模型别名获取单个模型元数据（含保底匹配）。"""
         discovered = await self.get_models(session=session)

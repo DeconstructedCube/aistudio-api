@@ -272,8 +272,7 @@ async def get_system_config() -> dict[str, object]:
             yaml_content = config_yaml_path.read_text(encoding="utf-8")
     return {
         "port": settings.port,
-        "browser_port": settings.browser_port,
-        "browser_headless": settings.browser_headless,
+        "proof_server_url": settings.proof_server_url,
         "proxy_configured": bool(settings.proxy_url),
         "auth_enabled": settings.auth_enabled,
         "yaml_content": yaml_content,

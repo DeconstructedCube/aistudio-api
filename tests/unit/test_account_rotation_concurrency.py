@@ -22,15 +22,13 @@ from aistudio_api.infrastructure.gateway.capture import (
     CapturedRequest,
     RequestCaptureService,
 )
-from aistudio_api.infrastructure.gateway.session import (
-    BrowserSession,
-)
+from aistudio_api.infrastructure.gateway.session import GatewaySession
 
 
 @pytest.mark.asyncio
 async def test_capture_service_concurrency_and_caching():
     """并发请求抓取模板时，模板捕获只执行 1 次，快照签名每次实时生成（不复用缓存）。"""
-    mock_session = MagicMock(spec=BrowserSession)
+    mock_session = MagicMock(spec=GatewaySession)
     mock_session.generate_snapshot = AsyncMock(return_value="mock_snap")
 
     call_count = 0
@@ -73,10 +71,10 @@ async def test_capture_service_concurrency_and_caching():
 @pytest.mark.asyncio
 async def test_capture_service_ephemeral_signature_identical_prompts():
     """相同 Prompt 并发请求时，每次都生成全新快照签名，绝不复用。"""
-    mock_session = MagicMock(spec=BrowserSession)
+    mock_session = MagicMock(spec=GatewaySession)
     snap_counter = 0
 
-    async def fake_snapshot(contents):
+    async def fake_snapshot(contents, *args, **kwargs):
         nonlocal snap_counter
         snap_counter += 1
         return f"!snap_token_{snap_counter}"
@@ -335,7 +333,7 @@ async def test_runtime_state_record_model_stats():
 @pytest.mark.asyncio
 async def test_capture_model_preservation_when_template_differs():
     """测试当 Hook 拦截模板为 3.7-flash 时，请求 3.8-flash 不会被模板模型覆盖。"""
-    mock_session = MagicMock(spec=BrowserSession)
+    mock_session = MagicMock(spec=GatewaySession)
     mock_session.generate_snapshot = AsyncMock(return_value="!mock_snap")
     mock_session.capture_template = AsyncMock(
         return_value={
@@ -423,7 +421,7 @@ async def test_ensure_authorization_header_concurrency_and_fallback():
         "Authorization": "SAPISIDHASH 1789397237_abcdef0123456789",
     }
 
-    result = await _ensure_authorization_header(None, headers, auth_user="0")
+    result = await _ensure_authorization_header(headers, auth_user="0")
     assert "Authorization" in result
     assert result["Authorization"] == "SAPISIDHASH 1789397237_abcdef0123456789"
     assert result["X-Goog-AuthUser"] == "0"

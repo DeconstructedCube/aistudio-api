@@ -234,9 +234,12 @@ def calculate_sapisid_hash(
     cookies: dict[str, str], origin: str = DEFAULT_ORIGIN
 ) -> str:
     """计算 Google SAPISIDHASH 鉴权头部。"""
-    sapisid = cookies.get("SAPISID") or cookies.get("__Secure-1PAPISID") or ""
-    sapisid1p = cookies.get("__Secure-1PAPISID") or sapisid
-    sapisid3p = cookies.get("__Secure-3PAPISID") or sapisid
+    sapisid = (
+        cookies.get("SAPISID")
+        or cookies.get("__Secure-3PAPISID")
+        or cookies.get("APISID")
+        or ""
+    )
     if not sapisid:
         return ""
 
@@ -245,11 +248,14 @@ def calculate_sapisid_hash(
     def calc_hash(val: str) -> str:
         return hashlib.sha1(f"{ts} {val} {origin}".encode()).hexdigest()
 
-    h1 = f"SAPISIDHASH {ts}_{calc_hash(sapisid)}"
-    h2 = f"SAPISID1PHASH {ts}_{calc_hash(sapisid1p)}"
-    h3 = f"SAPISID3PHASH {ts}_{calc_hash(sapisid3p)}"
-    return f"{h1} {h2} {h3}"
-
+    parts = [f"SAPISIDHASH {ts}_{calc_hash(sapisid)}"]
+    one = cookies.get("__Secure-1PAPISID")
+    if one:
+        parts.append(f"SAPISID1PHASH {ts}_{calc_hash(one)}")
+    three = cookies.get("__Secure-3PAPISID")
+    if three and three != sapisid:
+        parts.append(f"SAPISID3PHASH {ts}_{calc_hash(three)}")
+    return " ".join(parts)
 
 def build_google_cookie_list(
     pairs: Iterable[tuple[str, str]] | dict[str, str],

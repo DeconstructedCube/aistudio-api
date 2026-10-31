@@ -194,12 +194,12 @@ async def activate_account(
     runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> AccountResponse:
     """切换到指定账号。"""
-    browser_session = runtime_state.client._session if runtime_state.client else None
+    gateway_session = runtime_state.client._session if runtime_state.client else None
 
-    if browser_session is None:
+    if gateway_session is None:
         raise HTTPException(status_code=503, detail="服务未就绪")
 
-    account = await account_service.activate_account(account_id, browser_session)
+    account = await account_service.activate_account(account_id, gateway_session)
     if account is None:
         raise HTTPException(status_code=404, detail="账号不存在或切换失败")
     if runtime_state.rotator:
@@ -213,7 +213,6 @@ async def activate_account(
 async def detect_account_email(
     account_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@]+$"),
     account_service: AccountService = Depends(get_account_service),
-    runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> AccountResponse:
     """自动获取并更新指定账号的真实邮箱与订阅等级。"""
     import json
@@ -223,33 +222,10 @@ async def detect_account_email(
         raise HTTPException(status_code=404, detail="账号不存在")
 
     target_auth = account_service.get_account_auth_path(account_id)
-    browser_session = runtime_state.client._session if runtime_state.client else None
     email: str | None = None
     detected_tier: str | None = None
 
-    # 1. 若受控浏览器当前正好处于该账号上下文，优先直接从当前页面提取（免切号）
-    is_current_session = bool(
-        browser_session is not None
-        and browser_session.page is not None
-        and (
-            not target_auth
-            or not getattr(browser_session, "_auth_file", None)
-            or str(target_auth) == browser_session._auth_file
-        )
-    )
-    if is_current_session and browser_session is not None:
-        with contextlib.suppress(Exception):
-            email = await browser_session.extract_account_email()
-        if hasattr(browser_session, "extract_account_tier"):
-            with contextlib.suppress(Exception):
-                detected_tier = await browser_session.extract_account_tier()
-
-    # 2. 通过 auth.json 凭据执行高速 HTTP 探测（无需切号，即使浏览器休眠也可用）
-    if (
-        (not email or not detected_tier or detected_tier == "Free")
-        and target_auth
-        and target_auth.is_file()
-    ):
+    if target_auth and target_auth.is_file():
         try:
             auth_data = json.loads(target_auth.read_text(encoding="utf-8"))
             raw_cookies = auth_data.get("cookies") or []
@@ -259,30 +235,16 @@ async def detect_account_email(
                 if isinstance(c, dict) and c.get("name")
             }
             if cookie_dict:
-                if not email:
-                    email = await probe_account_email(
-                        cookie_dict, auth_user=acc.auth_user or "0"
-                    )
-                if not detected_tier or detected_tier == "Free":
-                    http_tier = await probe_account_benefit_tier(
-                        cookie_dict, auth_user=acc.auth_user or "0"
-                    )
-                    if (http_tier and http_tier != "Free") or not detected_tier:
-                        detected_tier = http_tier
+                email = await probe_account_email(
+                    cookie_dict, auth_user=acc.auth_user or "0"
+                )
+                http_tier = await probe_account_benefit_tier(
+                    cookie_dict, auth_user=acc.auth_user or "0"
+                )
+                if http_tier:
+                    detected_tier = http_tier
         except Exception as e:
             log.debug("通过 HTTP 探测账号 %s 邮箱/等级失败: %s", account_id, e)
-
-    # 3. 若 HTTP 仍未取到邮箱且受控浏览器可用，回退切换浏览器会话提取
-    if not email and browser_session is not None and browser_session.page is not None:
-        if target_auth and str(target_auth) != browser_session._auth_file:
-            await browser_session.switch_auth(str(target_auth))
-        email = await browser_session.extract_account_email()
-        if (not detected_tier or detected_tier == "Free") and hasattr(
-            browser_session, "extract_account_tier"
-        ):
-            with contextlib.suppress(Exception):
-                detected_tier = await browser_session.extract_account_tier()
-
     if email:
         account_service.update_account_email(account_id, email)
         log.info("已更新账号邮箱: id=%s, email=%s", account_id, mask_email(email))
@@ -301,7 +263,6 @@ async def detect_account_email(
 async def detect_account_tier(
     account_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@]+$"),
     account_service: AccountService = Depends(get_account_service),
-    runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> AccountResponse:
     """探测并更新指定账号的订阅权益等级 (Free / Pro / Ultra / Plus)。"""
     import json
@@ -312,17 +273,7 @@ async def detect_account_tier(
 
     detected_tier: str | None = None
     target_auth = account_service.get_account_auth_path(account_id)
-    browser_session = runtime_state.client._session if runtime_state.client else None
-    if (
-        browser_session is not None
-        and browser_session.page is not None
-        and target_auth
-        and str(target_auth) == browser_session._auth_file
-        and hasattr(browser_session, "extract_account_tier")
-    ):
-        detected_tier = await browser_session.extract_account_tier()
-
-    if not detected_tier and target_auth and target_auth.is_file():
+    if target_auth and target_auth.is_file():
         try:
             auth_data = json.loads(target_auth.read_text(encoding="utf-8"))
             raw_cookies = auth_data.get("cookies") or []
@@ -347,7 +298,6 @@ async def detect_account_tier(
         raise HTTPException(status_code=404, detail="账号不存在")
     return to_account_response(acc)
 
-
 @router.delete("/{account_id}")
 async def delete_account(
     account_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@]+$"),
@@ -367,19 +317,19 @@ async def delete_account(
     if is_active:
         remaining_accounts = account_service.list_accounts()
         new_active = remaining_accounts[0] if remaining_accounts else None
-        browser_session = (
+        gateway_session = (
             runtime_state.client._session if runtime_state.client else None
         )
         if new_active is not None:
             account_service.set_active_account(new_active.id)
-            if browser_session is not None:
+            if gateway_session is not None:
                 new_auth_path = account_service.get_account_auth_path(new_active.id)
-                await browser_session.switch_auth(
+                await gateway_session.switch_auth(
                     str(new_auth_path) if new_auth_path else None
                 )
         else:
-            if browser_session is not None:
-                await browser_session.switch_auth(None)
+            if gateway_session is not None:
+                await gateway_session.switch_auth(None)
 
     log.info("已删除账号: id=%s", account_id)
     return {"ok": True}
@@ -413,19 +363,19 @@ async def delete_cookie_group(
     if active_deleted:
         remaining_accounts = account_service.list_accounts()
         new_active = remaining_accounts[0] if remaining_accounts else None
-        browser_session = (
+        gateway_session = (
             runtime_state.client._session if runtime_state.client else None
         )
         if new_active is not None:
             account_service.set_active_account(new_active.id)
-            if browser_session is not None:
+            if gateway_session is not None:
                 new_auth_path = account_service.get_account_auth_path(new_active.id)
-                await browser_session.switch_auth(
+                await gateway_session.switch_auth(
                     str(new_auth_path) if new_auth_path else None
                 )
         else:
-            if browser_session is not None:
-                await browser_session.switch_auth(None)
+            if gateway_session is not None:
+                await gateway_session.switch_auth(None)
 
     return {"deleted": deleted_count}
 
@@ -681,18 +631,18 @@ async def import_cookies(
         runtime_state.rotator.add_account(account.id)
         runtime_state.rotator.clear_cooldown(account.id)
     try:
-        browser_session = (
+        gateway_session = (
             runtime_state.client._session if runtime_state.client else None
         )
-        if browser_session:
+        if gateway_session:
             auth_path = account_service.get_account_auth_path(account.id)
-            count = await browser_session.import_cookies(
+            count = await gateway_session.import_cookies(
                 req.cookies,
                 auth_file=str(auth_path) if auth_path else None,
             )
             log.info("已导入 Cookie 并保存文件: 数量=%d, 账号=%s", count, account.name)
     except Exception as e:
-        log.warning("为 %s 注入浏览器 Cookie 失败: %s", account.name, e)
+        log.warning("为 %s 导入 Cookie 失败: %s", account.name, e)
     return ImportCookiesResponse(
         account_id=account.id,
         name=account.name,
@@ -741,9 +691,9 @@ async def probe_and_import(
 
     client_obj = getattr(runtime_state, "client", None)
     if not had_active_account and metas and client_obj is not None:
-        browser_session = client_obj._session
-        if browser_session is not None:
-            await account_service.activate_account(metas[0].id, browser_session)
+        gateway_session = client_obj._session
+        if gateway_session is not None:
+            await account_service.activate_account(metas[0].id, gateway_session)
     log.info("Cookie 探活完成: 导入账号数=%d", len(imported_accounts))
     return ProbeAndImportResponse(
         imported_count=len(imported_accounts),
