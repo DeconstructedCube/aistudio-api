@@ -126,6 +126,31 @@ DISCARDABLE_IMPORT_COOKIE_NAMES: frozenset[str] = frozenset(
     }
 )
 
+MINIMAL_COOKIE_WHITELIST: frozenset[str] = frozenset(
+    {
+        "SID",
+        "HSID",
+        "SSID",
+        "APISID",
+        "SAPISID",
+        "__Secure-1PSID",
+        "__Secure-3PSID",
+        "__Secure-1PAPISID",
+        "__Secure-3PAPISID",
+        "__Secure-1PSIDTS",
+        "__Secure-3PSIDTS",
+        "SIDCC",
+        "__Secure-1PSIDCC",
+        "__Secure-3PSIDCC",
+        "NID",
+    }
+)
+
+
+def filter_minimal_cookies(cookies: dict[str, str]) -> dict[str, str]:
+    """Filter cookies to only whitelisted authentication cookies, discarding transient/host-only junk."""
+    return {k: v for k, v in cookies.items() if k in MINIMAL_COOKIE_WHITELIST and v}
+
 
 def parse_raw_cookies(raw: object) -> dict[str, str]:
     """万能 Cookie 解析器，支持：
@@ -375,7 +400,7 @@ async def probe_account_emails_map(
     u_index = str(auth_user or "0")
     cookie_header = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
         "Cookie": cookie_header,
     }
 

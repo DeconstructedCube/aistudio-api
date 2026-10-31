@@ -20,6 +20,7 @@ from aistudio_api.config import settings
 from aistudio_api.domain.errors import BrowserTransportError
 from aistudio_api.infrastructure.account.cookie_parser import (
     calculate_sapisid_hash,
+    filter_minimal_cookies,
     get_tier_header_value,
 )
 from aistudio_api.infrastructure.utils.logger import get_logger
@@ -111,7 +112,8 @@ async def _ensure_authorization_header(
     if tier_header:
         clean_headers["X-AIStudio-G1-Tier"] = tier_header
 
-    cookie_dict = _get_auth_cookies(auth_file)
+    raw_cookie_dict = _get_auth_cookies(auth_file)
+    cookie_dict = filter_minimal_cookies(raw_cookie_dict) if raw_cookie_dict else None
 
     if cookie_dict:
         fresh_auth = calculate_sapisid_hash(cookie_dict)

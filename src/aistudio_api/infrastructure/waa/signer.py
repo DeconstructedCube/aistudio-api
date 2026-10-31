@@ -16,6 +16,7 @@ import httpx
 
 from aistudio_api.domain.errors import BrowserTransportError
 from aistudio_api.infrastructure.account.cookie_parser import (
+    filter_minimal_cookies,
     get_tier_header_value,
 )
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
@@ -110,7 +111,8 @@ class RemoteProofSigner:
         wire_contents: list[Any] | None = None,
     ) -> str:
         """Request proof from remote proof server with automatic retry on transient failure."""
-        cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items() if v)
+        min_cookies = filter_minimal_cookies(cookies)
+        cookie_header = "; ".join(f"{k}={v}" for k, v in min_cookies.items())
         if not cookie_header:
             raise ValueError("Cannot mint proof: cookies are empty")
 
