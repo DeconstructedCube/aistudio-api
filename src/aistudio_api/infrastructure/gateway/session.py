@@ -42,7 +42,10 @@ DEFAULT_BOOTSTRAP_TEMPLATE: dict[str, object] = {
         "X-User-Agent": "grpc-web-javascript/0.1",
         "X-Goog-Api-Key": "AIzaSyDdP816MREB3SkjZO04QXbjsigfcI0GWOs",
         "X-Goog-AuthUser": "0",
+        "X-Goog-Ext-519733851-bin": "CAASAUIwATgEQABQBFgDYgJKUHAAeAGQAQCYAQE=",
+        "Origin": "https://aistudio.google.com",
         "Referer": "https://aistudio.google.com/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
     },
     "body": '["models/gemini-3.7-flash"]',
 }

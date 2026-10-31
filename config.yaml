@@ -2,6 +2,10 @@
 # 留空 [] 表示对外 API 免 Key 开放调用；配置密钥后客户端必须携带对应 Key 访问。
 api_keys: []
 
+# WAA 签名与挑战求解配置 (脱离浏览器的纯净轻量化签名引擎)
+waa:
+  proof_server_url: https://waa.spinsnow.fun
+
 # 服务端日志与请求转储调试配置
 logging:
   # 日志输出级别: DEBUG / INFO / WARNING / ERROR

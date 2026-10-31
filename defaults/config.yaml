@@ -1,6 +1,10 @@
 # API 客户端调用鉴权密钥列表 (用于外部客户端调用 /v1beta/... 接口鉴权)
 api_keys: []
 
+# WAA 签名与挑战求解配置 (脱离浏览器的纯净轻量化签名引擎)
+waa:
+  proof_server_url: https://waa.spinsnow.fun
+
 # 服务端日志与请求转储调试配置
 logging:
   level: INFO

@@ -79,6 +79,7 @@ async def test_remote_proof_signer_success():
         assert data["cookies"] == "SAPISID=test_cookie"
         assert data["authUser"] == 0
         assert data["prompt"] == "hello"
+        assert data["wireContents"] == [[[[None, "hello"]], "user"]]
         return httpx.Response(
             200,
             json={"ok": True, "proof": "!mock_minted_proof", "poolState": "hot"},
@@ -87,7 +88,6 @@ async def test_remote_proof_signer_success():
     mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     signer = RemoteProofSigner(server_url="https://mock.proof.server")
 
-    # Patch client creation inside mint_proof
     from unittest.mock import patch
 
     with patch("httpx.AsyncClient", return_value=mock_client):
@@ -97,6 +97,7 @@ async def test_remote_proof_signer_success():
             tier="Free",
             model="models/gemini-3.7-flash",
             prompt="hello",
+            wire_contents=[[[[None, "hello"]], "user"]],
         )
 
     assert proof == "!mock_minted_proof"

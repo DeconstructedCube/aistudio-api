@@ -90,6 +90,7 @@ class RemoteProofSigner:
         tier: str | None = None,
         model: str = "models/gemini-3.7-flash",
         prompt: str = "",
+        wire_contents: list[Any] | None = None,
         _content_hash: str = "",
     ) -> str:
         """Request proof from remote proof server."""
@@ -107,6 +108,8 @@ class RemoteProofSigner:
             "model": normalized_model,
             "prompt": prompt,
         }
+        if wire_contents is not None:
+            payload["wireContents"] = wire_contents
 
         t0 = time.perf_counter()
         async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy_url) as client:
@@ -161,6 +164,7 @@ class WaaSigner:
     ) -> str:
         """Compute content hash and generate fresh WAA proof token."""
         prompt, content_hash = extract_content_digest(contents)
+        wire_contents = [c.to_wire() for c in contents]
         logger.debug(
             "Generating WAA snapshot: hash=%s, prompt_len=%d, auth_user=%s",
             content_hash[:8],
@@ -174,5 +178,6 @@ class WaaSigner:
             tier=tier,
             model=model,
             prompt=prompt,
+            wire_contents=wire_contents,
             _content_hash=content_hash,
         )

@@ -137,7 +137,7 @@ async def load_cookies_to_page(page: object, auth_file: str | None) -> bool:
     if not auth_file or not Path(auth_file).is_file():
         return False
     if hasattr(page, "account_auth_file"):
-        page.account_auth_file = auth_file
+        setattr(page, "account_auth_file", auth_file)
     cookies_dict = load_cookies_from_auth_file(auth_file)
     set_cookies_fn = getattr(page, "set_cookies", None)
     if callable(set_cookies_fn):
