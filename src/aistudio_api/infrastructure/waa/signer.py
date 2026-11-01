@@ -64,14 +64,21 @@ class RemoteProofSigner:
         self.server_url = server_url.rstrip("/")
         self.proxy_url = proxy_url
         self.timeout = timeout
+        self.last_headers: dict[str, str] = {}
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or lazily initialize shared HTTP client with connection pooling."""
         if self._client is None or self._client.is_closed:
+            is_local = (
+                "127.0.0.1" in self.server_url
+                or "localhost" in self.server_url
+                or "::1" in self.server_url
+            )
+            effective_proxy = None if is_local else self.proxy_url
             self._client = httpx.AsyncClient(
                 timeout=self.timeout,
-                proxy=self.proxy_url,
+                proxy=effective_proxy,
                 limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
             )
         return self._client
@@ -136,11 +143,17 @@ class RemoteProofSigner:
                     raise TransportError(f"Remote proof minting failed: {err_msg}")
 
                 proof = str(data["proof"])
+                raw_headers = data.get("headers")
+                if isinstance(raw_headers, dict):
+                    self.last_headers = {str(k): str(v) for k, v in raw_headers.items()}
+                else:
+                    self.last_headers = {}
                 pool_state = str(data.get("poolState") or "unknown")
                 logger.debug(
-                    "Proof generated successfully: poolState=%s, len=%d, time=%.1fms",
+                    "Proof generated successfully: poolState=%s, len=%d, headers=%d, time=%.1fms",
                     pool_state,
                     len(proof),
+                    len(self.last_headers),
                     elapsed_ms,
                 )
                 return proof
@@ -189,6 +202,29 @@ class WaaSigner:
     async def close(self) -> None:
         """Close underlying remote signer resources."""
         await self._remote_signer.close()
+
+    @property
+    def last_headers(self) -> dict[str, str]:
+        """Get dynamic protocol headers returned by the last successful proof minting."""
+        return self._remote_signer.last_headers
+
+    async def generate_snapshot_with_headers(
+        self,
+        contents: list[AistudioContent],
+        cookies: dict[str, str],
+        auth_user: str = "0",
+        tier: str = "Free",
+        model: str = "models/gemini-3.7-flash",
+    ) -> tuple[str, dict[str, str]]:
+        """Generate fresh WAA proof token along with dynamic session headers."""
+        proof = await self.generate_snapshot(
+            contents=contents,
+            cookies=cookies,
+            auth_user=auth_user,
+            tier=tier,
+            model=model,
+        )
+        return proof, dict(self._remote_signer.last_headers)
 
     async def generate_snapshot(
         self,

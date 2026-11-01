@@ -95,16 +95,17 @@ async def _ensure_authorization_header(
 
     raw_cookie_dict = cookies or _get_auth_cookies(auth_file)
     cookie_dict = filter_minimal_cookies(raw_cookie_dict) if raw_cookie_dict else None
-    if cookie_dict:
+
+    if incoming_auth:
+        clean_headers["Authorization"] = incoming_auth
+    elif cookie_dict:
         fresh_auth = calculate_sapisid_hash(cookie_dict)
         if fresh_auth:
             clean_headers["Authorization"] = fresh_auth
-        if "Cookie" not in clean_headers:
-            clean_headers["Cookie"] = "; ".join(
-                f"{k}={v}" for k, v in cookie_dict.items() if v
-            )
-    elif incoming_auth:
-        clean_headers["Authorization"] = incoming_auth
+    if "Cookie" not in clean_headers and cookie_dict:
+        clean_headers["Cookie"] = "; ".join(
+            f"{k}={v}" for k, v in cookie_dict.items() if v
+        )
 
     return clean_headers
 
@@ -127,6 +128,7 @@ class HTTPStreamTransport:
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self.timeout, connect=15.0),
                 proxy=self.proxy_url,
+                http2=True,
                 limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
             )
         return self._client

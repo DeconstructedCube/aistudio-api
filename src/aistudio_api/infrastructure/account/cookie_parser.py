@@ -23,9 +23,7 @@ DEFAULT_EXT_BIN = "CAASAUIwATgEQABQBFgDYgJKUHAAeAGQAQCYAQE="
 DEFAULT_ORIGIN = "https://aistudio.google.com"
 DEFAULT_USER_AGENT = "grpc-web-javascript/0.1"
 DEFAULT_BROWSER_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/151.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0"
 )
 
 BENEFIT_TIER_TO_NAME: dict[int, str] = {
@@ -249,12 +247,10 @@ def calculate_sapisid_hash(
         return hashlib.sha1(f"{ts} {val} {origin}".encode()).hexdigest()
 
     parts = [f"SAPISIDHASH {ts}_{calc_hash(sapisid)}"]
-    one = cookies.get("__Secure-1PAPISID")
-    if one:
-        parts.append(f"SAPISID1PHASH {ts}_{calc_hash(one)}")
-    three = cookies.get("__Secure-3PAPISID")
-    if three and three != sapisid:
-        parts.append(f"SAPISID3PHASH {ts}_{calc_hash(three)}")
+    one = cookies.get("__Secure-1PAPISID") or sapisid
+    parts.append(f"SAPISID1PHASH {ts}_{calc_hash(one)}")
+    three = cookies.get("__Secure-3PAPISID") or sapisid
+    parts.append(f"SAPISID3PHASH {ts}_{calc_hash(three)}")
     return " ".join(parts)
 
 

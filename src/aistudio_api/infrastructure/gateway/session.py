@@ -64,6 +64,11 @@ class GatewaySession:
     def active_context(self) -> SessionContext | None:
         return self._active_context
 
+    @property
+    def last_signer_headers(self) -> dict[str, str]:
+        """Get dynamic protocol headers returned by the underlying signer."""
+        return self._signer.last_headers
+
     def set_ready_context(self, context: SessionContext) -> None:
         """Set active ready context (used by transitions and test fixtures)."""
         self._auth_file = context.auth_file
@@ -147,6 +152,28 @@ class GatewaySession:
         tier = active_ctx.tier or "Free"
 
         return await self._signer.generate_snapshot(
+            contents=contents,
+            cookies=cookies,
+            auth_user=auth_user,
+            tier=tier,
+            model=model,
+        )
+
+    async def generate_snapshot_with_headers(
+        self,
+        contents: list[AistudioContent],
+        ctx: SessionContext | None = None,
+        model: str = "models/gemini-3.7-flash",
+    ) -> tuple[str, dict[str, str]]:
+        """Generate fresh WAA proof token and dynamic session headers."""
+        active_ctx = ctx or await self.ensure_ready()
+        cookies = active_ctx.cookies or load_cookies_from_auth_file(
+            active_ctx.auth_file
+        )
+        auth_user = active_ctx.auth_user or "0"
+        tier = active_ctx.tier or "Free"
+
+        return await self._signer.generate_snapshot_with_headers(
             contents=contents,
             cookies=cookies,
             auth_user=auth_user,

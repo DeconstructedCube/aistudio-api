@@ -104,6 +104,9 @@ class AIStudioClient:
             snapshot=snapshot,
         )
         headers = dict(DEFAULT_UPSTREAM_HEADERS)
+        dyn_headers = getattr(self._session, "last_signer_headers", None)
+        if dyn_headers:
+            headers.update(dyn_headers)
         headers["X-Goog-AuthUser"] = ctx.auth_user
         prepared = PreparedRequest(
             url=GENERATE_CONTENT_URL,

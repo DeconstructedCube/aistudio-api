@@ -36,3 +36,7 @@ web/dist/
 repomix-output.*
 repomix.config.*
 
+# waa-signer binary & cache
+waa-signer/bin/
+waa-signer/.deps/
+
