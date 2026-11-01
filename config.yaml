@@ -1,234 +1,258 @@
-# API 客户端调用鉴权密钥列表 (用于外部客户端调用 /v1beta/... 接口鉴权)
-# 留空 [] 表示对外 API 免 Key 开放调用；配置密钥后客户端必须携带对应 Key 访问。
 api_keys: []
-
-# WAA 签名与挑战求解配置 (脱离浏览器的纯净轻量化签名引擎)
 waa:
-  proof_server_url: https://waa.spinsnow.fun
-
-# 服务端日志与请求转储调试配置
+  active_server: local_spidermonkey
+  servers:
+  - id: local_spidermonkey
+    name: 本地 Go 签名服务 (SpiderMonkey 152)
+    description: 本地独立 Go 进程，基于 SpiderMonkey 152 与 Firefox 152 环境生成签名
+    url: http://127.0.0.1:8081
+    user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101
+      Firefox/152.0
+    headers:
+      X-User-Agent: grpc-web-javascript/0.1
+  - id: remote_spinsnow
+    name: 远程签名服务 (spinsnow / NodeVM)
+    description: 远程 Node.js VM 签名服务，模拟 Chromium 运行环境
+    url: https://waa.spinsnow.fun
+    user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
+      like Gecko) Chrome/133.0.0.0 Safari/537.36
+    headers:
+      X-User-Agent: grpc-web-javascript/0.1
 logging:
-  # 日志输出级别: DEBUG / INFO / WARNING / ERROR
   level: INFO
-  # 是否转储每次 API 请求与响应的完整报文详情 (支持通过环境变量 DEBUG=true 触发)
   dump_requests: false
-  # 是否将请求与响应转储持久化保存为独立文件 (支持环境变量 AISTUDIO_DUMP_FILE=true 触发)
   dump_to_file: false
-  # 转储文件保存目录 (默认为项目根目录下 dumps/)
   dump_dir: dumps
-
-# 调度器行为、打分权重与冷却避让全量配置 (彻底解耦硬编码)
 rotator:
   max_retries: 5
-  strategy: sticky                   # sticky (会话优先) | balanced (负载均衡)
-  stickiness_bonus: 400.0            # 活跃账号黏性奖励分 (设为 0 则每次完全均衡)
-  stickiness_threshold: 0.8          # 达到当日软配额 80% 后释放黏性
-  drip_penalty: 500.0                # 处于 429 滴灌重试状态下的额外惩罚分
-  tier_weights:                      # 各订阅等级调度成本加权 (越小越优先选派)
+  strategy: sticky
+  stickiness_bonus: 400.0
+  stickiness_threshold: 0.8
+  drip_penalty: 500.0
+  tier_weights:
     Free: 0.0
     Plus: 0.5
     Pro: 1.0
     Ultra: 2.0
     Ultra_20X: 3.0
   cooldowns:
-    rate_limited_short: 60           # 偶发 429 临时避让冷却 (秒)
-    rate_limited_drip: 300           # 滴灌隔离冷却 (秒)
-    rate_limited_drip_extended: 600  # 多次滴灌隔离冷却 (秒)
-    # 403 认证异常采用动态软惩罚机制 (auth_errors 加权 +200)，不加硬冷却锁，允许会话自愈重试
-
-# 付费模型准入与主动抢切规则 (彻底解耦硬编码关键词)
+    rate_limited_short: 60
+    rate_limited_drip: 300
+    rate_limited_drip_extended: 600
 paid_model_rules:
   ultra_required:
-    contains: ["veo", "ultra"]
-    required_tiers: ["Ultra", "Ultra_20X"]
+    contains:
+    - veo
+    - ultra
+    required_tiers:
+    - Ultra
+    - Ultra_20X
   pro_required:
-    contains: ["argon", "gemini-4", "image", "imagen"]
-    required_tiers: ["Pro", "Ultra", "Ultra_20X"]
-
+    contains:
+    - argon
+    - gemini-4
+    - image
+    - imagen
+    required_tiers:
+    - Pro
+    - Ultra
+    - Ultra_20X
 model_defaults:
-  # 是否自动丢弃下游客户端传入的未知/不支持参数（如 HARM_CATEGORY_CIVIC_INTEGRITY、不兼容的内置工具等）
   drop_unsupported_params: false
-
-  # profiles: 按模型名规则匹配，适合整类模型共用默认配置
   profiles:
-    # 生图模型默认配置 (支持 Nano Banana / Imagen)
-    - name: image_models
-      match:
-        contains:
-          - image
-          - imagen
-      is_image_model: true
-      default_tools:
-        - google_search_and_image_search
-      generation_config_defaults:
-        response_mime_type: null
-        image_output_mode: image_only
-        thinking_config:
-          level: MINIMAL
-          mode: 1
-      clear_generation_config_indexes:
-        - 7
-        - 13
-        - 17
-      disable_safety_settings: true
-
-    # 视频生成模型规则 (Veo 系列)
-    - name: video_models
-      match:
-        prefixes:
-          - veo-
-        contains:
-          - veo
-      disable_safety_settings: true
-
-    # Gemma 文本模型默认配置
-    - name: gemma_models
-      match:
-        prefixes:
-          - gemma-
-      default_tools:
-        - google_search
-      safety_settings:
-        Harassment: 5
-        Hate: 5
-        Sexually Explicit: 5
-        Dangerous Content: 5
-
-    # Gemini 文本模型默认配置
-    - name: gemini_models
-      match:
-        prefixes:
-          - gemini-
-      default_tools:
-        - google_search
-      safety_settings:
-        Harassment: 5
-        Hate: 5
-        Sexually Explicit: 5
-        Dangerous Content: 5
-      drop_unsupported_params: true
-
+  - name: image_models
+    match:
+      contains:
+      - image
+      - imagen
+    is_image_model: true
+    default_tools:
+    - google_search_and_image_search
+    generation_config_defaults:
+      response_mime_type: null
+      image_output_mode: image_only
+      thinking_config:
+        level: MINIMAL
+        mode: 1
+    clear_generation_config_indexes:
+    - 7
+    - 13
+    - 17
+    disable_safety_settings: true
+  - name: video_models
+    match:
+      prefixes:
+      - veo-
+      contains:
+      - veo
+    disable_safety_settings: true
+  - name: gemma_models
+    match:
+      prefixes:
+      - gemma-
+    default_tools:
+    - google_search
+    safety_settings:
+      Harassment: 5
+      Hate: 5
+      Sexually Explicit: 5
+      Dangerous Content: 5
+  - name: gemini_models
+    match:
+      prefixes:
+      - gemini-
+    default_tools:
+    - google_search
+    safety_settings:
+      Harassment: 5
+      Hate: 5
+      Sexually Explicit: 5
+      Dangerous Content: 5
+    drop_unsupported_params: true
   models: {}
-
-# 订阅层级每日软额度配置 (仅影响调度权重计算，超额绝不禁用账号)
 tier_quotas:
   Free:
     flash_models:
       match:
-        contains: ["flash"]
+        contains:
+        - flash
       daily_limit: 100
     pro_models:
       match:
-        contains: ["pro"]
+        contains:
+        - pro
       daily_limit: 10
     default_limit: 20
-
   Plus:
     flash_models:
       match:
-        contains: ["flash"]
+        contains:
+        - flash
       daily_limit: 300
     pro_models:
       match:
-        contains: ["pro"]
+        contains:
+        - pro
       daily_limit: 30
     default_limit: 50
-
   Pro:
     argon_models:
       match:
-        contains: ["argon", "gemini-4"]
+        contains:
+        - argon
+        - gemini-4
       daily_limit: 50
     flash_models:
       match:
-        contains: ["flash"]
+        contains:
+        - flash
       daily_limit: 150
     pro_models:
       match:
-        contains: ["pro"]
+        contains:
+        - pro
       daily_limit: 50
     image_models:
       match:
-        contains: ["image", "imagen"]
+        contains:
+        - image
+        - imagen
       daily_limit: 50
     default_limit: 50
-
   Ultra:
     argon_models:
       match:
-        contains: ["argon", "gemini-4"]
+        contains:
+        - argon
+        - gemini-4
       daily_limit: 250
     flash_models:
       match:
-        contains: ["flash"]
+        contains:
+        - flash
       daily_limit: 1500
     pro_models:
       match:
-        contains: ["pro"]
+        contains:
+        - pro
       daily_limit: 250
     image_models:
       match:
-        contains: ["image", "imagen"]
+        contains:
+        - image
+        - imagen
       daily_limit: 250
     video_models:
       match:
-        contains: ["veo"]
+        contains:
+        - veo
       daily_limit: 50
     default_limit: 250
-
   Ultra_20X:
     argon_models:
       match:
-        contains: ["argon", "gemini-4"]
+        contains:
+        - argon
+        - gemini-4
       daily_limit: 1000
     flash_models:
       match:
-        contains: ["flash"]
+        contains:
+        - flash
       daily_limit: 5000
     pro_models:
       match:
-        contains: ["pro"]
+        contains:
+        - pro
       daily_limit: 1000
     image_models:
       match:
-        contains: ["image", "imagen"]
+        contains:
+        - image
+        - imagen
       daily_limit: 1000
     video_models:
       match:
-        contains: ["veo"]
+        contains:
+        - veo
       daily_limit: 200
     default_limit: 1000
-
   overrides: {}
-
-# 账号调度预设方案列表
 account_presets:
-  - id: preset_all
-    name: 全部启用 (最大并发)
-    description: 激活所有可用账号，提供最充沛的并发与负载池
-    action: enable_all
-    is_system: true
-  - id: preset_paid_only
-    name: 纯高阶付费池 (Plus/Pro/Ultra)
-    description: 仅激活具有付费权益的账号，全力保障高阶模型调用
-    action: filter_tier
-    target_tiers: ["Plus", "Pro", "Ultra", "Ultra_20X"]
-    is_system: true
-  - id: preset_ultra_only
-    name: 旗舰专属池 (Ultra 独占)
-    description: 仅激活 Ultra 顶级算力账号，保障最顶尖模型调用
-    action: filter_tier
-    target_tiers: ["Ultra", "Ultra_20X"]
-    is_system: true
-  - id: preset_free_only
-    name: 纯免费节能池 (Free)
-    description: 仅激活 Free 等级账号，用于日常普通模型测试
-    action: filter_tier
-    target_tiers: ["Free"]
-    is_system: true
-  - id: preset_production
-    name: 生产专属集群 (Production)
-    description: 仅激活 group 标记为 production 的核心业务账号
-    action: filter_group
-    target_groups: ["production"]
-    is_system: true
+- id: preset_all
+  name: 全部启用 (最大并发)
+  description: 激活所有可用账号，提供最充沛的并发与负载池
+  action: enable_all
+  is_system: true
+- id: preset_paid_only
+  name: 纯高阶付费池 (Plus/Pro/Ultra)
+  description: 仅激活具有付费权益的账号，全力保障高阶模型调用
+  action: filter_tier
+  target_tiers:
+  - Plus
+  - Pro
+  - Ultra
+  - Ultra_20X
+  is_system: true
+- id: preset_ultra_only
+  name: 旗舰专属池 (Ultra 独占)
+  description: 仅激活 Ultra 顶级算力账号，保障最顶尖模型调用
+  action: filter_tier
+  target_tiers:
+  - Ultra
+  - Ultra_20X
+  is_system: true
+- id: preset_free_only
+  name: 纯免费节能池 (Free)
+  description: 仅激活 Free 等级账号，用于日常普通模型测试
+  action: filter_tier
+  target_tiers:
+  - Free
+  is_system: true
+- id: preset_production
+  name: 生产专属集群 (Production)
+  description: 仅激活 group 标记为 production 的核心业务账号
+  action: filter_group
+  target_groups:
+  - production
+  is_system: true

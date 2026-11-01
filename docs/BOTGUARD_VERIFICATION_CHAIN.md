@@ -328,9 +328,26 @@ flowchart TD
 
 当 BotGuard 校验失败（快照缺失、快照过期、内容哈希不一致或身份冲突）时，服务端返回 **HTTP 403**，响应体为 JSON 数组 `[,[7,"The caller does not have permission"]]`（对应 gRPC 状态码 7 `PERMISSION_DENIED`）。
 
+> [!NOTE]
+> **上游概率性玄学拦截现象**：
+> 实测表明，Google 上游网关在风控抽查或链路抖动时，**即使凭据完全有效、Cookie 一项不缺、签名完全合法，依然存在低概率偶发返回 403 `The caller does not have permission` 或 404 `Ambiguous request for service` 的玄学阻断行为**。
+> 这种偶发拒绝并非账号被封禁或凭据失效，通常可通过重试、单账号在位重签自愈，或手动切换至不同底层环境特征的签名节点（如从 NodeVM 切到 SpiderMonkey 152）成功绕过。
+
 网关针对该报错建立两级自愈机制：
 1. **多账号故障转移（Failover）**：网关自动对触发 403 的故障账号增加调度惩罚分（`auth_errors * 200.0`），优先调度下一个健康账号，同时不加硬冷却锁，允许同账号重新请求签名自愈。
 2. **单账号在位重签（In-Place Recovery）**：当首次遭遇 403 或无备用账号可用时，网关自动重新加载账号凭据并请求 `WaaSigner` 生成全新证明令牌进行重试，恢复服务可用性。
+
+### 6.2 外层 HTTP 请求头与签名特征环境一致性约束 (403 权限异常根源)
+
+BotGuard 在前端或签名服务沙箱执行时，会调用 `navigator.userAgent` 提取当前宿主现场特征，并将此特征作为签名载荷的一部分加密到 Proof Token 中。
+
+**不同底层签名方案的特征环境差异**：
+1. **SpiderMonkey 152 原生方案 (`waa-signer`)**：底层基于 SpiderMonkey 152 纯 C++ 引擎与 Firefox 152 宿主环境，Token 内部加密绑定的是 Firefox 152 的 User-Agent 与特征指纹；
+2. **NodeVM 沙箱方案 (`spinsnow` / `aistudio-pg-bridge`)**：底层基于 Node.js VM 模拟环境，Token 内部加密绑定的是特定版本的 Chromium / Chrome User-Agent。
+
+**一致性校验约束**：
+当客户端向上游发送 `GenerateContent` 时，Google 上游会解密 Token 并严格比对外层 HTTP 头的 `User-Agent` 与 Token 内部声明的客户端特征。若外层为 Chrome UA 而 Token 内绑定为 Firefox（或反之），上游将判定为环境篡改并直接返回 **HTTP 403 `The caller does not have permission`**。
+因此网关层实现了**签名服务特征动态绑定与纯手动切换机制**，严格保证外层请求头与签名服务底层环境事实一致。
 ---
 
 ## 7. 生命周期与会话约束
@@ -351,6 +368,7 @@ Authorization: SAPISIDHASH <TS>_<HASH1> SAPISID1PHASH <TS>_<HASH2> SAPISID3PHASH
 ```text
 HASH = SHA1(timestamp + " " + SAPISID_VALUE + " https://aistudio.google.com")
 ```
+必须严格生成完整的三段（`SAPISIDHASH`、`SAPISID1PHASH` 与 `SAPISID3PHASH`），即使 `__Secure-3PAPISID` 与 `SAPISID` 值相同也必须包含第三段，缺失任意段会导致偶发 403 鉴权失败。
 
 ### 8.2 快照签名 Token 特征
 

@@ -40,6 +40,7 @@ class AIStudioClient:
 
         self._session = GatewaySession()
         self._streaming_gateway = StreamingGateway(session=self._session)
+        self.last_prepared_request: PreparedRequest | None = None
 
     @property
     def session(self) -> GatewaySession:
@@ -103,7 +104,18 @@ class AIStudioClient:
             generation_config_overrides=generation_config_overrides,
             snapshot=snapshot,
         )
+        from aistudio_api.infrastructure.gateway.model_defaults import (
+            get_active_waa_server,
+        )
+
+        active_waa = get_active_waa_server()
         headers = dict(DEFAULT_UPSTREAM_HEADERS)
+        if active_waa.get("user_agent"):
+            headers["User-Agent"] = str(active_waa["user_agent"])
+        server_hdrs = active_waa.get("headers")
+        if isinstance(server_hdrs, dict):
+            for k, v in server_hdrs.items():
+                headers[str(k)] = str(v)
         dyn_headers = getattr(self._session, "last_signer_headers", None)
         if dyn_headers:
             headers.update(dyn_headers)
@@ -122,6 +134,7 @@ class AIStudioClient:
             len(prepared.snapshot),
             len(prepared.body),
         )
+        self.last_prepared_request = prepared
         return prepared
 
     async def stream_generate_content(
@@ -138,8 +151,9 @@ class AIStudioClient:
         top_k: int | None = None,
         max_tokens: int | None = None,
         generation_config_overrides: dict | None = None,
+        prepared: PreparedRequest | None = None,
     ):
-        prepared = await self.prepare_request(
+        effective_prep = prepared or await self.prepare_request(
             model=model,
             contents=contents,
             system_instruction_content=system_instruction_content,
@@ -153,7 +167,7 @@ class AIStudioClient:
             generation_config_overrides=generation_config_overrides,
         )
         async for event in self._streaming_gateway.stream_chat(
-            request=prepared,
+            request=effective_prep,
             model=model,
         ):
             yield event
@@ -172,27 +186,32 @@ class AIStudioClient:
         top_k: int | None = None,
         max_tokens: int | None = None,
         generation_config_overrides: dict | None = None,
+        prepared: PreparedRequest | None = None,
     ) -> ModelOutput:
-        logger.debug("开始构建请求: model=%s", model)
-        prepared = await self.prepare_request(
-            model=model,
-            contents=contents,
-            system_instruction_content=system_instruction_content,
-            tools=tools,
-            tool_config=tool_config,
-            safety_settings=safety_settings,
-            temperature=temperature,
-            top_p=top_p,
-            top_k=top_k,
-            max_tokens=max_tokens,
-            generation_config_overrides=generation_config_overrides,
-        )
+        if prepared is not None:
+            effective_prep = prepared
+            logger.debug("重放已有已签名请求: model=%s", model)
+        else:
+            logger.debug("开始构建请求: model=%s", model)
+            effective_prep = await self.prepare_request(
+                model=model,
+                contents=contents,
+                system_instruction_content=system_instruction_content,
+                tools=tools,
+                tool_config=tool_config,
+                safety_settings=safety_settings,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+                max_tokens=max_tokens,
+                generation_config_overrides=generation_config_overrides,
+            )
 
         status, raw = await self._session.send_request(
-            body=prepared.body,
-            url=prepared.url,
-            headers=prepared.headers,
-            ctx=prepared.ctx,
+            body=effective_prep.body,
+            url=effective_prep.url,
+            headers=effective_prep.headers,
+            ctx=effective_prep.ctx,
         )
         raw_text = raw.decode("utf-8", errors="replace")
         if status != 200:

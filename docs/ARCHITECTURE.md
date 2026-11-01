@@ -66,7 +66,7 @@ flowchart TD
 
     subgraph Upstream ["5. 外部与 Google 上游服务"]
         AIStudio["Google AI Studio<br/>alkalimakersuite-pa"]
-        ProofSvc["WAA Proof Server<br/>aistudio-pg-bridge"]
+        ProofSvc["WAA 签名服务<br/>waa-signer (本地) / 远程 NodeVM"]
     end
 
     Client --> APILayer
@@ -111,7 +111,7 @@ flowchart TD
 ### 2.4 基础设施层 (`src/aistudio_api/infrastructure/`)
 
 - **WAA 签名子系统 (`waa/`)**：
-  - `signer.py`：提供 `extract_content_digest` 内容哈希计算、`RemoteProofSigner` 远程证明请求客户端以及 `WaaSigner` 门面，负责生成以 `!` 开头的单次请求快照签名。
+  - `signer.py`：提供 `extract_content_digest` 内容哈希计算、`RemoteProofSigner` 证明请求客户端以及 `WaaSigner` 门面。支持在 `config.yaml` 中配置多签名服务节点（本地 Go 原生引擎 `waa-signer` 或远程 NodeVM 签名服务），纯手动切换，并自动将签名服务绑定的特征 `User-Agent` 与特征请求头同步到外层 HTTP 传输中。
 - **网关与编解码子系统 (`gateway/`)**：
   - `client.py`：`AIStudioClient` 统一门面，组装请求签名、HTTP 发送、流式生成与会话生命周期。
   - `session.py`：`GatewaySession` 与 `SessionContext` 核心，管理内存态账号上下文切换、WAA 快照签名生成与 HTTP 传输路由。
@@ -197,9 +197,9 @@ sequenceDiagram
 
 | 平台 | 运行模式 | 传输与签名后端 | 内存基准 |
 |---|---|---|---|
-| **Android (Termux)** | Termux 原生宿主运行 | `httpx` + `WaaSigner` | 约 35 - 50 MB |
-| **Linux (x86_64 / arm64)** | 原生宿主运行 | `httpx` + `WaaSigner` | 约 35 - 50 MB |
-| **macOS (Apple Silicon / Intel)** | 原生宿主运行 | `httpx` + `WaaSigner` | 约 35 - 50 MB |
-| **Windows (x64)** | 原生宿主运行 | `httpx` + `WaaSigner` | 约 40 - 60 MB |
-| **Docker 容器** | `python:3.11-slim-bookworm` (amd64 / arm64) | `httpx` + `WaaSigner` | 约 35 - 50 MB |
+| **Android (Termux)** | Termux 原生宿主运行 | `httpx` (HTTP/2) + `WaaSigner` (本地 Go 或远程 NodeVM) | 约 35 - 50 MB |
+| **Linux (x86_64 / arm64)** | 原生宿主运行 | `httpx` (HTTP/2) + `WaaSigner` (本地 Go 或远程 NodeVM) | 约 35 - 50 MB |
+| **macOS (Apple Silicon / Intel)** | 原生宿主运行 | `httpx` (HTTP/2) + `WaaSigner` (本地 Go 或远程 NodeVM) | 约 35 - 50 MB |
+| **Windows (x64)** | 原生宿主运行 | `httpx` (HTTP/2) + `WaaSigner` (本地 Go 或远程 NodeVM) | 约 40 - 60 MB |
+| **Docker 容器** | `python:3.11-slim-bookworm` (amd64 / arm64) | `httpx` (HTTP/2) + `WaaSigner` (本地 Go 或远程 NodeVM) | 约 35 - 50 MB |
 > 依赖管理使用 `uv`。由于 PyPI 官方未提供 Android 预编译 wheel，而 Termux 的 TUR 源缺少桌面端 wheel，因此 `uv.lock` 不纳入版本控制：桌面端直接从 PyPI 安装对应 wheel；Termux 环境通过本地 `uv.toml` 使用 TUR 源，避免不同平台的 wheel 源锁定冲突。

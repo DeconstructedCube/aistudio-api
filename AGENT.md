@@ -19,7 +19,7 @@
 `aistudio-api` 是 Google AI Studio 反向代理网关，提供原生 **Gemini API 兼容接口**（`/v1beta/...`）。
 
 - **原生 Gemini 协议专一性**：服务于 Gemini 官方 API 规范（包含 thinking、multimodal、image-generation、function calling 等），不引入额外的跨厂商协议转译层。
-- **无浏览器纯净 WAA 签名架构**：基于 `aistudio-pg-bridge` 签名服务与 `httpx` HTTP/2 异步连接池直连 Google AI Studio，无需启动本地 Chromium 或 `proot-distro` 容器。
+- **无浏览器纯净 WAA 签名架构**：基于独立轻量级 `waa-signer`（嵌入式 SpiderMonkey 152 + Firefox 152 现场）或 `aistudio-pg-bridge` 证明签名服务，配合 `httpx` HTTP/2 异步连接池直连 Google AI Studio，无需启动重型无头浏览器或 `proot-distro` 容器。
 - **代码即事实标准（Code as Ground Truth）**：通过全量测试验证的代码是系统的事实标准。当技术规范文档与真实代码逻辑出现分歧时以代码为准，并在重构过程中同步更新文档。
 - **架构事实优先（Fact & Architecture over Brittle Tests）**：保持架构整洁与低耦合。避免为了迁就耦合了私有变量的脆弱 mock 测试而妥协生产设计；遇冲突时应重构测试以对齐公共接口契约，消除抽象泄露。
 - **协议索引常量化（Specification Constants & No Magic Numbers）**：Protobuf-over-JSON 逆向数组索引统一提取为具备明确语义的规范枚举或常量（如 `wire_spec.py`），杜绝裸数字散落业务逻辑中。
@@ -141,7 +141,7 @@ uv run python3 main.py server --port 8080
 | 工具 / 阶段 | 命令 | 判定标准 |
 |---|---|---|
 | **Python 代码风格与 Lint** | `uv run ruff check .` | 0 errors |
-| **Python 代码格式化** | `uv run ruff format --check .` | 72 files already formatted |
+| **Python 代码格式化** | `uv run ruff format --check .` | 70 files already formatted |
 | **Python 类型检查** | `bun x pyright src tests` | 0 errors |
 | **Python 单元测试** | `uv run pytest` | 全部通过 |
 | **前端代码规范** | `cd web && bun run lint` | 0 errors, 0 warnings |
@@ -203,6 +203,10 @@ aistudio-api/
 │   │   ├── account/               # Cookie 解析、SAPISIDHASH 计算与凭据持久化 (account_store, cookie_parser)
 │   │   ├── waa/                   # 无浏览器 WAA 证明令牌签名引擎 (signer)
 │   │   └── gateway/               # 会话管理 (session)、HTTP/2 传输层 (transport)、模型发现 (model_discovery)、Wire 编解码与流式管道
+├── waa-signer/                    # 独立轻量级 Go WAA 签名服务 (SpiderMonkey 152 + Firefox 152 DOM)
+│   ├── build.sh                   # 跨平台一键自动下载依赖与静态构建脚本
+│   ├── cmd/waa-signer/main.go     # HTTP 服务入口 (/health, /v1/proof/mint, /v1/rpc/send)
+│   └── internal/                  # WAA 解释器、SpiderMonkey CGO 绑定与网络栈
 ├── config.yaml                    # 模型规则与工具默认行为配置 (支持在线热重载)
 ├── main.py                        # 本地统一启动入口
 └── tests/                         # 单元测试套件 (模块化轻量架构，全量通过 <5s)

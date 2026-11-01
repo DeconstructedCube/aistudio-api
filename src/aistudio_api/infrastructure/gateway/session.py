@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import itertools
 import time
 from collections.abc import AsyncGenerator
@@ -51,8 +52,14 @@ class GatewaySession:
         self._tier: str | None = None
         self._active_context: SessionContext | None = None
         self._transport = HTTPStreamTransport(proxy_url=settings.proxy_url)
+        from aistudio_api.infrastructure.gateway.model_defaults import (
+            get_active_waa_server,
+        )
+
+        active_waa = get_active_waa_server()
+        server_url = str(active_waa.get("url") or settings.proof_server_url)
         self._signer = WaaSigner(
-            proof_server_url=getattr(settings, "proof_server_url", None),
+            proof_server_url=server_url,
             proxy_url=settings.proxy_url,
         )
 
@@ -145,6 +152,21 @@ class GatewaySession:
     ) -> str:
         """Generate fresh WAA proof token for request contents."""
         active_ctx = ctx or await self.ensure_ready()
+        from aistudio_api.infrastructure.gateway.model_defaults import (
+            get_active_waa_server,
+        )
+
+        active_waa = get_active_waa_server()
+        target_url = str(active_waa.get("url") or "").rstrip("/")
+        remote = getattr(self._signer, "_remote_signer", None)
+        if remote and target_url and getattr(remote, "server_url", None) != target_url:
+            close_fn = getattr(self._signer, "close", None)
+            if callable(close_fn):
+                res = close_fn()
+                if inspect.isawaitable(res):
+                    await res
+            remote.server_url = target_url
+
         cookies = active_ctx.cookies or load_cookies_from_auth_file(
             active_ctx.auth_file
         )

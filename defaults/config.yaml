@@ -3,7 +3,22 @@ api_keys: []
 
 # WAA 签名与挑战求解配置 (脱离浏览器的纯净轻量化签名引擎)
 waa:
-  proof_server_url: https://waa.spinsnow.fun
+  active_server: local_spidermonkey
+  servers:
+    - id: local_spidermonkey
+      name: 本地 Go 签名服务 (SpiderMonkey 152)
+      description: 本地独立 Go 进程，基于 SpiderMonkey 152 与 Firefox 152 环境生成签名
+      url: http://127.0.0.1:8081
+      user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0
+      headers:
+        X-User-Agent: grpc-web-javascript/0.1
+    - id: remote_spinsnow
+      name: 远程签名服务 (spinsnow / NodeVM)
+      description: 远程 Node.js VM 签名服务，模拟 Chromium 运行环境
+      url: https://waa.spinsnow.fun
+      user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36
+      headers:
+        X-User-Agent: grpc-web-javascript/0.1
 
 # 服务端日志与请求转储调试配置
 logging:

@@ -38,10 +38,83 @@ from aistudio_api.domain.errors import (
     is_transport_error,
     parse_upstream_grpc_error,
 )
-from aistudio_api.infrastructure.gateway.client import AIStudioClient
+from aistudio_api.infrastructure.gateway.client import (
+    AIStudioClient,
+    PreparedRequest,
+)
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("api.gemini")
+
+AUTH_403_MAX_RETRIES = (
+    5  # 403 阶梯重试机制：前 2 次重放，后 2 次重新签名，最后 1 次切号
+)
+
+
+class Auth403RetryManager:
+    """403 阶梯重试管理器：前 2 次重放，后 2 次重新签名，最后 1 次切号。"""
+
+    def __init__(self, max_retries: int = AUTH_403_MAX_RETRIES) -> None:
+        self.count: int = 0
+        self.max_retries: int = max_retries
+        self.current_prepared: PreparedRequest | None = None
+
+    async def handle_403(
+        self,
+        exc: Exception,
+        *,
+        model: str,
+        client: AIStudioClient,
+        has_yielded_data: bool = False,
+    ) -> bool:
+        if has_yielded_data:
+            raise HTTPException(
+                403, detail={"message": str(exc), "type": "auth_error"}
+            ) from exc
+
+        self.count += 1
+        record_rotator_event("auth_error", model=model)
+
+        # 1. 前 2 次 403: 重放原有已签名报文 (Replay 1/2, 2/2)
+        if self.count <= 2:
+            self.current_prepared = client.last_prepared_request
+            logger.warning(
+                "遭遇 403 权限异常，执行第 %d/2 次请求重放 (Replay): model=%s",
+                self.count,
+                model,
+            )
+            return True
+
+        # 2. 后 2 次 403: 重新向签名服务生成新快照 (Re-sign 1/2, 2/2)
+        if self.count <= 4:
+            self.current_prepared = None
+            logger.warning(
+                "遭遇 403 权限异常，重放未恢复，执行第 %d/2 次重新签名 (Re-sign): model=%s",
+                self.count - 2,
+                model,
+            )
+            return True
+
+        # 3. 最后 1 次 403: 切号故障转移 (Failover switch account)
+        if self.count == 5:
+            self.current_prepared = None
+            account_svc = runtime_state.account_service
+            active_acc = account_svc.get_active_account() if account_svc else None
+            failed_id = active_acc.id if active_acc else None
+            if await try_switch_account(model=model, failed_account_id=failed_id):
+                logger.warning(
+                    "遭遇 403 权限异常，重放与重签均未恢复，已切换至备用账号: model=%s",
+                    model,
+                )
+                return True
+            logger.error("遭遇 403 权限异常且无可用备用账号，终止重试")
+            raise HTTPException(
+                403, detail={"message": str(exc), "type": "auth_error"}
+            ) from exc
+
+        raise HTTPException(
+            403, detail={"message": str(exc), "type": "auth_error"}
+        ) from exc
 
 
 WIRE_TO_GEMINI_FINISH_REASON: dict[int, str] = {
@@ -195,31 +268,6 @@ async def handle_attempt_exception(
         logger.warning("账号权限被拒绝 (HTTP 403): %s", exc)
         record_rotator_event("auth_error", model=target_model)
 
-        # 1. 首次 403: 直接重新走一遍签名与请求流程
-        if attempt == 0 and not has_yielded_data:
-            logger.warning(
-                "账号 403: 当前账号重新走签名流程重试 (尝试=%d/%d)",
-                attempt + 1,
-                MAX_RETRIES,
-            )
-            return True
-
-        # 2. 当前账号重试依然 403: 尝试切换至备用账号重试一次
-        if (
-            attempt == 1
-            and not has_yielded_data
-            and await try_switch_account(
-                model=target_model, failed_account_id=failed_id
-            )
-        ):
-            logger.warning(
-                "当前账号 403 重新签名仍未通过，已切换至备用账号重试 (尝试=%d/%d)",
-                attempt + 1,
-                MAX_RETRIES,
-            )
-            return True
-
-        # 3. 严格遵守重试次数限制，不再盲目重试，直接抛给下游
         raise HTTPException(
             403, detail={"message": str(exc), "type": "auth_error"}
         ) from exc
@@ -335,7 +383,10 @@ async def handle_gemini_generate_content(
         )
 
     last_error: Exception | None = None
-    for attempt in range(MAX_RETRIES):
+    auth_manager = Auth403RetryManager()
+    total_attempts = MAX_RETRIES + AUTH_403_MAX_RETRIES
+
+    for attempt in range(total_attempts):
         await ensure_active_account(attempt, model=model_path)
         normalized = None
         try:
@@ -345,7 +396,7 @@ async def handle_gemini_generate_content(
                 normalized.model,
                 len(req.contents),
                 attempt + 1,
-                MAX_RETRIES,
+                total_attempts,
             )
             output = await client.generate_content(
                 model=normalized.model,
@@ -359,7 +410,9 @@ async def handle_gemini_generate_content(
                 top_k=normalized.top_k,
                 max_tokens=normalized.max_tokens,
                 generation_config_overrides=normalized.generation_config_overrides,
+                prepared=auth_manager.current_prepared,
             )
+            auth_manager.current_prepared = None
 
             final_fr = to_gemini_finish_reason(
                 output.candidates[0].finish_reason if output.candidates else None
@@ -407,6 +460,11 @@ async def handle_gemini_generate_content(
             )
         except Exception as exc:
             last_error = exc
+            if isinstance(exc, AuthError):
+                target_m = normalized.model if normalized else model_path
+                if await auth_manager.handle_403(exc, model=target_m, client=client):
+                    continue
+                raise
             if await handle_attempt_exception(
                 exc,
                 attempt=attempt,
@@ -558,7 +616,9 @@ def _build_gemini_streaming_response(
             buffered_thought_sig: str | None = None
             stream_completed = False
             last_stream_error: Exception | None = None
-            for stream_attempt in range(MAX_RETRIES):
+            auth_manager = Auth403RetryManager()
+            total_attempts = MAX_RETRIES + AUTH_403_MAX_RETRIES
+            for stream_attempt in range(total_attempts):
                 has_yielded_data = False
                 last_stream_error = None
                 final_usage = None
@@ -580,6 +640,7 @@ def _build_gemini_streaming_response(
                         top_k=normalized.top_k,
                         max_tokens=normalized.max_tokens,
                         generation_config_overrides=normalized.generation_config_overrides,
+                        prepared=auth_manager.current_prepared,
                     ):
                         if event_type == "usage":
                             final_usage = text if isinstance(text, dict) else None
@@ -615,10 +676,21 @@ def _build_gemini_streaming_response(
                                     )
                                 has_yielded_data = True
                                 yield chunk
+                    auth_manager.current_prepared = None
                     stream_completed = True
                     break
                 except Exception as exc:
                     last_stream_error = exc
+                    if isinstance(exc, AuthError) and not has_yielded_data:
+                        target_m = normalized.model if normalized else model_path
+                        if await auth_manager.handle_403(
+                            exc,
+                            model=target_m,
+                            client=client,
+                            has_yielded_data=has_yielded_data,
+                        ):
+                            continue
+                        raise
                     if await handle_attempt_exception(
                         exc,
                         attempt=stream_attempt,

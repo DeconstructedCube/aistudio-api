@@ -441,3 +441,78 @@ async def test_newly_imported_account_manual_activation_stays_sticky_on_first_re
         runtime_state.rotator = orig_rotator
         runtime_state.account_service = orig_service
         runtime_state.client = orig_client
+
+
+@pytest.mark.asyncio
+async def test_auth_403_five_stage_retry_mechanism():
+    """验证 403 阶梯重试机制：前 2 次重放，后 2 次重签，最后 1 次切号。"""
+    from unittest.mock import AsyncMock, patch
+
+    from fastapi import HTTPException
+
+    from aistudio_api.application.api_service_gemini import Auth403RetryManager
+    from aistudio_api.domain.errors import AuthError
+    from aistudio_api.infrastructure.gateway.client import PreparedRequest
+
+    manager = Auth403RetryManager()
+    mock_client = MagicMock(spec=AIStudioClient)
+    mock_prep = PreparedRequest(
+        url="https://test",
+        headers={"User-Agent": "test"},
+        body="{}",
+        model="models/gemini-3.8-flash",
+    )
+    mock_client.last_prepared_request = mock_prep
+
+    err = AuthError("Permission denied")
+
+    # 尝试 1 (第 1 次 403): 重放 1
+    should_retry = await manager.handle_403(
+        err, model="gemini-3.8-flash", client=mock_client
+    )
+    assert should_retry is True
+    assert manager.count == 1
+    assert manager.current_prepared is mock_prep
+
+    # 尝试 2 (第 2 次 403): 重放 2
+    should_retry = await manager.handle_403(
+        err, model="gemini-3.8-flash", client=mock_client
+    )
+    assert should_retry is True
+    assert manager.count == 2
+    assert manager.current_prepared is mock_prep
+
+    # 尝试 3 (第 3 次 403): 重新签名 1 (current_prepared 置为 None 重新签名)
+    should_retry = await manager.handle_403(
+        err, model="gemini-3.8-flash", client=mock_client
+    )
+    assert should_retry is True
+    assert manager.count == 3
+    assert manager.current_prepared is None
+
+    # 尝试 4 (第 4 次 403): 重新签名 2
+    should_retry = await manager.handle_403(
+        err, model="gemini-3.8-flash", client=mock_client
+    )
+    assert should_retry is True
+    assert manager.count == 4
+    assert manager.current_prepared is None
+
+    # 尝试 5 (第 5 次 403): 切号
+    with patch(
+        "aistudio_api.application.api_service_gemini.try_switch_account",
+        new_callable=AsyncMock,
+    ) as mock_switch:
+        mock_switch.return_value = True
+        should_retry = await manager.handle_403(
+            err, model="gemini-3.8-flash", client=mock_client
+        )
+        assert should_retry is True
+        assert manager.count == 5
+        assert manager.current_prepared is None
+        mock_switch.assert_awaited_once()
+
+    # 尝试 6 (超过 5 次): 抛出 403 HTTPException
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.handle_403(err, model="gemini-3.8-flash", client=mock_client)
+    assert exc_info.value.status_code == 403

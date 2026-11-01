@@ -1,19 +1,18 @@
-# WAA Signer (Google AI Studio 独立原生签名服务)
+# WAA Signer (Google AI Studio 独立 Go 签名服务)
 
-基于 [Mag1cFall/AIStudio2API](https://github.com/Mag1cFall/AIStudio2API) 核心内核抽离的轻量级、纯原生 WAA (Web App Attestation / BotGuard) 签名与协议服务。
+基于 [Mag1cFall/AIStudio2API](https://github.com/Mag1cFall/AIStudio2API) 核心内核抽离的独立 WAA (Web App Attestation / BotGuard) 证明签名服务。
 
-## 特性亮点
-1. **纯净脱离无头浏览器**：嵌入式 SpiderMonkey 152 运行时 + Firefox 152 真实 DOM / WebIDL 宿主现场，单机毫秒级极速生成高精度 snapshot proof (`!` 开头官方原生 token)。
-2. **极速热缓存**：
-   - 首次冷启动（加载页面与初始化 VM）：~5-8 秒
-   - 二次热复用：**~10-30 毫秒**
-3. **100% 协议与环境对齐**：
-   - 自动获取与当前 VM 会话强绑定的 `User-Agent`、`X-AIStudio-Visit-Id`、`X-Goog-Ext-519733851-Bin`、`X-Goog-Api-Key` 等动态公共头。
-   - 杜绝因外层 HTTP 请求头与 Proof 内部加密声明指纹不一致引发的 403 权限拒绝。
-4. **双模接口支持**：
-   - `POST /v1/proof/mint`：与 `aistudio-api` 的 `RemoteProofSigner` 规范 100% 兼容。
-   - `POST /v1/rpc/send`：直接使用 Firefox 152 原生 uTLS / HTTP2 / HTTP3 连接池代理发送受保护 RPC。
-
+## 方案特性
+1. **独立进程与嵌入式运行时**：基于 SpiderMonkey 152 引擎与 Firefox 152 宿主环境，直接执行 BotGuard 挑战，无需启动完整无头浏览器。
+2. **实测性能参考**：
+   - 首次冷启动（加载页面与初始化 VM）：约 5-8 秒
+   - 二次热复用：约 10-30 毫秒
+3. **环境特征匹配**：
+   - 提取与当前 VM 会话绑定的 `User-Agent`、`X-AIStudio-Visit-Id`、`X-Goog-Ext-519733851-Bin`、`X-Goog-Api-Key` 等动态头并在响应中返回。
+   - 避免外层 HTTP 请求头与 Proof 加密声明的客户端环境不一致导致 403 错误。
+4. **接口支持**：
+   - `POST /v1/proof/mint`：与 `aistudio-api` 签名客户端接口兼容。
+   - `POST /v1/rpc/send`：使用内部 Firefox 152 uTLS / HTTP2 连接池直接代理发送受保护 RPC。
 ---
 
 ## 跨平台一键编译

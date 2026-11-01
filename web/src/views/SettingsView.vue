@@ -6,6 +6,7 @@ import type { SystemConfig } from '@/types/system.ts'
 import ApiKeyManagerCard from '@/components/settings/ApiKeyManagerCard.vue'
 import LogConfigCard from '@/components/settings/LogConfigCard.vue'
 import VisualConfigEditor from '@/components/config/VisualConfigEditor.vue'
+import SignerServerCard from '@/components/settings/SignerServerCard.vue'
 import {
   Server,
   CheckCircle2,
@@ -139,6 +140,9 @@ onMounted(() => {
       :initial-config="config"
       @saved="loadConfig"
     />
+    <!-- WAA Signer Servers & Features Binding Card -->
+    <SignerServerCard @switched="loadConfig" />
+
     <!-- API Key Management Card -->
     <ApiKeyManagerCard />
 

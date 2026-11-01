@@ -36,6 +36,7 @@
   - [Function Calling](#function-calling)
 - [Web Management Console](#web-management-console)
 - [Development & Testing](#development--testing)
+- [Credits & Acknowledgments](#credits--acknowledgments)
 - [License](#license)
 
 ---
@@ -51,7 +52,7 @@
 | **Downstream Parameter Fault Tolerance** | `drop_unsupported_params` automatically drops unsupported safety categories (e.g. `HARM_CATEGORY_CIVIC_INTEGRITY`) and tools to prevent 400 errors |
 | **Multi-Account Probing** | Extracts and verifies sub-accounts (`u/0`, `u/1`...) automatically when importing a multi-session Cookie |
 | **Built-in Tools** | Supports official tools such as Google Search, Google Maps, and Code Execution sandbox |
-| **Browserless WAA Engine** | Completely decoupled from Chromium/proot, powered by [aistudio-pg-bridge](https://github.com/Lianues/aistudio-pg-bridge) signing API and HTTP/2 connection pooling |
+| **Multi-Signer & Feature Binding** | Browserless architecture supporting standalone Go signer (SpiderMonkey 152) or remote NodeVM signers with manual switching and matched User-Agent/header binding |
 | **Web Management Console** | Built-in web dashboard for account management (supporting text and JSON bundle file imports), live request metrics, and runtime `config.yaml` hot reloading |
 > [!NOTE]
 > **Memory Footprint**: Operating completely browserless, resident memory is only ~35 - 50 MB with sub-second cold start, running smoothly even on lightweight mobile Termux environments or entry-level servers.
@@ -70,7 +71,7 @@
 └───────────────────────────┼────────────────────────────┘
                             │ Proof Mint & HTTP/2 Stream
 ┌───────────────────────────▼────────────────────────────┐
-│         Browserless WAA Engine (aistudio-pg-bridge API)│
+│       Browserless WAA Engine (waa-signer / Remote NodeVM)     │
 │       Async Connection Pooling (HTTPStreamTransport)   │
 └───────────────────────────┬────────────────────────────┘
                             │ HTTPS / RPC
@@ -205,7 +206,7 @@ Open `http://localhost:8080` in your browser to access the Web Console.
 | `AISTUDIO_CONFIG_FILE` | string | `config.yaml` | Path to model rules and default tools configuration YAML |
 | `AISTUDIO_PERSIST_STATS` | bool | `true` | Persist request and token usage metrics across service restarts |
 | `AISTUDIO_PERSIST_ROTATOR` | bool | `true` | Persist account 429 rate limit dates & cooldowns across restarts |
-| `AISTUDIO_PROOF_SERVER_URL` | string | `https://waa.spinsnow.fun` | WAA proof signing server URL powered by [aistudio-pg-bridge](https://github.com/Lianues/aistudio-pg-bridge) (default public relay or self-hosted) |
+| `AISTUDIO_PROOF_SERVER_URL` | string | `http://127.0.0.1:8081` | Proof server URL override; recommended to configure servers & bound feature headers in `config.yaml` (`waa.servers`) with manual switching |
 | `AISTUDIO_DEFAULT_TEXT_MODEL` | string | `gemini-3.7-flash` | Default text model |
 | `AISTUDIO_TIMEZONE` | string | Auto | Wire protocol timezone (`America/Los_Angeles` by default) |
 | `AISTUDIO_DUMP_REQUESTS` | bool | `false` | Dump API request/response exchanges to console logs (enabled via `DEBUG=1`) |
@@ -390,6 +391,17 @@ bun x pyright
 # Run test suite
 uv run pytest
 ```
+
+---
+
+## Credits & Acknowledgments
+
+During reverse engineering, attestation protocol analysis, and gateway implementation, this project referenced and built upon the following open-source projects and community works:
+
+- **[Mag1cFall/AIStudio2API](https://github.com/Mag1cFall/AIStudio2API)**: Provided the embedded SpiderMonkey 152 runtime and Firefox 152 DOM / WebIDL host environment implementation, along with the uTLS transport stack design. The standalone `waa-signer` module is extracted and adapted from its core logic.
+- **[Lianues/aistudio-pg-bridge](https://github.com/Lianues/aistudio-pg-bridge)**: Pioneered the lightweight browserless WAA proof signing service concept and established the `/v1/proof/mint` API interface specification.
+- **[spinsnow](https://waa.spinsnow.fun)**: Provided a public, stable Node.js VM WAA attestation relay service.
+- **[Camoufox](https://github.com/daijro/camoufox)** & **[go-browserforge](https://github.com/brainplusplus/go-browserforge)**: Provided real-world browser fingerprint datasets and anti-fingerprinting generation algorithms.
 
 ---
 

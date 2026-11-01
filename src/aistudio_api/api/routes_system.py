@@ -274,9 +274,15 @@ async def get_system_config() -> dict[str, object]:
     if config_yaml_path.exists():
         with contextlib.suppress(Exception):
             yaml_content = config_yaml_path.read_text(encoding="utf-8")
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        get_active_waa_server,
+    )
+
+    active_waa = get_active_waa_server()
     return {
         "port": settings.port,
-        "proof_server_url": settings.proof_server_url,
+        "proof_server_url": str(active_waa.get("url") or settings.proof_server_url),
+        "active_signer_server": active_waa.get("id"),
         "proxy_configured": bool(settings.proxy_url),
         "auth_enabled": settings.auth_enabled,
         "yaml_content": yaml_content,
@@ -325,6 +331,134 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
         return {"ok": True, "message": "配置已保存并重载"}
     except Exception as e:
         raise HTTPException(500, detail=f"写入配置文件失败: {e}") from e
+
+
+# ========== WAA 签名服务器管理与纯手动切换 API ==========
+
+
+class SwitchSignerServerRequest(BaseModel):
+    server_id: str
+
+
+class UpsertSignerServerRequest(BaseModel):
+    id: str | None = None
+    name: str
+    description: str = ""
+    url: str
+    user_agent: str = ""
+    headers: dict[str, str] = {}
+
+
+class TestSignerServerRequest(BaseModel):
+    url: str
+
+
+@protected_router.get("/config/signer-servers")
+async def get_signer_servers() -> dict[str, object]:
+    """获取所有配置的 WAA 签名服务器列表及当前激活项。"""
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        get_configured_waa_settings,
+    )
+
+    waa = get_configured_waa_settings()
+    active_id = str(waa.get("active_server") or "local_spidermonkey").strip()
+    raw_servers = waa.get("servers")
+    servers = raw_servers if isinstance(raw_servers, list) else []
+
+    result_servers = []
+    for s in servers:
+        if isinstance(s, dict):
+            s_id = str(s.get("id") or "").strip()
+            item = dict(s)
+            item["is_active"] = s_id == active_id
+            result_servers.append(item)
+
+    return {
+        "active_server": active_id,
+        "servers": result_servers,
+    }
+
+
+@protected_router.post("/config/signer-servers/switch")
+async def switch_signer_server(req: SwitchSignerServerRequest) -> dict[str, object]:
+    """纯手动切换当前激活的 WAA 签名服务器。"""
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        switch_active_waa_server,
+    )
+
+    active = switch_active_waa_server(req.server_id)
+    logger.info(
+        "已手动切换激活 WAA 签名服务: id=%s, url=%s",
+        active.get("id"),
+        active.get("url"),
+    )
+    return {"ok": True, "active_server": active}
+
+
+@protected_router.put("/config/signer-servers")
+async def upsert_signer_server(req: UpsertSignerServerRequest) -> dict[str, object]:
+    """添加或修改 WAA 签名服务器配置。"""
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        upsert_waa_server,
+    )
+
+    server_data = req.model_dump(exclude_none=True)
+    saved = upsert_waa_server(server_data)
+    logger.info(
+        "保存 WAA 签名服务器配置: id=%s, name=%s",
+        saved.get("id"),
+        saved.get("name"),
+    )
+    return {"ok": True, "server": saved}
+
+
+@protected_router.delete("/config/signer-servers/{server_id}")
+async def delete_signer_server(server_id: str) -> dict[str, bool]:
+    """删除指定的 WAA 签名服务器。"""
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        delete_waa_server,
+    )
+
+    success = delete_waa_server(server_id)
+    if not success:
+        raise HTTPException(404, detail="未找到该签名服务器")
+    logger.info("删除 WAA 签名服务器: id=%s", server_id)
+    return {"ok": True}
+
+
+@protected_router.post("/config/signer-servers/test")
+async def test_signer_server(req: TestSignerServerRequest) -> dict[str, object]:
+    """测试指定签名服务的连通性与健康状态。"""
+    import time
+
+    import httpx
+
+    from aistudio_api.config import settings
+
+    target_url = req.url.rstrip("/")
+    is_local = "127.0.0.1" in target_url or "localhost" in target_url
+    proxy = None if is_local else settings.proxy_url
+
+    t0 = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=8.0, proxy=proxy) as client:
+            resp = await client.get(f"{target_url}/health")
+            elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+            is_ok = resp.status_code == 200
+            data = resp.json() if is_ok else {}
+            return {
+                "ok": is_ok,
+                "status_code": resp.status_code,
+                "elapsed_ms": elapsed_ms,
+                "data": data,
+            }
+    except Exception as e:
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+        return {
+            "ok": False,
+            "error": str(e),
+            "elapsed_ms": elapsed_ms,
+        }
 
 
 class LoggingConfigRequest(BaseModel):

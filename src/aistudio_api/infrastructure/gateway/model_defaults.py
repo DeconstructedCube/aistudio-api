@@ -274,6 +274,31 @@ def _profile_from_mapping(raw: dict[str, object]) -> ModelProfile:
 
 def _default_config() -> dict[str, object]:
     return {
+        "waa": {
+            "active_server": "local_spidermonkey",
+            "servers": [
+                {
+                    "id": "local_spidermonkey",
+                    "name": "本地原生引擎 (SpiderMonkey 152)",
+                    "description": "本地独立纯静态 Go 服务，毫秒级快速生成官方原生高精度快照 Proof",
+                    "url": "http://127.0.0.1:8081",
+                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0",
+                    "headers": {
+                        "X-User-Agent": "grpc-web-javascript/0.1",
+                    },
+                },
+                {
+                    "id": "remote_spinsnow",
+                    "name": "远程公共服务 (spinsnow / NodeVM)",
+                    "description": "远程 Node.js VM 沙箱证明签名服务，绑定 Chromium 模拟特征环境",
+                    "url": "https://waa.spinsnow.fun",
+                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+                    "headers": {
+                        "X-User-Agent": "grpc-web-javascript/0.1",
+                    },
+                },
+            ],
+        },
         "logging": {
             "level": "INFO",
             "dump_requests": False,
@@ -802,3 +827,160 @@ def get_configured_paid_model_rules(
     if isinstance(def_rules, dict):
         return def_rules
     return {}
+
+
+# ─── WAA 签名服务多节点管理与特征绑定 (纯手动切换，不轮询) ───
+
+
+def get_configured_waa_settings(
+    config_path: str | os.PathLike[str] | None = None,
+) -> dict[str, object]:
+    """获取 config.yaml 中配置的 WAA 签名服务与特征设置。"""
+    resolved_path = _resolve_config_path(config_path)
+    config = _load_yaml_config(resolved_path)
+    raw_waa = config.get("waa")
+    if isinstance(raw_waa, dict):
+        return raw_waa
+    def_waa = _default_config().get("waa")
+    if isinstance(def_waa, dict):
+        return def_waa
+    return {}
+
+
+def get_active_waa_server(
+    config_path: str | os.PathLike[str] | None = None,
+) -> dict[str, object]:
+    """获取当前激活的 WAA 签名服务器配置及其绑定的特征信息。"""
+    waa = get_configured_waa_settings(config_path)
+    active_id = str(waa.get("active_server") or "local_spidermonkey").strip()
+    raw_servers = waa.get("servers")
+    servers = raw_servers if isinstance(raw_servers, list) else []
+
+    for item in servers:
+        if isinstance(item, dict) and str(item.get("id") or "").strip() == active_id:
+            return dict(item)
+
+    if servers and isinstance(servers[0], dict):
+        return dict(servers[0])
+
+    return {
+        "id": "local_spidermonkey",
+        "name": "本地原生引擎 (SpiderMonkey 152)",
+        "url": "http://127.0.0.1:8081",
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0",
+        "headers": {"X-User-Agent": "grpc-web-javascript/0.1"},
+    }
+
+
+def switch_active_waa_server(
+    server_id: str,
+    config_path: str | os.PathLike[str] | None = None,
+) -> dict[str, object]:
+    """纯手动切换当前激活的 WAA 签名服务器，并持久化保存到 config.yaml。"""
+    resolved_path = _resolve_config_path(config_path)
+    content = (
+        resolved_path.read_text(encoding="utf-8") if resolved_path.exists() else ""
+    )
+    parsed = yaml.safe_load(content) or {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+
+    raw_waa = parsed.get("waa")
+    waa_dict = dict(raw_waa) if isinstance(raw_waa, dict) else {}
+    target_id = server_id.strip()
+    waa_dict["active_server"] = target_id
+    parsed["waa"] = waa_dict
+
+    resolved_path.write_text(
+        yaml.dump(parsed, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    invalidate_config_cache()
+    return get_active_waa_server(config_path)
+
+
+def upsert_waa_server(
+    server_data: dict[str, object],
+    config_path: str | os.PathLike[str] | None = None,
+) -> dict[str, object]:
+    """新增或更新指定 WAA 签名服务器配置。"""
+    import uuid
+
+    resolved_path = _resolve_config_path(config_path)
+    content = (
+        resolved_path.read_text(encoding="utf-8") if resolved_path.exists() else ""
+    )
+    parsed = yaml.safe_load(content) or {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+
+    raw_waa = parsed.get("waa")
+    waa_dict = dict(raw_waa) if isinstance(raw_waa, dict) else {}
+    raw_servers = waa_dict.get("servers")
+    servers = list(raw_servers) if isinstance(raw_servers, list) else []
+
+    target_id = str(server_data.get("id") or "").strip()
+    if not target_id:
+        target_id = f"server_{uuid.uuid4().hex[:8]}"
+        server_data["id"] = target_id
+
+    updated = False
+    for idx, s in enumerate(servers):
+        if isinstance(s, dict) and str(s.get("id") or "").strip() == target_id:
+            servers[idx] = server_data
+            updated = True
+            break
+    if not updated:
+        servers.append(server_data)
+
+    waa_dict["servers"] = servers
+    parsed["waa"] = waa_dict
+    resolved_path.write_text(
+        yaml.dump(parsed, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    invalidate_config_cache()
+    return server_data
+
+
+def delete_waa_server(
+    server_id: str,
+    config_path: str | os.PathLike[str] | None = None,
+) -> bool:
+    """删除指定 ID 的 WAA 签名服务器。"""
+    resolved_path = _resolve_config_path(config_path)
+    content = (
+        resolved_path.read_text(encoding="utf-8") if resolved_path.exists() else ""
+    )
+    parsed = yaml.safe_load(content) or {}
+    if not isinstance(parsed, dict):
+        return False
+
+    raw_waa = parsed.get("waa")
+    if not isinstance(raw_waa, dict):
+        return False
+
+    raw_servers = raw_waa.get("servers")
+    if not isinstance(raw_servers, list):
+        return False
+
+    target_id = server_id.strip()
+    new_servers = [
+        s
+        for s in raw_servers
+        if isinstance(s, dict) and str(s.get("id") or "").strip() != target_id
+    ]
+    if len(new_servers) == len(raw_servers):
+        return False
+
+    raw_waa["servers"] = new_servers
+    if str(raw_waa.get("active_server") or "").strip() == target_id and new_servers:
+        raw_waa["active_server"] = str(new_servers[0].get("id") or "")
+
+    parsed["waa"] = raw_waa
+    resolved_path.write_text(
+        yaml.dump(parsed, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    invalidate_config_cache()
+    return True

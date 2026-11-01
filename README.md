@@ -36,6 +36,7 @@
   - [工具调用 (Function Calling)](#工具调用-function-calling)
 - [Web 管理控制台](#web-管理控制台)
 - [开发与测试](#开发与测试)
+- [借物表与致谢](#借物表与致谢-credits--acknowledgments)
 - [开源协议](#开源协议)
 
 ---
@@ -51,7 +52,7 @@
 | **下游参数容错与丢弃** | 支持配置 `drop_unsupported_params` 自动过滤下游传入的非标准安全分类（如 `HARM_CATEGORY_CIVIC_INTEGRITY`）与不兼容工具，避免 400 阻断 |
 | **批量子账号探活** | 导入单个包含多个 Google 身份的 Cookie 后，自动递归探活子账号（`u/0`, `u/1`...）并分别建档 |
 | **内置搜索与工具** | 支持 Google Search 联网搜索、Google Maps、代码执行沙箱等官方扩展能力 |
-| **纯净 WAA 引擎** | 彻底脱离 Chromium/proot 与本地浏览器环境，基于 aistudio-pg-bridge 高速签名 API 与 HTTP/2 连接池直连 Google |
+| **多签名服务与特征绑定** | 脱离重型无头浏览器，支持本地独立的 Go 签名服务 (SpiderMonkey 152) 或远程 NodeVM 签名服务，支持纯手动切换并自动绑定匹配的 User-Agent 与请求头特征 |
 | **Web 管理面板** | 提供 Web 管理控制台，支持账号管理（文本与 JSON 批量导入）、调用量监控、在线编辑与热重载 `config.yaml` |
 > [!NOTE]
 > **内存占用参考**：脱离重型浏览器后，服务常驻物理内存仅约 35 - 50 MB，冷启动毫秒级，即使在入门级 Android 手机（Termux）或轻量服务器上亦可稳定高效常驻。
@@ -70,7 +71,7 @@
 └───────────────────────────┼────────────────────────────┘
                             │ Proof Mint & HTTP/2 Stream
 ┌───────────────────────────▼────────────────────────────┐
-│         Browserless WAA Engine (aistudio-pg-bridge API)│
+│       Browserless WAA Engine (waa-signer / Remote NodeVM)     │
 │       Async Connection Pooling (HTTPStreamTransport)   │
 └───────────────────────────┬────────────────────────────┘
                             │ HTTPS / RPC
@@ -206,7 +207,7 @@ docker compose up -d
 | `AISTUDIO_CONFIG_FILE` | string | `config.yaml` | 模型规则与默认工具配置文件路径 |
 | `AISTUDIO_PERSIST_STATS` | bool | `true` | 是否持久化模型调用与 Token 统计（1=开启，0=关闭） |
 | `AISTUDIO_PERSIST_ROTATOR` | bool | `true` | 是否持久化账号 429 冷却与调度状态（1=开启，0=关闭） |
-| `AISTUDIO_PROOF_SERVER_URL` | string | `https://waa.spinsnow.fun` | WAA 证明签名服务地址，基于 [aistudio-pg-bridge](https://github.com/Lianues/aistudio-pg-bridge)（默认使用 spinsnow 公开服务，支持配置自建服务） |
+| `AISTUDIO_PROOF_SERVER_URL` | string | `http://127.0.0.1:8081` | 签名服务器地址覆盖项；推荐在 `config.yaml` 的 `waa.servers` 中统一配置各节点及其特征 User-Agent 并手动切换 |
 | `AISTUDIO_DEFAULT_TEXT_MODEL` | string | `gemini-3.7-flash` | 默认文本模型 |
 | `AISTUDIO_TIMEZONE` | string | 自动探测 | Wire 协议交互时区（默认 `America/Los_Angeles`） |
 | `AISTUDIO_DUMP_REQUESTS` | bool | `false` | 是否在终端转储每次 API 交互报文详情（支持 `DEBUG=1` 触发） |
@@ -391,6 +392,17 @@ bun x pyright
 # 执行单元测试套件
 uv run pytest
 ```
+
+---
+
+## 借物表与致谢 (Credits & Acknowledgments)
+
+本项目在逆向工程、签名算法与协议实现过程中，参考并借鉴了以下优秀的开源项目与社区成果，在此致以诚挚的感谢：
+
+- **[Mag1cFall/AIStudio2API](https://github.com/Mag1cFall/AIStudio2API)**：提供了嵌入式 SpiderMonkey 152 运行时与 Firefox 152 DOM / WebIDL 宿主现场实现，以及基于 uTLS 的网络栈设计，`waa-signer` 服务基于其核心逻辑适配抽离。
+- **[Lianues/aistudio-pg-bridge](https://github.com/Lianues/aistudio-pg-bridge)**：开创了脱离本地浏览器的轻量化 WAA 证明签名服务思路，并确立了 `/v1/proof/mint` 接口规范。
+- **[spinsnow](https://waa.spinsnow.fun)**：提供了公开稳定的 Node.js VM WAA 签名中继服务与环境参考。
+- **[Camoufox](https://github.com/daijro/camoufox)** 与 **[go-browserforge](https://github.com/brainplusplus/go-browserforge)**：提供了真实浏览器环境指纹数据与反指纹追踪生成算法。
 
 ---
 

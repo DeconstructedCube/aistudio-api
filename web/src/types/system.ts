@@ -42,3 +42,26 @@ export interface CreateApiKeyRequest {
 export interface UpdateApiKeyRequest {
   name: string
 }
+
+export interface SignerServerItem {
+  id: string
+  name: string
+  description?: string
+  url: string
+  user_agent?: string
+  headers?: Record<string, string>
+  is_active?: boolean
+}
+
+export interface SignerServersResponse {
+  active_server: string
+  servers: SignerServerItem[]
+}
+
+export interface TestSignerServerResponse {
+  ok: boolean
+  status_code?: number
+  elapsed_ms: number
+  error?: string
+  data?: Record<string, unknown>
+}
