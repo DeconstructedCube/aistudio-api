@@ -60,7 +60,10 @@ onMounted(() => {
         <div class="text-[11px] text-gray-400 mt-1">
           无头模式: {{ config?.browser_headless ? '开启 (Headless)' : '禁用' }}
         </div>
-        <div class="text-[11px] mt-1 font-medium" :class="config?.proof_engine?.provider === 'remote' ? 'text-indigo-600' : 'text-emerald-600'">
+        <div
+          class="text-[11px] mt-1 font-medium"
+          :class="config?.proof_engine?.provider === 'remote' ? 'text-indigo-600' : 'text-emerald-600'"
+        >
           引擎: {{ config?.proof_engine?.provider === 'remote' ? '🚀 逆向免浏览器' : '🛡️ 本地 Chrome' }}
         </div>
       </div>

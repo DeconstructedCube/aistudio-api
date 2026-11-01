@@ -125,13 +125,14 @@ async function handleTestAccount() {
     }
     if (res.alive) {
       toast.success(`账号 ${props.account.name || props.account.id} 测活通过 (${res.elapsed_ms}ms, ${res.tier || 'Free'})`)
-      await accountsStore.loadAccounts()
+      await accountsStore.fetchAll()
     } else {
       toast.error(`测活失败: ${res.error || '未响应'}`)
     }
-  } catch (err: any) {
-    testResult.value = { alive: false, elapsed_ms: 0, error: err?.message || '网络异常' }
-    toast.error(`测活请求失败: ${err?.message || err}`)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    testResult.value = { alive: false, elapsed_ms: 0, error: msg }
+    toast.error(`测活请求失败: ${msg}`)
   } finally {
     testing.value = false
   }

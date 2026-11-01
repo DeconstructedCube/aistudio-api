@@ -1,14 +1,16 @@
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from aistudio_api.infrastructure.gateway.model_defaults import (
+    get_configured_proof_engine_settings,
+    update_configured_proof_engine_settings,
+)
 from aistudio_api.infrastructure.gateway.remote_proof import (
     RemoteProofClient,
     RemoteProofError,
     _format_cookies,
     _serialize_contents_to_messages,
-)
-from aistudio_api.infrastructure.gateway.model_defaults import (
-    get_configured_proof_engine_settings,
-    update_configured_proof_engine_settings,
 )
 
 
@@ -83,10 +85,12 @@ async def test_remote_proof_client_handles_error():
     fake_resp.status_code = 500
     fake_resp.text = "Internal error"
 
-    with patch("httpx.AsyncClient.post", return_value=fake_resp):
-        with pytest.raises(RemoteProofError, match="HTTP 500"):
-            await client.mint_proof(
-                cookies="SID=123",
-                model="models/gemini-3.8-flash",
-            )
+    with (
+        patch("httpx.AsyncClient.post", return_value=fake_resp),
+        pytest.raises(RemoteProofError, match="HTTP 500"),
+    ):
+        await client.mint_proof(
+            cookies="SID=123",
+            model="models/gemini-3.8-flash",
+        )
     await client.close()

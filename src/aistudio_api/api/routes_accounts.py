@@ -364,7 +364,6 @@ async def detect_account_tier(
 async def test_account(
     account_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.\@]+$"),
     account_service: AccountService = Depends(get_account_service),
-    runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> AccountTestResponse:
     """对指定账号发起真实上游 Google RPC 测活，验证 Cookie 鉴权有效性与订阅等级。"""
     import time

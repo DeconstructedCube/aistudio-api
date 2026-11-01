@@ -95,7 +95,9 @@ async def get_model(
 
     model_info = await model_discovery.get_model_by_id(model_id, session=session)
     if model_info is None:
-        from aistudio_api.infrastructure.gateway.model_defaults import strip_model_thinking_suffix
+        from aistudio_api.infrastructure.gateway.model_defaults import (
+            strip_model_thinking_suffix,
+        )
 
         base_id, suffix = strip_model_thinking_suffix(model_id)
         if suffix is not None:

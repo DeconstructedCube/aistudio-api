@@ -9,7 +9,10 @@ if TYPE_CHECKING:
 
 from dataclasses import dataclass
 
-from aistudio_api.infrastructure.gateway.model_defaults import resolve_model_defaults, strip_model_thinking_suffix
+from aistudio_api.infrastructure.gateway.model_defaults import (
+    resolve_model_defaults,
+    strip_model_thinking_suffix,
+)
 from aistudio_api.infrastructure.gateway.wire_codec import build_tools_from_names
 from aistudio_api.infrastructure.gateway.wire_spec import JspbArray, SchemaIndex
 from aistudio_api.infrastructure.gateway.wire_types import (

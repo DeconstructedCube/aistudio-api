@@ -146,7 +146,10 @@ async function handleSave() {
               class="w-5 h-5 rounded-full border flex items-center justify-center transition-colors"
               :class="provider === 'remote' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-gray-300'"
             >
-              <CheckCircle2 v-if="provider === 'remote'" class="w-4 h-4" />
+              <CheckCircle2
+                v-if="provider === 'remote'"
+                class="w-4 h-4"
+              />
             </div>
           </div>
           <p class="text-xs text-gray-500 leading-relaxed">
@@ -190,7 +193,10 @@ async function handleSave() {
               class="w-5 h-5 rounded-full border flex items-center justify-center transition-colors"
               :class="provider === 'browser' ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-gray-300'"
             >
-              <CheckCircle2 v-if="provider === 'browser'" class="w-4 h-4" />
+              <CheckCircle2
+                v-if="provider === 'browser'"
+                class="w-4 h-4"
+              />
             </div>
           </div>
           <p class="text-xs text-gray-500 leading-relaxed">
@@ -217,7 +223,10 @@ async function handleSave() {
             class="w-4 h-4 text-brand-600 rounded border-gray-300 focus:ring-brand-500 cursor-pointer"
           >
         </div>
-        <label for="autoFallbackCheck" class="cursor-pointer space-y-0.5">
+        <label
+          for="autoFallbackCheck"
+          class="cursor-pointer space-y-0.5"
+        >
           <div class="text-xs font-bold text-gray-900 flex items-center gap-1.5">
             <span>逆向 API 异常时自动降级到本地 Chrome 浏览器 (Auto-fallback)</span>
             <span class="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.2 rounded font-semibold">强烈推荐开启</span>

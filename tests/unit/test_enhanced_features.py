@@ -1,17 +1,20 @@
+from aistudio_api.api.schemas import (
+    GeminiContent,
+    GeminiGenerateContentRequest,
+    GeminiPart,
+)
+from aistudio_api.application.chat_service import normalize_gemini_request
+from aistudio_api.infrastructure.gateway.cookie_rotate import DEFAULT_USER_AGENT
 from aistudio_api.infrastructure.gateway.model_defaults import (
     ThinkingLevel,
     strip_model_thinking_suffix,
 )
 from aistudio_api.infrastructure.gateway.model_discovery import model_discovery
+from aistudio_api.infrastructure.gateway.wire_spec import PartIndex
 from aistudio_api.infrastructure.gateway.wire_types import (
     SKIP_THOUGHT_SIG_VALIDATOR_B64,
-    AistudioContent,
     AistudioPart,
 )
-from aistudio_api.infrastructure.gateway.wire_spec import PartIndex
-from aistudio_api.infrastructure.gateway.cookie_rotate import DEFAULT_USER_AGENT
-from aistudio_api.application.chat_service import normalize_gemini_request
-from aistudio_api.api.schemas import GeminiGenerateContentRequest, GeminiContent, GeminiPart
 
 
 def test_strip_model_thinking_suffix():

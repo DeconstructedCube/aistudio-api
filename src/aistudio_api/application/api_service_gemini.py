@@ -18,7 +18,6 @@ from aistudio_api.api.response_models import (
 from aistudio_api.api.responses import to_gemini_parts, to_gemini_usage_metadata
 from aistudio_api.api.schemas import GeminiGenerateContentRequest
 from aistudio_api.api.state import runtime_state
-from aistudio_api.infrastructure.gateway.model_defaults import strip_model_thinking_suffix
 from aistudio_api.application.account_orchestrator import (
     MAX_RETRIES,
     ensure_active_account,
@@ -40,6 +39,9 @@ from aistudio_api.domain.errors import (
     parse_upstream_grpc_error,
 )
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
+from aistudio_api.infrastructure.gateway.model_defaults import (
+    strip_model_thinking_suffix,
+)
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("api.gemini")
