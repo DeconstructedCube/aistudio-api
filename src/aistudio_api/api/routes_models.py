@@ -94,6 +94,24 @@ async def get_model(
     from aistudio_api.infrastructure.gateway.model_discovery import model_discovery
 
     model_info = await model_discovery.get_model_by_id(model_id, session=session)
+    if model_info is None:
+        from aistudio_api.infrastructure.gateway.model_defaults import strip_model_thinking_suffix
+
+        base_id, suffix = strip_model_thinking_suffix(model_id)
+        if suffix is not None:
+            base_info = await model_discovery.get_model_by_id(base_id, session=session)
+            if base_info is not None:
+                info_copy = dict(base_info)
+                info_copy["id"] = model_id
+                info_copy["displayName"] = f"{base_info.get('displayName') or base_id} ({suffix.name})"
+                logger.info(
+                    "获取模型详情成功 (思考等级后缀): model=%s (base=%s, level=%s)",
+                    model_id,
+                    base_id,
+                    suffix.name,
+                )
+                return _to_gemini_model(info_copy)
+
     if model_info is not None:
         logger.info("获取模型详情成功: model=%s", model_id)
         return _to_gemini_model(model_info)

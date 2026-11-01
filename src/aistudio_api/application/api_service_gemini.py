@@ -18,6 +18,7 @@ from aistudio_api.api.response_models import (
 from aistudio_api.api.responses import to_gemini_parts, to_gemini_usage_metadata
 from aistudio_api.api.schemas import GeminiGenerateContentRequest
 from aistudio_api.api.state import runtime_state
+from aistudio_api.infrastructure.gateway.model_defaults import strip_model_thinking_suffix
 from aistudio_api.application.account_orchestrator import (
     MAX_RETRIES,
     ensure_active_account,
@@ -345,7 +346,8 @@ async def handle_gemini_generate_content(
 
     last_error: Exception | None = None
     for attempt in range(MAX_RETRIES):
-        await ensure_active_account(attempt, model=model_path)
+        clean_model_for_account, _ = strip_model_thinking_suffix(model_path)
+        await ensure_active_account(attempt, model=clean_model_for_account)
         normalized = None
         try:
             normalized = normalize_gemini_request(req, model_path)

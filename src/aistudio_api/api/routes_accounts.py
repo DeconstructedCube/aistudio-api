@@ -30,6 +30,18 @@ log = get_logger("accounts")
 router = APIRouter(prefix="/accounts")
 
 
+class AccountTestResponse(BaseModel):
+    ok: bool = True
+    alive: bool
+    status_code: int = 200
+    elapsed_ms: int = 0
+    tier: str | None = None
+    email: str | None = None
+    model: str | None = None
+    reply: str | None = None
+    error: str | None = None
+
+
 class AccountResponse(BaseModel):
     id: str
     name: str
@@ -346,6 +358,103 @@ async def detect_account_tier(
     if not acc:
         raise HTTPException(status_code=404, detail="账号不存在")
     return to_account_response(acc)
+
+
+@router.post("/{account_id}/test", response_model=AccountTestResponse)
+async def test_account(
+    account_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.\@]+$"),
+    account_service: AccountService = Depends(get_account_service),
+    runtime_state: RuntimeState = Depends(get_runtime_state),
+) -> AccountTestResponse:
+    """对指定账号发起真实上游 Google RPC 测活，验证 Cookie 鉴权有效性与订阅等级。"""
+    import time
+    t0 = time.perf_counter()
+    acc = account_service.get_account(account_id)
+    if not acc:
+        raise HTTPException(status_code=404, detail="账号不存在")
+
+    target_auth = account_service.get_account_auth_path(account_id)
+    if not target_auth or not target_auth.is_file():
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        return AccountTestResponse(
+            ok=True,
+            alive=False,
+            status_code=404,
+            elapsed_ms=elapsed_ms,
+            error="账号凭据文件 (auth.json) 不存在",
+        )
+
+    try:
+        import json
+        auth_data = json.loads(target_auth.read_text(encoding="utf-8"))
+        raw_cookies = auth_data.get("cookies") or []
+        cookie_dict = {
+            str(c.get("name") or ""): str(c.get("value") or "")
+            for c in raw_cookies
+            if isinstance(c, dict) and c.get("name")
+        }
+    except Exception as e:
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        return AccountTestResponse(
+            ok=True,
+            alive=False,
+            status_code=500,
+            elapsed_ms=elapsed_ms,
+            error=f"解析凭据失败: {e}",
+        )
+
+    if not cookie_dict:
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        return AccountTestResponse(
+            ok=True,
+            alive=False,
+            status_code=400,
+            elapsed_ms=elapsed_ms,
+            error="Cookie 为空",
+        )
+
+    try:
+        from aistudio_api.infrastructure.account.cookie_parser import (
+            probe_account_benefit_tier,
+            probe_account_email,
+        )
+
+        detected_tier = await probe_account_benefit_tier(
+            cookie_dict, auth_user=acc.auth_user or "0"
+        )
+        detected_email = await probe_account_email(
+            cookie_dict, auth_user=acc.auth_user or "0"
+        )
+
+        if detected_tier:
+            account_service.update_account_tier(account_id, detected_tier)
+        if detected_email:
+            account_service.update_account_email(account_id, detected_email)
+
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        return AccountTestResponse(
+            ok=True,
+            alive=True,
+            status_code=200,
+            elapsed_ms=elapsed_ms,
+            tier=detected_tier or acc.tier or "Free",
+            email=detected_email or acc.email,
+            model="GetAiStudioBenefitTier",
+            reply="Google RPC 鉴权通过",
+        )
+    except Exception as e:
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        err_msg = str(e)
+        status = 401 if ("401" in err_msg or "expired" in err_msg.lower()) else (403 if "403" in err_msg else 500)
+        return AccountTestResponse(
+            ok=True,
+            alive=False,
+            status_code=status,
+            elapsed_ms=elapsed_ms,
+            tier=acc.tier,
+            email=acc.email,
+            error=f"测活失败: {err_msg}",
+        )
 
 
 @router.delete("/{account_id}")

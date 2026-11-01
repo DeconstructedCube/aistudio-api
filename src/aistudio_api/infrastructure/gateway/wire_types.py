@@ -255,6 +255,11 @@ class AistudioGenerationConfig:
             self.values.append(None)
 
 
+# Official Google validator bypass token (btoa("skip_thought_signature_validator"))
+# used when OpenAI-compatible or external clients replay assistant tool_calls without thoughtSignature.
+SKIP_THOUGHT_SIG_VALIDATOR_B64 = "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
+
+
 @dataclass
 class AistudioPart:
     text: str | None = None
@@ -271,8 +276,11 @@ class AistudioPart:
         wire = JspbArray()
         if self.thought:
             wire[PartIndex.THOUGHT_ALT_FLAG] = 1
-        if self.thought_signature:
-            wire[PartIndex.THOUGHT_SIGNATURE] = self.thought_signature
+        sig_to_use = self.thought_signature
+        if not sig_to_use and self.function_call:
+            sig_to_use = SKIP_THOUGHT_SIG_VALIDATOR_B64
+        if sig_to_use:
+            wire[PartIndex.THOUGHT_SIGNATURE] = sig_to_use
         if self.file_id:
             wire[PartIndex.FILE_DATA] = [self.file_id]
             return wire.compact()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +21,31 @@ from .wire_types import (
 )
 
 _resolve_config_path = resolve_config_file
+THINKING_SUFFIX_MAP: dict[str, ThinkingLevel] = {
+    "high": ThinkingLevel.HIGH,
+    "medium": ThinkingLevel.MEDIUM,
+    "low": ThinkingLevel.LOW,
+    "minimal": ThinkingLevel.MINIMAL,
+}
+
+_THINKING_SUFFIX_RE = re.compile(r"-(high|medium|low|minimal)$", re.IGNORECASE)
+
+
+def strip_model_thinking_suffix(model: str) -> tuple[str, ThinkingLevel | None]:
+    """Extract and strip thinking level suffix from model name.
+
+    E.g. 'gemini-3.8-flash-high' -> ('gemini-3.8-flash', ThinkingLevel.HIGH)
+         'models/gemini-4-argon-minimal' -> ('models/gemini-4-argon', ThinkingLevel.MINIMAL)
+         'gemini-3.8-flash' -> ('gemini-3.8-flash', None)
+    """
+    m = _THINKING_SUFFIX_RE.search(model)
+    if not m:
+        return model, None
+    suffix = m.group(1).lower()
+    clean_model = model[: m.start()]
+    return clean_model, THINKING_SUFFIX_MAP.get(suffix)
+
+
 _SAFETY_CATEGORY_ORDER = (
     ("harassment", 7),
     ("hate", 8),
