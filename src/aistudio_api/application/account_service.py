@@ -63,6 +63,7 @@ class AccountService:
         await session.ensure_ready()
         logger.info("已切换到账号: %s (%s)", account_id, account.name)
         return account
+
     def delete_account(self, account_id: str) -> bool:
         """删除账号。"""
         return self._store.delete_account(account_id)

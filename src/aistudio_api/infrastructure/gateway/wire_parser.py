@@ -298,17 +298,13 @@ def _decode_wire_struct(raw_struct: object) -> dict[str, object]:
     # Single unboxed key-value pair [key, wire_value]
     if len(raw_struct) >= 2 and isinstance(raw_struct[0], str):
         return {raw_struct[0]: _decode_wire_value(raw_struct[1])}
-    entries: object = raw_struct
+    entries: list[object] = raw_struct
     while (
-        isinstance(entries, list)
-        and len(entries) == 1
+        len(entries) == 1
         and isinstance(entries[0], list)
         and not (len(entries[0]) >= 2 and isinstance(entries[0][0], str))
     ):
         entries = entries[0]
-
-    if not isinstance(entries, list):
-        return {}
 
     result: dict[str, object] = {}
     for item in entries:
@@ -592,10 +588,6 @@ def parse_text_output(raw: str) -> ModelOutput:
     return output
 
 
-def parse_image_output(raw: str) -> ModelOutput:
-    return parse_text_output(raw)
-
-
 __all__ = [
     "WIRE_CANDIDATE_CONTENT",
     "WIRE_CANDIDATE_FINISH_MESSAGE",
@@ -625,7 +617,6 @@ __all__ = [
     "WIRE_USAGE_VISIBLE_COMPLETION",
     "ResponsePart",
     "parse_chunk_usage",
-    "parse_image_output",
     "parse_response_chunk",
     "parse_response_part",
     "parse_text_output",

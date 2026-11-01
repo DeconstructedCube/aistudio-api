@@ -171,7 +171,7 @@ async function handleDeleteCookieGroup(group: CookieGroup) {
   }
 }
 
-// 针对登录态失效或受阻账号执行重新验证（解除禁用并在浏览器中重放连接）
+// 针对登录态失效或受阻账号执行重新验证（解除禁用并重新激活会话）
 async function handleReverifyAccount(acc: AccountWithStats) {
   await systemStore.clearCooldown({ account_id: acc.id })
   await accountsStore.activateAccount(acc.id)

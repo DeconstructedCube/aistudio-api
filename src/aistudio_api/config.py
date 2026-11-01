@@ -8,7 +8,6 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -16,9 +15,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DEFAULT_TEXT_MODEL = os.getenv("AISTUDIO_DEFAULT_TEXT_MODEL", "gemini-3.7-flash")
-DEFAULT_IMAGE_MODEL = os.getenv(
-    "AISTUDIO_DEFAULT_IMAGE_MODEL", "gemini-3.1-flash-image-preview"
-)
 
 
 def _load_env(*names: str) -> str | None:
@@ -34,7 +30,6 @@ def _load_bool_env(*names: str, default: bool) -> bool:
     if value is None:
         return default
     return value not in ("0", "false", "False")
-
 
 
 def _load_web_password() -> str | None:
@@ -153,10 +148,6 @@ def discover_auth_file() -> str | None:
                         return str(auth_path)
             except (json.JSONDecodeError, KeyError):
                 pass
-        # 回退：扫描 data/ 目录下的 .json 文件
-        for file in root.iterdir():
-            if file.suffix == ".json":
-                return str(file)
     return None
 
 
@@ -184,26 +175,6 @@ def discover_proxy_url() -> str | None:
     return None
 
 
-def build_browser_proxy(proxy_url: str | None) -> dict[str, str] | None:
-    if not proxy_url:
-        return None
-
-    parsed = urlparse(proxy_url)
-    if not parsed.scheme or not parsed.hostname:
-        return None
-
-    proxy: dict[str, str] = {
-        "server": f"{parsed.scheme}://{parsed.hostname}",
-    }
-    if parsed.port:
-        proxy["server"] += f":{parsed.port}"
-    if parsed.username:
-        proxy["username"] = parsed.username
-    if parsed.password:
-        proxy["password"] = parsed.password
-    return proxy
-
-
 def resolve_timezone() -> str:
     """解析系统或配置时区（优先使用 AISTUDIO_TIMEZONE 环境变量）。"""
     override = os.getenv("AISTUDIO_TIMEZONE")
@@ -222,14 +193,6 @@ def resolve_timezone() -> str:
     return "America/Los_Angeles"
 
 
-def resolve_locale() -> str:
-    """解析系统或配置语言环境（优先使用 AISTUDIO_LOCALE 环境变量）。"""
-    override = os.getenv("AISTUDIO_LOCALE")
-    if override and override.strip():
-        return override.strip()
-    return "en-US"
-
-
 @dataclass(slots=True)
 class Settings:
     port: int = int(os.getenv("AISTUDIO_PORT", "8080"))
@@ -242,15 +205,6 @@ class Settings:
     web_password: str | None = _load_web_password()
     api_keys: frozenset[str] = frozenset()
     timezone: str = resolve_timezone()
-    locale: str = resolve_locale()
-    dump_raw_response: bool = os.getenv("AISTUDIO_DUMP_RAW_RESPONSE", "0") in (
-        "1",
-        "true",
-        "True",
-    )
-    dump_raw_response_dir: str = os.getenv(
-        "AISTUDIO_DUMP_RAW_RESPONSE_DIR", tempfile.gettempdir()
-    )
     data_dir: str = str(resolve_data_dir())
     accounts_dir: str = os.getenv("AISTUDIO_ACCOUNTS_DIR", "")
     stats_file: str = str(resolve_stats_file())

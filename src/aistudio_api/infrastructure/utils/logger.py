@@ -250,6 +250,7 @@ def set_log_level(level: str | int) -> None:
     for logger_name in ("httpx", "httpcore"):
         logging.getLogger(logger_name).setLevel(httpx_level)
 
+
 def setup_logging(level: str | int = "INFO") -> None:
     """初始化全局日志系统并统一所有子系统的格式与输出。"""
     global _root_handler
@@ -265,7 +266,13 @@ def setup_logging(level: str | int = "INFO") -> None:
         _root_handler.setFormatter(formatter)
 
     # 将 uvicorn 与 httpx 的日志器也接入统一格式
-    for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access", "httpx", "httpcore"):
+    for logger_name in (
+        "uvicorn",
+        "uvicorn.error",
+        "uvicorn.access",
+        "httpx",
+        "httpcore",
+    ):
         lgr = logging.getLogger(logger_name)
         lgr.handlers.clear()
         if _root_handler not in lgr.handlers:
@@ -273,6 +280,7 @@ def setup_logging(level: str | int = "INFO") -> None:
         lgr.propagate = False
 
     set_log_level(level)
+
 
 def get_logger(name: str = "aistudio") -> logging.Logger:
     """获取遵循统一命名空间的日志器实例。"""
@@ -438,8 +446,14 @@ def dump_request_exchange(
 
     file_line = f"转储文件:     {dump_file_path}\n" if dump_file_path else ""
     model_line = f"目标模型:     {model}\n" if model else ""
-    acc_line = f"调度账号:     {account_id} (u/{auth_user or '0'})\n" if account_id else ""
-    usage_line = f"Token统计:    {json.dumps(token_usage, ensure_ascii=False)}\n" if token_usage else ""
+    acc_line = (
+        f"调度账号:     {account_id} (u/{auth_user or '0'})\n" if account_id else ""
+    )
+    usage_line = (
+        f"Token统计:    {json.dumps(token_usage, ensure_ascii=False)}\n"
+        if token_usage
+        else ""
+    )
     finish_line = f"结束原因:     {finish_reason}\n" if finish_reason else ""
     error_line = f"错误详情:     {error_detail}\n" if error_detail else ""
     dump_msg = (

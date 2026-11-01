@@ -162,13 +162,12 @@ async def try_switch_account(
             logger.error("账号 %s 登录态已失效，禁止在原账号重试", failed_account_id)
             return False
 
-        # 单账号模式或所有其他账号均不可用时（非登录态失效，如偶发 403 鉴权波动），如果指定了 failed_account_id，强制刷新当前会话与 BotGuard
+        # 单账号模式或所有其他账号均不可用时（非登录态失效，如偶发 403 鉴权波动），如果指定了 failed_account_id，强制刷新当前会话
         if failed_account_id and failed_account_id == current_id:
             logger.info(
                 "无其他可用备用账号，重置当前账号会话: account=%s",
                 current_id,
             )
-            client.clear_templates()
             result = await account_service.activate_account(
                 current_id,
                 client.session,

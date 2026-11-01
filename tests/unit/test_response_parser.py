@@ -3,7 +3,6 @@ from pathlib import Path
 
 from aistudio_api.infrastructure.gateway.stream_parser import (
     IncrementalJSONStreamParser,
-    classify_chunk,
 )
 from aistudio_api.infrastructure.gateway.wire_parser import (
     parse_chunk_usage,
@@ -31,7 +30,7 @@ def test_parse_text_output_from_stream_bundle():
     assert output.candidates[0].finish_reason == 1
 
 
-def test_parse_response_chunk_and_classify_chunk():
+def test_parse_response_chunk_and_thinking_extraction():
     raw = json.loads((FIXTURES / "test_output.json").read_text())
     final_chunk = raw[0][-1]
 
@@ -45,11 +44,8 @@ def test_parse_response_chunk_and_classify_chunk():
     assert isinstance(usage_details, dict)
     assert usage_details.get("reasoning_tokens") == 153
 
-    ctype, text = classify_chunk(raw[0][1])
-    assert ctype == "thinking"
-    assert (
-        isinstance(text, str) and 'standard Chinese greeting meaning "Hello."' in text
-    )
+    chunk_cand = parse_response_chunk(raw[0][1])
+    assert 'standard Chinese greeting meaning "Hello."' in chunk_cand.thinking
 
 
 def test_stream_parser_extracts_real_chunks():
@@ -58,8 +54,8 @@ def test_stream_parser_extracts_real_chunks():
 
     chunks = list(parser.feed(raw))
     assert len(chunks) == 10
-    assert classify_chunk(chunks[2])[0] == "thinking"
-    assert classify_chunk(chunks[7])[0] == "body"
+    assert parse_response_chunk(chunks[2]).thinking
+    assert parse_response_chunk(chunks[7]).text
 
 
 def test_parse_text_output_handles_double_wrapped_chunk_bundle():

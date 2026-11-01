@@ -125,8 +125,6 @@ def test_normalize_gemini_request_maps_official_image_generation_fields():
         "thinking_config": [1, None, None, 3],
         "output_resolution": ["9:16", "4K"],
     }
-    assert normalized.capture_images is not None
-    assert len(normalized.capture_images) == 1
     assert normalized.contents[0].parts[0].inline_data == (
         "image/jpeg",
         "/9j/4AAQSkZJRgABAQAA....",

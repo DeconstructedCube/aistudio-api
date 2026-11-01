@@ -10,9 +10,9 @@ from aistudio_api.application.api_service_gemini import (
 )
 from aistudio_api.domain.errors import (
     AuthError,
-    BrowserTransportError,
     RequestError,
     SessionExpiredError,
+    TransportError,
     UsageLimitExceeded,
 )
 
@@ -128,7 +128,7 @@ def test_classify_gemini_error_payload():
         "INVALID_ARGUMENT",
     )
     assert classify_gemini_error_payload(
-        BrowserTransportError("streaming request failed: Failed to fetch")
+        TransportError("streaming request failed: Failed to fetch")
     ) == (
         502,
         "streaming request failed: Failed to fetch",
@@ -166,15 +166,9 @@ def test_clean_upstream_error_message():
 
 @pytest.mark.asyncio
 async def test_handle_attempt_exception_retries_ambiguous_rpc_404_in_place():
-    from unittest.mock import MagicMock
-
     from fastapi import HTTPException
 
     from aistudio_api.application.api_service_gemini import handle_attempt_exception
-    from aistudio_api.infrastructure.gateway.client import AIStudioClient
-
-    mock_client = MagicMock(spec=AIStudioClient)
-    mock_client.clear_templates = MagicMock()
 
     # 1. Ambiguous RPC 404 error should be retried in-place without raising
     ambiguous_err = RequestError(
@@ -186,11 +180,9 @@ async def test_handle_attempt_exception_retries_ambiguous_rpc_404_in_place():
         attempt=0,
         model_path="gemini-3.7-flash",
         normalized_model="models/gemini-3.7-flash",
-        client=mock_client,
         has_yielded_data=False,
     )
     assert should_retry is True
-    mock_client.clear_templates.assert_called_once()
 
     # 2. Other legitimate 404 errors (e.g. model not found) MUST NOT be retried
     other_404 = RequestError(404, "Model 'models/nonexistent' not found.")
@@ -200,7 +192,6 @@ async def test_handle_attempt_exception_retries_ambiguous_rpc_404_in_place():
             attempt=0,
             model_path="nonexistent",
             normalized_model="models/nonexistent",
-            client=mock_client,
             has_yielded_data=False,
         )
     assert exc_info.value.status_code == 404
@@ -212,7 +203,6 @@ async def test_handle_attempt_exception_retries_ambiguous_rpc_404_in_place():
             attempt=0,
             model_path="gemini-3.7-flash",
             normalized_model="models/gemini-3.7-flash",
-            client=mock_client,
             has_yielded_data=True,
         )
 
@@ -291,7 +281,6 @@ async def test_streaming_metadata_event_does_not_block_failover():
     mock_client.stream_generate_content = MagicMock(
         side_effect=fake_stream_generate_content
     )
-    mock_client.clear_templates = MagicMock()
 
     req = GeminiGenerateContentRequest(
         contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])]
@@ -306,4 +295,3 @@ async def test_streaming_metadata_event_does_not_block_failover():
     # 验证重试成功完成
     assert attempt_count == 2
     assert any("Hello world after retry" in str(c) for c in chunks)
-

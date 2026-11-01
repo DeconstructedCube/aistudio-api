@@ -154,7 +154,7 @@ class AistudioWireCodec:
     SESSION_TOKEN_INDEX = TopLevelIndex.SESSION_TOKEN
     TIMEZONE_INDEX = TopLevelIndex.REQUEST_CONTEXT
 
-    def decode(self, raw_body: str) -> AistudioRequest:
+    def decode(self, raw_body: str = "[]") -> AistudioRequest:
         parsed = json.loads(raw_body)
         if not isinstance(parsed, list):
             raise ValueError(
@@ -164,7 +164,7 @@ class AistudioWireCodec:
         self._ensure_len(body, self.TIMEZONE_INDEX + 1)
         raw_gc = body[self.GENERATION_CONFIG_INDEX]
         return AistudioRequest(
-            model=body[self.MODEL_INDEX],
+            model=str(body[self.MODEL_INDEX] or DEFAULT_TEXT_MODEL),
             contents=self._decode_contents(body[self.CONTENTS_INDEX]),
             safety_settings=body[self.SAFETY_INDEX],
             generation_config=AistudioGenerationConfig(
@@ -247,9 +247,9 @@ class AistudioWireCodec:
                     body.pop()
         return json.dumps(body, separators=(",", ":"), ensure_ascii=False)
 
-    def rewrite(
+    def build_request(
         self,
-        original_body: str,
+        *,
         model: str = DEFAULT_TEXT_MODEL,
         snapshot: str | None = None,
         prompt: str | None = None,
@@ -259,60 +259,56 @@ class AistudioWireCodec:
         tools: list[list] | None = None,
         tool_config: list[object] | None = None,
         safety_settings: list[list] | None = None,
-        images: list[str | tuple[str, str]] | None = None,
+        images: list[tuple[str, str]] | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
         max_tokens: int | None = None,
         generation_config_overrides: dict | None = None,
-        sanitize_plain_text: bool = True,
-        safety_off: bool = False,
-    ) -> str:
-        request = self.decode(original_body)
-        request.model = model
-        model_defaults = resolve_model_defaults(model)
-        if snapshot is not None:
-            request.snapshot = snapshot
-
-        if contents is not None:
-            request.contents = contents
-        elif prompt is not None:
-            request.contents = [
-                AistudioContent.from_user_prompt(prompt=prompt, images=images)
-            ]
-        if system_instruction_content is not None:
-            request.system_instruction = system_instruction_content
-        else:
-            request.system_instruction = (
+    ) -> AistudioRequest:
+        effective_contents = (
+            contents
+            if contents is not None
+            else [AistudioContent.from_user_prompt(prompt=prompt or "", images=images)]
+        )
+        effective_sys = (
+            system_instruction_content
+            if system_instruction_content is not None
+            else (
                 AistudioContent(
                     role="user", parts=[AistudioPart(text=system_instruction)]
                 )
                 if system_instruction
                 else None
             )
-
+        )
+        model_defaults = resolve_model_defaults(model)
+        gc = AistudioGenerationConfig()
         defaults = model_defaults.generation_config_overrides()
         for attr, value in defaults.items():
-            setattr(request.generation_config, attr, value)
-        if model_defaults.safety_settings is not None:
-            request.safety_settings = model_defaults.safety_settings_overrides()
-        if safety_settings is not None:
-            request.safety_settings = safety_settings
+            setattr(gc, attr, value)
+
+        effective_safety = (
+            safety_settings
+            if safety_settings is not None
+            else model_defaults.safety_settings_overrides()
+        )
 
         if max_tokens is not None:
-            request.generation_config.max_tokens = max_tokens
+            gc.max_tokens = max_tokens
         if temperature is not None:
-            request.generation_config.temperature = temperature
+            gc.temperature = temperature
         if top_p is not None:
-            request.generation_config.top_p = top_p
+            gc.top_p = top_p
         if top_k is not None:
-            request.generation_config.top_k = top_k
+            gc.top_k = top_k
         for attr, value in (generation_config_overrides or {}).items():
-            if not hasattr(request.generation_config, attr):
+            if not hasattr(gc, attr):
                 continue
             if value is None and attr != "thinking_config":
                 continue
-            setattr(request.generation_config, attr, value)
+            setattr(gc, attr, value)
+
         explicit_thinking_null = (
             "thinking_config" in defaults and defaults["thinking_config"] is None
         ) or (
@@ -321,18 +317,9 @@ class AistudioWireCodec:
             and generation_config_overrides["thinking_config"] is None
         )
         if not explicit_thinking_null:
-            request.generation_config.enable_default_thinking()
+            gc.enable_default_thinking()
 
-        # OpenAI chat compatibility should not inherit browser-side structured output
-        # or explicit reasoning settings from a previously captured AI Studio request.
-        if sanitize_plain_text and not model_defaults.is_image_model:
-            request.generation_config.sanitize_for_plain_text()
-            if not explicit_thinking_null:
-                request.generation_config.enable_default_thinking()
-        if safety_off:
-            request.safety_settings = [[None, None, cat, 5] for cat in [7, 8, 9, 10]]
-
-        request.tools = tools if tools else None
+        effective_tools: list[list] | None = tools if tools else None
         if tool_config is not None:
             is_none_mode = False
             allowed_names: list[str] | None = None
@@ -362,11 +349,11 @@ class AistudioWireCodec:
                     if isinstance(raw_allowed, list):
                         allowed_names = [str(x) for x in raw_allowed]
             if is_none_mode:
-                request.tools = None
-            elif allowed_names is not None and request.tools:
+                effective_tools = None
+            elif allowed_names is not None and effective_tools:
                 filtered_tools: list[list[object]] = []
                 allowed_set = set(allowed_names)
-                for t in request.tools:
+                for t in effective_tools:
                     if isinstance(t, list) and len(t) > 1 and isinstance(t[1], list):
                         filtered_decls = [
                             d
@@ -377,8 +364,17 @@ class AistudioWireCodec:
                             filtered_tools.append([t[0], filtered_decls])
                     else:
                         filtered_tools.append(t)
-                request.tools = filtered_tools or None
-        return self.encode(request)
+                effective_tools = filtered_tools or None
+
+        return AistudioRequest(
+            model=model,
+            contents=effective_contents,
+            safety_settings=effective_safety,
+            generation_config=gc,
+            snapshot=snapshot,
+            system_instruction=effective_sys,
+            tools=effective_tools,
+        )
 
     def _decode_contents(self, raw_contents: object) -> list[AistudioContent]:
         contents: list[AistudioContent] = []
@@ -485,8 +481,8 @@ class AistudioWireCodec:
 _codec = AistudioWireCodec()
 
 
-def modify_body(
-    original_body: str,
+def encode_request_body(
+    *,
     model: str = DEFAULT_TEXT_MODEL,
     snapshot: str | None = None,
     prompt: str | None = None,
@@ -496,17 +492,14 @@ def modify_body(
     tools: list[list] | None = None,
     tool_config: list[object] | None = None,
     safety_settings: list[list] | None = None,
-    images: list[str | tuple[str, str]] | None = None,
+    images: list[tuple[str, str]] | None = None,
     temperature: float | None = None,
     top_p: float | None = None,
     top_k: int | None = None,
     max_tokens: int | None = None,
     generation_config_overrides: dict | None = None,
-    sanitize_plain_text: bool = True,
-    safety_off: bool = False,
 ) -> str:
-    return _codec.rewrite(
-        original_body=original_body,
+    request = _codec.build_request(
         model=model,
         snapshot=snapshot,
         prompt=prompt,
@@ -522,6 +515,5 @@ def modify_body(
         top_k=top_k,
         max_tokens=max_tokens,
         generation_config_overrides=generation_config_overrides,
-        sanitize_plain_text=sanitize_plain_text,
-        safety_off=safety_off,
     )
+    return _codec.encode(request)

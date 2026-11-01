@@ -178,7 +178,7 @@ async function handleSubmit() {
                 点击选择凭据包文件 (.json)
               </p>
               <p class="text-[11px] text-gray-400 mt-0.5">
-                支持 AIStudio 提取器导出的 aistudio_accounts.json
+                支持批量账号凭据包 (.json) 或 Cookie JSON 数组文件
               </p>
             </div>
           </div>

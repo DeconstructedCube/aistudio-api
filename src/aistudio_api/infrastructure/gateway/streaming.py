@@ -1,19 +1,17 @@
-"""Streaming replay workflow for chat completions."""
+"""Streaming workflow for chat completions."""
 
 from __future__ import annotations
 
 import codecs
 import json
 from collections.abc import AsyncGenerator
-from pathlib import Path
 
-from aistudio_api.config import settings
 from aistudio_api.domain.errors import (
-    BrowserTransportError,
     RequestError,
+    TransportError,
     classify_error,
 )
-from aistudio_api.infrastructure.gateway.capture import CapturedRequest
+from aistudio_api.infrastructure.gateway.client import PreparedRequest
 from aistudio_api.infrastructure.gateway.session import GatewaySession
 from aistudio_api.infrastructure.gateway.stream_parser import (
     IncrementalJSONStreamParser,
@@ -29,34 +27,6 @@ from aistudio_api.infrastructure.gateway.wire_spec import (
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("streaming")
-
-
-def _dump_stream_exchange(
-    *,
-    model: str,
-    url: str,
-    modified_body: str,
-    status_code: int,
-    raw_response: str,
-) -> None:
-    if not settings.dump_raw_response:
-        return
-
-    out_dir = Path(settings.dump_raw_response_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    safe_model = model.replace("/", "_")
-    timestamp = __import__("time").strftime("%Y%m%d_%H%M%S")
-    payload = {
-        "kind": "stream_generate_content",
-        "model": model,
-        "url": url,
-        "status_code": status_code,
-        "modified_body": json.loads(modified_body),
-        "raw_response": raw_response,
-    }
-    path = out_dir / f"aistudio_stream_generate_content_{safe_model}_{timestamp}.json"
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
-    logger.debug("已将流式原始请求与响应数据保存到文件: %s", path)
 
 
 def _summarize_error_body(raw_response: str, limit: int = 500) -> str:
@@ -82,15 +52,15 @@ class StreamingGateway:
     async def stream_chat(
         self,
         *,
-        captured: CapturedRequest,
+        request: PreparedRequest,
         model: str,
     ) -> AsyncGenerator[tuple[str, object | None], None]:
-        if not captured:
-            raise ValueError("captured request is required")
+        if not request:
+            raise ValueError("prepared request is required")
         if self._session is None:
-            raise RuntimeError("browser session is required for streaming xhr replay")
-        modified_body = captured.body
-        logger.debug("开始流式处理: model=%s, 请求体长度=%d", model, len(modified_body))
+            raise RuntimeError("gateway session is required for streaming")
+        request_body = request.body
+        logger.debug("开始流式处理: model=%s, 请求体长度=%d", model, len(request_body))
         parser = IncrementalJSONStreamParser()
         utf8_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         latest_usage: dict[str, object] | None = None
@@ -137,10 +107,10 @@ class StreamingGateway:
             return events
 
         async for event_type, payload in self._session.send_streaming_request(
-            body=modified_body,
-            url=captured.url if captured else None,
-            headers=captured.headers if captured else None,
-            ctx=getattr(captured, "ctx", None) if captured else None,
+            body=request_body,
+            url=request.url,
+            headers=request.headers,
+            ctx=request.ctx,
         ):
             if event_type == "status" and payload and not status_code:
                 status_code = int(str(payload))
@@ -152,7 +122,7 @@ class StreamingGateway:
                     text_payload = str(payload)
                 if not text_payload:
                     continue
-                if settings.dump_raw_response or status_code != 200:
+                if status_code != 200:
                     raw_parts.append(text_payload)
                 for parsed_chunk in parser.feed(text_payload):
                     for event in emit_parsed_chunk(parsed_chunk):
@@ -160,7 +130,7 @@ class StreamingGateway:
 
         trailing_text = utf8_decoder.decode(b"", final=True)
         if trailing_text:
-            if settings.dump_raw_response or status_code != 200:
+            if status_code != 200:
                 raw_parts.append(trailing_text)
             for parsed_chunk in parser.feed(trailing_text):
                 for event in emit_parsed_chunk(parsed_chunk):
@@ -173,13 +143,6 @@ class StreamingGateway:
             "流式数据流接收结束: model=%s, 分块到达=%s", model, has_received_chunks
         )
         raw_response = "".join(raw_parts)
-        _dump_stream_exchange(
-            model=model,
-            url=captured.url,
-            modified_body=modified_body,
-            status_code=status_code,
-            raw_response=raw_response,
-        )
         if status_code != 200:
             detail = _summarize_error_body(raw_response)
             if (
@@ -193,7 +156,7 @@ class StreamingGateway:
                 raise RequestError(status_code, detail)
             raise RequestError(status_code, "")
         if not has_received_chunks:
-            raise BrowserTransportError(
+            raise TransportError(
                 "stream ended before any data arrived (connection truncated)"
             )
         if latest_finish_reason is not None:

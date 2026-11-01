@@ -3,7 +3,7 @@
 # Detects host platform and configures project-level dependencies.
 #
 # On Termux:
-#   - Ensures essential Termux packages (uv, ca-certificates, curl, proot-distro).
+#   - Ensures essential Termux packages (uv, ca-certificates, curl).
 #   - Generates a local, gitignored ./uv.toml pointing to TUR extra-index
 #     to provide prebuilt Android wheels without compilation OOM.
 #   - Links system ruff into .venv/bin/ruff if available.
@@ -27,7 +27,7 @@ if is_termux; then
 
     # 1. Install necessary Termux host packages
     NEEDED_PKGS=()
-    for p in ca-certificates curl proot-distro uv; do
+    for p in ca-certificates curl uv; do
         if ! command -v "${p}" >/dev/null 2>&1 && ! dpkg -s "${p}" >/dev/null 2>&1; then
             NEEDED_PKGS+=("${p}")
         fi

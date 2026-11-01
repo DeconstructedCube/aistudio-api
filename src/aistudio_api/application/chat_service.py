@@ -28,8 +28,6 @@ class NormalizedGeminiRequest:
     system_instruction: AistudioContent | None
     tools: list[list[object]] | None
     safety_settings: list[list[object]] | None
-    capture_prompt: str
-    capture_images: list[str | tuple[str, str]] | None
     tool_config: list[object] | None = None
     temperature: float | None = None
     top_p: float | None = None
@@ -554,15 +552,10 @@ def normalize_gemini_request(
         else f"models/{requested_model}"
     )
     contents: list[AistudioContent] = []
-    capture_prompt = "你好"
-    capture_images: list[str | tuple[str, str]] = []
 
     for content in req.contents:
         role = content.role or "user"
         parts: list[AistudioPart] = []
-        text_parts: list[str] = []
-        content_images: list[str | tuple[str, str]] = []
-
         for part in content.parts:
             if part.text is not None:
                 is_thought = bool(part.thought)
@@ -573,7 +566,6 @@ def normalize_gemini_request(
                         thought_signature=part.thoughtSignature,
                     )
                 )
-                text_parts.append(part.text)
                 continue
             if part.inlineData is not None:
                 img_data = (part.inlineData.mimeType, part.inlineData.data)
@@ -583,7 +575,6 @@ def normalize_gemini_request(
                         thought_signature=part.thoughtSignature,
                     )
                 )
-                content_images.append(img_data)
                 continue
             if part.functionCall is not None:
                 fc = part.functionCall
@@ -620,10 +611,8 @@ def normalize_gemini_request(
                                     thought_signature=subpart.thoughtSignature,
                                 )
                             )
-                            content_images.append(img_data)
                         elif subpart.text is not None:
                             parts.append(AistudioPart(text=subpart.text))
-                            text_parts.append(subpart.text)
                 continue
             if part.executableCode is not None:
                 ec = part.executableCode
@@ -646,13 +635,6 @@ def normalize_gemini_request(
             if part.fileData is not None:
                 raise ValueError("fileData is not supported yet")
         contents.append(AistudioContent(role=role, parts=parts))
-
-        if role == "user":
-            if text_parts:
-                capture_prompt = "\n".join(text_parts)
-            if content_images:
-                capture_images = content_images
-
     system_instruction = None
     if req.systemInstruction is not None:
         system_instruction = AistudioContent(
@@ -842,8 +824,6 @@ def normalize_gemini_request(
         )
         if req.safetySettings is not None
         else None,
-        capture_prompt=capture_prompt,
-        capture_images=capture_images or None,
         temperature=generation_config.temperature if generation_config else None,
         top_p=generation_config.topP if generation_config else None,
         top_k=generation_config.topK if generation_config else None,

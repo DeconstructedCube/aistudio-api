@@ -23,6 +23,7 @@ from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("rotator")
 
+
 def get_pacific_date_key(ts: float | None = None) -> str:
     """获取美西太平洋时间（America/Los_Angeles）日期键值 YYYY-MM-DD。"""
     try:
@@ -123,7 +124,6 @@ class AccountStats:
     last_used: float = 0.0
     last_rate_limited: float = 0.0
     last_auth_error: float = 0.0
-    auth_cooldown: float = 0.0
     session_expired: bool = False
     last_session_expired: float = 0.0
     daily_date_la: str = ""
@@ -180,14 +180,10 @@ class AccountStats:
             self.daily_models[norm_m] = AccountModelDailyStats()
         return self.daily_models[norm_m]
 
-    def is_available(
-        self, model: str | None = None, *, ignore_auth_cooldown: bool = False
-    ) -> bool:
+    def is_available(self, model: str | None = None) -> bool:
         """检查账号在指定模型下是否可用（软限额超标不禁用，仅上游真 429 冷却与登录态失效不可用）。"""
         now = time.time()
         if self.session_expired:
-            return False
-        if not ignore_auth_cooldown and self.auth_cooldown > now:
             return False
         current_la = get_pacific_date_key(now)
         self._check_date_reset(current_la)
@@ -206,8 +202,6 @@ class AccountStats:
         if self.is_available(model):
             return 0.0
         now = time.time()
-        if self.auth_cooldown > now:
-            return max(0.0, self.auth_cooldown - now)
         if model:
             norm_m = normalize_model_key(model)
             if norm_m and norm_m in self.daily_models:
@@ -224,7 +218,6 @@ class AccountStats:
         self.total_success += 1
         self.last_used = now
         self.auth_errors = 0
-        self.auth_cooldown = 0.0
 
         m_stats = self.get_model_daily(model)
         m_stats.requests += 1
@@ -301,8 +294,6 @@ class AccountStats:
         self.auth_errors += 1
         self.last_auth_error = now
         self.last_used = now
-        # Clean cutover: 403 是临时鉴权/WAA 会话故障，绝不给账号加冷却锁
-        self.auth_cooldown = 0.0
         m_stats = self.get_model_daily(model)
         m_stats.requests += 1
         m_stats.errors += 1
@@ -316,14 +307,12 @@ class AccountStats:
         self.last_session_expired = now
         self.last_auth_error = now
         self.last_used = now
-        self.auth_cooldown = now + 86400.0
         m_stats = self.get_model_daily(model)
         m_stats.requests += 1
         m_stats.errors += 1
 
     def clear_cooldown(self, model: str | None = None) -> None:
         """清除冷却与 429/403/失效锁定。"""
-        self.auth_cooldown = 0.0
         self.auth_errors = 0
         self.session_expired = False
         self.last_session_expired = 0.0
@@ -351,7 +340,6 @@ class AccountStats:
             "last_used": self.last_used,
             "last_rate_limited": self.last_rate_limited,
             "last_auth_error": self.last_auth_error,
-            "auth_cooldown": self.auth_cooldown,
             "session_expired": self.session_expired,
             "last_session_expired": self.last_session_expired,
             "daily_date_la": self.daily_date_la,
@@ -431,7 +419,6 @@ class AccountStats:
             last_used=_as_float(data.get("last_used")),
             last_rate_limited=_as_float(data.get("last_rate_limited")),
             last_auth_error=_as_float(data.get("last_auth_error")),
-            auth_cooldown=_as_float(data.get("auth_cooldown")),
             session_expired=bool(data.get("session_expired")),
             last_session_expired=_as_float(data.get("last_session_expired")),
             daily_date_la=str(data.get("daily_date_la") or get_pacific_date_key()),
@@ -611,9 +598,6 @@ class AccountRotator:
                 ),
                 "is_available": account.enabled and stats.is_available(),
                 "session_expired": stats.session_expired,
-                "auth_cooldown": max(0, int(stats.auth_cooldown - time.time()))
-                if stats.auth_cooldown > time.time()
-                else 0,
                 "auth_errors": stats.auth_errors,
                 "cooldown_remaining": int(stats.get_cooldown_remaining()),
                 "model_cooldowns": model_cooldowns_dict,
@@ -636,8 +620,6 @@ class AccountRotator:
         model: str | None = None,
         required_tiers: tuple[str, ...] | list[str] | None = None,
         active_groups: tuple[str, ...] | list[str] | None = None,
-        *,
-        ignore_auth_cooldown: bool = False,
     ) -> list[tuple[AccountMeta, AccountStats]]:
         """过滤可用账号候选（使能开关、登录态、分组、订阅准入、429 冷却）。"""
         accounts = self._store.list_accounts()
@@ -657,8 +639,8 @@ class AccountRotator:
             stats = self._stats.setdefault(
                 account.id, AccountStats(account_id=account.id)
             )
-            # 4. 登录态与真 429/403 冷却检查
-            if not stats.is_available(model, ignore_auth_cooldown=ignore_auth_cooldown):
+            # 4. 登录态与真 429 冷却检查
+            if not stats.is_available(model):
                 continue
 
             candidates.append((account, stats))
@@ -773,15 +755,7 @@ class AccountRotator:
                 active_groups=active_groups,
             )
             if not candidates:
-                # 保底：若所有账号都处于 auth_cooldown 中，允许 fallback 尝试恢复
-                candidates = self._get_eligible_candidates(
-                    model=model,
-                    required_tiers=required_tiers,
-                    active_groups=active_groups,
-                    ignore_auth_cooldown=True,
-                )
-                if not candidates:
-                    return None
+                return None
 
             # 过滤失败账号
             valid_candidates = [
@@ -835,7 +809,9 @@ class AccountRotator:
         if account_id not in self._stats:
             self._stats[account_id] = AccountStats(account_id=account_id)
         self._stats[account_id].record_rate_limited(model)
-        logger.warning("账号 %s 遇到 429 配额限制: model=%s", account_id, model or "all")
+        logger.warning(
+            "账号 %s 遇到 429 配额限制: model=%s", account_id, model or "all"
+        )
         self.save_state()
 
     def record_error(self, account_id: str, model: str | None = None) -> None:
@@ -902,7 +878,9 @@ class AccountRotator:
         for gid in ghost_ids:
             self._stats.pop(gid, None)
         if ghost_ids:
-            logger.info("已清理残留的已删除账号状态: 数量=%d, id=%s", len(ghost_ids), ghost_ids)
+            logger.info(
+                "已清理残留的已删除账号状态: 数量=%d, id=%s", len(ghost_ids), ghost_ids
+            )
             self.save_state()
         return ghost_ids
 

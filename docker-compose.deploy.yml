@@ -13,7 +13,6 @@ services:
       - AISTUDIO_STATS_FILE=/app/data/stats.json
       - AISTUDIO_ROTATOR_STATE_FILE=/app/data/rotator_state.json
       - AISTUDIO_CONFIG_FILE=/app/data/config.yaml
-      - AISTUDIO_BROWSER_EXECUTABLE=/opt/cloakbrowser/chrome
 
 volumes:
   aistudio-api-data:

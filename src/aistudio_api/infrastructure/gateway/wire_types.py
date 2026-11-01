@@ -245,11 +245,6 @@ class AistudioGenerationConfig:
         if self.thinking_config is None:
             self.thinking_config = AistudioThinkingConfig.default().to_wire()
 
-    def sanitize_for_plain_text(self):
-        self.response_mime_type = None
-        self.response_schema = None
-        self.thinking_config = None
-
     def _ensure_len(self, size: int):
         while len(self.values) < size:
             self.values.append(None)
@@ -366,27 +361,11 @@ class AistudioContent:
     def from_user_prompt(
         cls,
         prompt: str,
-        images: list[str | tuple[str, str]] | None = None,
+        images: list[tuple[str, str]] | None = None,
     ) -> AistudioContent:
-        parts: list[AistudioPart] = []
-        for item in images or []:
-            if isinstance(item, tuple) and len(item) == 2:
-                parts.append(AistudioPart(inline_data=item))
-            elif isinstance(item, str):
-                import base64
-                import mimetypes
-                from pathlib import Path
-
-                mime = mimetypes.guess_type(item)[0] or "image/jpeg"
-                data = Path(item).read_bytes()
-                parts.append(
-                    AistudioPart(
-                        inline_data=(
-                            mime,
-                            base64.b64encode(data).decode("ascii"),
-                        )
-                    )
-                )
+        parts: list[AistudioPart] = [
+            AistudioPart(inline_data=item) for item in (images or [])
+        ]
         parts.append(AistudioPart(text=prompt))
         return cls(role="user", parts=parts)
 
@@ -401,7 +380,6 @@ class AistudioRequest:
     system_instruction: AistudioContent | None
     tools: list[list] | None
     evergreen_model_uri: str | None = None
-    tool_config: list | None = None
     request_flag: int | None = None
     session_token: str | None = None
     location: list | None = None

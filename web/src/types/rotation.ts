@@ -33,7 +33,6 @@ export interface AccountRotationStats {
   last_rate_limited?: string | null
   is_available?: boolean
   session_expired?: boolean
-  auth_cooldown?: number
   auth_errors?: number
   cooldown_remaining?: number
   model_cooldowns?: Record<string, number>

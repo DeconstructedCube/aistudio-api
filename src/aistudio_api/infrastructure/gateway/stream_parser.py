@@ -273,21 +273,7 @@ class IncrementalJSONStreamParser:
                 yield repaired
 
 
-def classify_chunk(chunk: list) -> tuple[str, object]:
-    candidate = parse_response_chunk(chunk)
-    if candidate.thinking:
-        return ("thinking", candidate.thinking)
-    if candidate.function_calls:
-        return ("tool_calls", candidate.function_calls)
-    if candidate.text:
-        return ("body", candidate.text)
-    if candidate.thought_signature:
-        return ("thought_signature", candidate.thought_signature)
-    return ("unknown", "")
-
-
 __all__ = [
     "XSSI_PREFIX",
     "IncrementalJSONStreamParser",
-    "classify_chunk",
 ]

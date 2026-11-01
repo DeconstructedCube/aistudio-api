@@ -53,7 +53,6 @@
 | **内置搜索与工具** | 支持 Google Search 联网搜索、Google Maps、代码执行沙箱等官方扩展能力 |
 | **纯净 WAA 引擎** | 彻底脱离 Chromium/proot 与本地浏览器环境，基于 aistudio-pg-bridge 高速签名 API 与 HTTP/2 连接池直连 Google |
 | **Web 管理面板** | 提供 Web 管理控制台，支持账号管理（文本与 JSON 批量导入）、调用量监控、在线编辑与热重载 `config.yaml` |
-| **Android 伴侣端** | 配套 Android 原生应用（`android/`），采用 Jetpack Compose 构建，支持多 Profile 隔离登录、Bitwarden 自动填充与一键导出凭据包 |
 > [!NOTE]
 > **内存占用参考**：脱离重型浏览器后，服务常驻物理内存仅约 35 - 50 MB，冷启动毫秒级，即使在入门级 Android 手机（Termux）或轻量服务器上亦可稳定高效常驻。
 ## 技术架构与文档
@@ -209,9 +208,7 @@ docker compose up -d
 | `AISTUDIO_PERSIST_ROTATOR` | bool | `true` | 是否持久化账号 429 冷却与调度状态（1=开启，0=关闭） |
 | `AISTUDIO_PROOF_SERVER_URL` | string | `https://waa.spinsnow.fun` | WAA 证明签名服务地址，基于 [aistudio-pg-bridge](https://github.com/Lianues/aistudio-pg-bridge)（默认使用 spinsnow 公开服务，支持配置自建服务） |
 | `AISTUDIO_DEFAULT_TEXT_MODEL` | string | `gemini-3.7-flash` | 默认文本模型 |
-| `AISTUDIO_DEFAULT_IMAGE_MODEL` | string | `gemini-3.1-flash-image-preview` | 默认图像生成模型 |
-| `AISTUDIO_TIMEZONE` | string | 自动探测 | 受控浏览器指纹与 Wire 协议交互时区（默认 `America/Los_Angeles`） |
-| `AISTUDIO_LOCALE` | string | `en-US` | 受控浏览器区域语言 |
+| `AISTUDIO_TIMEZONE` | string | 自动探测 | Wire 协议交互时区（默认 `America/Los_Angeles`） |
 | `AISTUDIO_DUMP_REQUESTS` | bool | `false` | 是否在终端转储每次 API 交互报文详情（支持 `DEBUG=1` 触发） |
 | `AISTUDIO_DUMP_FILE` | bool | `false` | 是否将请求与响应报文详情落盘保存 |
 | `AISTUDIO_DUMP_DIR` | string | `dumps/` | 报文转储保存目录 |
@@ -393,13 +390,6 @@ bun x pyright
 
 # 执行单元测试套件
 uv run pytest
-```
-
-Android 伴侣端代码质量检查：
-
-```bash
-# 执行 Kotlin 代码规范检查 (已配置于 ~/.zshrc)
-ktlint "android/app/src/main/java/**/*.kt"
 ```
 
 ---

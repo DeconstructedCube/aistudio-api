@@ -152,12 +152,11 @@ def test_record_rotator_event():
 
 @pytest.mark.asyncio
 async def test_try_switch_account_single_account_recovery():
-    """单账号发生 403 鉴权错误时，自动触发当前会话与 BotGuard 强制重建。"""
+    """单账号发生 403 鉴权错误时，自动触发当前会话在位刷新恢复。"""
     mock_rotator = MagicMock(spec=AccountRotator)
     mock_service = MagicMock(spec=AccountService)
     mock_client = MagicMock(spec=AIStudioClient)
     mock_client.session = MagicMock()
-    mock_client.clear_templates = MagicMock()
 
     active_acc = AccountMeta(
         id="acc_1",
@@ -187,7 +186,6 @@ async def test_try_switch_account_single_account_recovery():
             failed_account_id="acc_1",
         )
         assert recovered is True
-        mock_client.clear_templates.assert_called_once()
         mock_service.activate_account.assert_called_once_with(
             "acc_1",
             mock_client.session,
@@ -298,16 +296,13 @@ async def test_try_switch_account_session_expired_switches_to_healthy_account():
 
 
 def test_account_stats_session_expired_permanent_isolation():
-    """账号标记为 session_expired 后处于永久禁用状态，美西跨天不自动重置，ignore_auth_cooldown 也不可用。"""
+    """账号标记为 session_expired 后处于永久禁用状态，美西跨天不自动重置。"""
     stats = AccountStats(account_id="acc_test")
     assert stats.is_available("gemini-3.8-flash")
 
     stats.record_session_expired(model="gemini-3.8-flash")
     assert stats.session_expired is True
     assert not stats.is_available("gemini-3.8-flash")
-    # 即使 ignore_auth_cooldown 也绝对不可用
-    assert not stats.is_available("gemini-3.8-flash", ignore_auth_cooldown=True)
-
     # 模拟跨天
     stats._check_date_reset("2099-01-01")
     assert stats.session_expired is True

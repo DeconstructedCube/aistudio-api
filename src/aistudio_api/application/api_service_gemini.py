@@ -30,12 +30,12 @@ from aistudio_api.application.chat_service import (
 from aistudio_api.domain.errors import (
     AistudioError,
     AuthError,
-    BrowserTransportError,
     RequestError,
     SessionExpiredError,
+    TransportError,
     UsageLimitExceeded,
-    is_session_hang_error,
     is_transient_rpc_error,
+    is_transport_error,
     parse_upstream_grpc_error,
 )
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
@@ -145,7 +145,7 @@ def classify_gemini_error_payload(exc: Exception) -> tuple[int, str, str]:
             clean_msg,
             status_map.get(status, "INTERNAL" if status >= 500 else "UNKNOWN"),
         )
-    if isinstance(exc, BrowserTransportError):
+    if isinstance(exc, TransportError):
         return 502, str(exc), "UNAVAILABLE"
     if isinstance(exc, AistudioError):
         return 500, str(exc), "INTERNAL"
@@ -158,7 +158,6 @@ async def handle_attempt_exception(
     attempt: int,
     model_path: str,
     normalized_model: str | None,
-    client: AIStudioClient,
     has_yielded_data: bool = False,
 ) -> bool:
     """Handle per-attempt error classification and account switching.
@@ -177,15 +176,12 @@ async def handle_attempt_exception(
 
     if isinstance(exc, SessionExpiredError):
         logger.warning("账号登录已失效，被重定向到登录页: %s", exc)
-        client.clear_templates()
         if not has_yielded_data and await try_switch_account(
             model=target_model,
             failed_account_id=failed_id,
             is_session_expired=True,
         ):
-            logger.info(
-                "已切换账号重试: 尝试=%d/%d", attempt + 1, MAX_RETRIES
-            )
+            logger.info("已切换账号重试: 尝试=%d/%d", attempt + 1, MAX_RETRIES)
             return True
         raise HTTPException(
             401,
@@ -197,10 +193,9 @@ async def handle_attempt_exception(
 
     if isinstance(exc, AuthError):
         logger.warning("账号权限被拒绝 (HTTP 403): %s", exc)
-        client.clear_templates()
         record_rotator_event("auth_error", model=target_model)
 
-        # 1. 首次 403: 不刷新网页，直接重新走一遍签名与请求流程
+        # 1. 首次 403: 直接重新走一遍签名与请求流程
         if attempt == 0 and not has_yielded_data:
             logger.warning(
                 "账号 403: 当前账号重新走签名流程重试 (尝试=%d/%d)",
@@ -210,8 +205,12 @@ async def handle_attempt_exception(
             return True
 
         # 2. 当前账号重试依然 403: 尝试切换至备用账号重试一次
-        if attempt == 1 and not has_yielded_data and await try_switch_account(
-            model=target_model, failed_account_id=failed_id
+        if (
+            attempt == 1
+            and not has_yielded_data
+            and await try_switch_account(
+                model=target_model, failed_account_id=failed_id
+            )
         ):
             logger.warning(
                 "当前账号 403 重新签名仍未通过，已切换至备用账号重试 (尝试=%d/%d)",
@@ -253,8 +252,7 @@ async def handle_attempt_exception(
         and attempt == 0
         and not has_yielded_data
     ):
-        logger.warning("收到上游 204 空响应，清理模板后重试")
-        client.clear_templates()
+        logger.warning("收到上游 204 空响应，立即重试")
         return True
 
     # 针对 Google 上游偶发且完全随机的 RPC 路由 404 (Ambiguous request for service '' and method '/GenerativeService.*')：
@@ -270,30 +268,20 @@ async def handle_attempt_exception(
             MAX_RETRIES,
             clean_upstream_error_message(str(exc)),
         )
-        client.clear_templates()
         return True
-    if is_session_hang_error(exc):
+    if is_transport_error(exc):
         logger.warning(
-            "会话就绪超时，切换账号重试: 尝试=%d/%d, 错误=%s",
+            "网关传输或签名异常，切换账号重试: 尝试=%d/%d, 错误=%s",
             attempt + 1,
             MAX_RETRIES,
             exc,
         )
-        client.clear_templates()
         if not has_yielded_data and await try_switch_account(
             model=target_model, failed_account_id=failed_id
         ):
             logger.info("已切换账号重试: 尝试=%d/%d", attempt + 1, MAX_RETRIES)
             return True
-        if (
-            attempt < 2
-            and not has_yielded_data
-            and client._session is not None
-            and client._session._in_flight <= 1
-        ):
-            await client._session.close()
-            return True
-        if isinstance(exc, BrowserTransportError):
+        if isinstance(exc, TransportError):
             runtime_state.record(target_model, "errors")
             record_rotator_event("error", model=target_model)
             logger.warning("上游服务传输中断 (502): %s", exc)
@@ -310,7 +298,9 @@ async def handle_attempt_exception(
             if status_code == 404
             else "upstream_error"
         )
-        logger.warning("上游返回请求错误: status=%d, message=%s", status_code, clean_msg)
+        logger.warning(
+            "上游返回请求错误: status=%d, message=%s", status_code, clean_msg
+        )
         raise HTTPException(
             status_code, detail={"message": clean_msg, "type": error_type}
         ) from exc
@@ -359,8 +349,6 @@ async def handle_gemini_generate_content(
             )
             output = await client.generate_content(
                 model=normalized.model,
-                capture_prompt=normalized.capture_prompt,
-                capture_images=normalized.capture_images,
                 contents=normalized.contents,
                 system_instruction_content=normalized.system_instruction,
                 tools=normalized.tools,
@@ -371,7 +359,6 @@ async def handle_gemini_generate_content(
                 top_k=normalized.top_k,
                 max_tokens=normalized.max_tokens,
                 generation_config_overrides=normalized.generation_config_overrides,
-                sanitize_plain_text=False,
             )
 
             final_fr = to_gemini_finish_reason(
@@ -425,7 +412,6 @@ async def handle_gemini_generate_content(
                 attempt=attempt,
                 model_path=model_path,
                 normalized_model=normalized.model if normalized else None,
-                client=client,
             ):
                 continue
             raise
@@ -584,8 +570,6 @@ def _build_gemini_streaming_response(
                 try:
                     async for event_type, text in client.stream_generate_content(
                         model=normalized.model,
-                        capture_prompt=normalized.capture_prompt,
-                        capture_images=normalized.capture_images,
                         contents=normalized.contents,
                         system_instruction_content=normalized.system_instruction,
                         tools=normalized.tools,
@@ -596,8 +580,6 @@ def _build_gemini_streaming_response(
                         top_k=normalized.top_k,
                         max_tokens=normalized.max_tokens,
                         generation_config_overrides=normalized.generation_config_overrides,
-                        sanitize_plain_text=False,
-                        force_refresh_capture=stream_attempt > 0,
                     ):
                         if event_type == "usage":
                             final_usage = text if isinstance(text, dict) else None
@@ -623,7 +605,9 @@ def _build_gemini_streaming_response(
                             buffered_thought_sig = None
                             if chunk:
                                 if not has_yielded_data:
-                                    ttft_ms = (time.perf_counter() - stream_start_time) * 1000
+                                    ttft_ms = (
+                                        time.perf_counter() - stream_start_time
+                                    ) * 1000
                                     logger.info(
                                         "流式响应开始推送: model=%s, 首包耗时=%.1fms",
                                         normalized.model,
@@ -640,7 +624,6 @@ def _build_gemini_streaming_response(
                         attempt=stream_attempt,
                         model_path=model_path,
                         normalized_model=normalized.model if normalized else None,
-                        client=client,
                         has_yielded_data=has_yielded_data,
                     ):
                         continue
@@ -677,6 +660,7 @@ def _build_gemini_streaming_response(
         except Exception as exc:
             logger.warning("流式生成异常: model=%s, error=%s", model_path, exc)
             yield format_sse_error(exc)
+
     return StreamingResponse(
         stream_response(),
         media_type="text/event-stream",

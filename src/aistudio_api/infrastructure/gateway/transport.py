@@ -6,22 +6,18 @@ using connection pooling and chunk streaming.
 
 from __future__ import annotations
 
-import asyncio
-import json
 import time
-import uuid
 from collections.abc import AsyncGenerator
-from contextlib import suppress
-from pathlib import Path
 
 import httpx
 
 from aistudio_api.config import settings
-from aistudio_api.domain.errors import BrowserTransportError
+from aistudio_api.domain.errors import TransportError
 from aistudio_api.infrastructure.account.cookie_parser import (
     calculate_sapisid_hash,
     filter_minimal_cookies,
     get_tier_header_value,
+    load_cookies_from_auth_file,
 )
 from aistudio_api.infrastructure.utils.logger import get_logger
 
@@ -30,20 +26,11 @@ logger = get_logger("transport")
 
 def _get_auth_cookies(auth_file: str | None = None) -> dict[str, str] | None:
     """Read credentials from the bound auth_file or active account."""
+    if auth_file:
+        cookies = load_cookies_from_auth_file(auth_file)
+        if cookies:
+            return cookies
     try:
-        if auth_file:
-            bound_path = Path(auth_file)
-            if bound_path.is_file():
-                data = json.loads(bound_path.read_text(encoding="utf-8"))
-                cookies = data.get("cookies") or []
-                if isinstance(cookies, list):
-                    return {
-                        str(c.get("name") or ""): str(c.get("value") or "")
-                        for c in cookies
-                        if isinstance(c, dict) and c.get("name")
-                    }
-                if isinstance(cookies, dict):
-                    return {str(k): str(v) for k, v in cookies.items() if k}
         from aistudio_api.infrastructure.account.account_store import AccountStore
 
         store = AccountStore()
@@ -51,17 +38,10 @@ def _get_auth_cookies(auth_file: str | None = None) -> dict[str, str] | None:
         if not active:
             return None
         auth_path = store.get_auth_path_optional(active.id, require_exists=True)
-        if auth_path and auth_path.is_file():
-            data = json.loads(auth_path.read_text(encoding="utf-8"))
-            cookies = data.get("cookies") or []
-            if isinstance(cookies, list):
-                return {
-                    str(c.get("name") or ""): str(c.get("value") or "")
-                    for c in cookies
-                    if isinstance(c, dict) and c.get("name")
-                }
-            if isinstance(cookies, dict):
-                return {str(k): str(v) for k, v in cookies.items() if k}
+        if auth_path:
+            cookies = load_cookies_from_auth_file(auth_path)
+            if cookies:
+                return cookies
     except Exception:
         pass
     return None
@@ -86,6 +66,7 @@ async def _ensure_authorization_header(
     auth_user: str = "0",
     tier: str | None = None,
     auth_file: str | None = None,
+    cookies: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """Ensure SAPISIDHASH Authorization, X-Goog-AuthUser, and X-AIStudio-G1-Tier are set."""
     incoming_auth = ""
@@ -107,20 +88,21 @@ async def _ensure_authorization_header(
         )
     }
     clean_headers["X-Goog-AuthUser"] = str(auth_user or "0")
-    effective_tier = tier if tier and tier != "Free" else _get_active_account_tier()
+    effective_tier = tier if tier is not None else _get_active_account_tier()
     tier_header = get_tier_header_value(effective_tier)
     if tier_header:
         clean_headers["X-AIStudio-G1-Tier"] = tier_header
 
-    raw_cookie_dict = _get_auth_cookies(auth_file)
+    raw_cookie_dict = cookies or _get_auth_cookies(auth_file)
     cookie_dict = filter_minimal_cookies(raw_cookie_dict) if raw_cookie_dict else None
-
     if cookie_dict:
         fresh_auth = calculate_sapisid_hash(cookie_dict)
         if fresh_auth:
             clean_headers["Authorization"] = fresh_auth
         if "Cookie" not in clean_headers:
-            clean_headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookie_dict.items() if v)
+            clean_headers["Cookie"] = "; ".join(
+                f"{k}={v}" for k, v in cookie_dict.items() if v
+            )
     elif incoming_auth:
         clean_headers["Authorization"] = incoming_auth
 
@@ -133,28 +115,12 @@ class HTTPStreamTransport:
     def __init__(self, proxy_url: str | None = None, timeout: float = 120.0) -> None:
         self.proxy_url = proxy_url or settings.proxy_url
         self.timeout = timeout
-        self._queues: dict[str, asyncio.Queue[dict[str, object]]] = {}
         self._client: httpx.AsyncClient | None = None
 
-    @property
-    def in_flight_count(self) -> int:
-        return len(self._queues)
-
-    def abort_stream(self, rid: str, reason: str = "stream_aborted") -> bool:
-        q = self._queues.get(rid)
-        if q is not None:
-            try:
-                q.put_nowait({"type": "error", "message": reason})
-                return True
-            except asyncio.QueueFull:
-                return False
-        return False
-
-    def close(self, reason: str = "transport_closed") -> None:
-        for q in list(self._queues.values()):
-            with suppress(Exception):
-                q.put_nowait({"type": "error", "message": reason})
-        self._queues.clear()
+    async def close(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -165,7 +131,7 @@ class HTTPStreamTransport:
             )
         return self._client
 
-    async def send_hooked_request(
+    async def send_request(
         self,
         *,
         url: str,
@@ -174,11 +140,16 @@ class HTTPStreamTransport:
         auth_user: str = "0",
         tier: str | None = None,
         auth_file: str | None = None,
+        cookies: dict[str, str] | None = None,
     ) -> tuple[int, bytes]:
         """Execute non-streaming HTTP request directly."""
         t0 = time.perf_counter()
         clean_headers = await _ensure_authorization_header(
-            headers, auth_user=auth_user, tier=tier, auth_file=auth_file
+            headers,
+            auth_user=auth_user,
+            tier=tier,
+            auth_file=auth_file,
+            cookies=cookies,
         )
         logger.debug(
             "Sending HTTP POST: url=%s, body_len=%d, auth_user=%s",
@@ -189,7 +160,9 @@ class HTTPStreamTransport:
 
         client = await self._get_client()
         try:
-            resp = await client.post(url, headers=clean_headers, content=body.encode("utf-8"))
+            resp = await client.post(
+                url, headers=clean_headers, content=body.encode("utf-8")
+            )
             elapsed_ms = (time.perf_counter() - t0) * 1000
             logger.debug(
                 "HTTP POST completed: status=%d, time=%.1fms, resp_len=%d",
@@ -200,7 +173,7 @@ class HTTPStreamTransport:
             return resp.status_code, resp.content
         except Exception as exc:
             logger.error("HTTP request failed: url=%s, err=%s", url, exc)
-            raise BrowserTransportError(f"HTTP request failed: {exc}") from exc
+            raise TransportError(f"HTTP request failed: {exc}") from exc
 
     async def send_streaming_request(
         self,
@@ -211,20 +184,24 @@ class HTTPStreamTransport:
         auth_user: str = "0",
         tier: str | None = None,
         auth_file: str | None = None,
+        cookies: dict[str, str] | None = None,
     ) -> AsyncGenerator[tuple[str, object], None]:
         """Stream HTTP response chunks directly."""
         clean_headers = await _ensure_authorization_header(
-            headers, auth_user=auth_user, tier=tier, auth_file=auth_file
+            headers,
+            auth_user=auth_user,
+            tier=tier,
+            auth_file=auth_file,
+            cookies=cookies,
         )
-        rid = uuid.uuid4().hex[:8]
-        logger.debug("Starting streaming HTTP request: rid=%s, url=%s", rid, url)
+        logger.debug("Starting streaming HTTP request: url=%s", url)
 
         client = await self._get_client()
-        queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
-        self._queues[rid] = queue
 
         try:
-            req = client.build_request("POST", url, headers=clean_headers, content=body.encode("utf-8"))
+            req = client.build_request(
+                "POST", url, headers=clean_headers, content=body.encode("utf-8")
+            )
             resp = await client.send(req, stream=True)
             yield ("status", resp.status_code)
 
@@ -240,7 +217,3 @@ class HTTPStreamTransport:
         except Exception as exc:
             logger.warning("Streaming request encountered exception: %s", exc)
             yield ("error", str(exc))
-        finally:
-            self._queues.pop(rid, None)
-
-

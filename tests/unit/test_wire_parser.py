@@ -10,7 +10,6 @@ from aistudio_api.infrastructure.gateway.wire_parser import (
     _decode_wire_value,
     _iter_response_chunks,
     parse_chunk_usage,
-    parse_image_output,
     parse_response_chunk,
     parse_response_part,
     parse_text_output,
@@ -160,14 +159,10 @@ def test_parse_text_output_fallback():
     assert output.text == ""
     assert output.candidates == []
 
-    # parse_image_output forwards to parse_text_output
-    img_output = parse_image_output("invalid json")
-    assert img_output.text == ""
-
 
 def test_parse_image_output_keeps_only_final_images_in_images_field():
     raw = (FIXTURES / "test_image_output.json").read_text()
-    output = parse_image_output(raw)
+    output = parse_text_output(raw)
 
     assert len(output.images) == 1
     assert len(output.reasoning_images) == 1

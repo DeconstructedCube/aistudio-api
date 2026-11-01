@@ -1,4 +1,4 @@
-"""解析浏览器 cookie（支持 JSON 数组、Netscape 格式与 Header KV），并提供 Google 多账号探活。"""
+"""解析 Google 账号 Cookie（支持 JSON 数组、Netscape 格式与 Header KV），并提供多账号探活。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 import re
 import time
 import uuid
-from collections.abc import Iterable
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -19,10 +19,14 @@ from aistudio_api.infrastructure.utils.logger import get_logger
 logger = get_logger("cookie_parser")
 
 DEFAULT_API_KEY = "AIzaSyDdP816MREB3SkjZO04QXbjsigfcI0GWOs"
-DEFAULT_EXT_BIN = "CAESAUwwATgEQABQBGICSlBwAHgBkAEAmAEB"
+DEFAULT_EXT_BIN = "CAASAUIwATgEQABQBFgDYgJKUHAAeAGQAQCYAQE="
 DEFAULT_ORIGIN = "https://aistudio.google.com"
 DEFAULT_USER_AGENT = "grpc-web-javascript/0.1"
-
+DEFAULT_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/151.0.0.0 Safari/537.36"
+)
 
 BENEFIT_TIER_TO_NAME: dict[int, str] = {
     0: "Free",
@@ -82,32 +86,7 @@ def get_tier_header_value(tier: str | None) -> str | None:
     return BENEFIT_TIER_TO_HEADER.get(clean)
 
 
-# Cookies that need httpOnly=False so JS can read them for SAPISIDHASH.
-_AUTH_COOKIE_NAMES = {
-    "SID",
-    "APISID",
-    "SAPISID",
-    "__Secure-1PAPISID",
-    "__Secure-3PAPISID",
-}
-
-_DOMAIN_OVERRIDES: dict[str, list[str]] = {
-    "OSID": ["aistudio.google.com"],
-    "__Secure-OSID": ["aistudio.google.com"],
-    "__Secure-BUCKET": ["aistudio.google.com"],
-    "OTZ": ["accounts.google.com"],
-    "__Host-GAPS": ["accounts.google.com"],
-    "__Host-1PLSID": ["accounts.google.com"],
-    "__Host-3PLSID": ["accounts.google.com"],
-    "LSID": ["accounts.google.com"],
-    "SMSV": ["accounts.google.com"],
-    "LSOLH": ["accounts.google.com"],
-    "ACCOUNT_CHOOSER": ["accounts.google.com"],
-    "__Secure-1PSIDTS": [".google.com", "aistudio.google.com", "accounts.google.com"],
-    "__Secure-3PSIDTS": [".google.com", "aistudio.google.com", "accounts.google.com"],
-}
-
-# 外部导入时过滤的临时、遥测与设备绑定 Cookie，由浏览器在当前环境中自动协商生成。
+# 外部导入时过滤的临时、遥测与设备绑定 Cookie。
 DISCARDABLE_IMPORT_COOKIE_NAMES: frozenset[str] = frozenset(
     {
         "_ga",
@@ -139,10 +118,6 @@ MINIMAL_COOKIE_WHITELIST: frozenset[str] = frozenset(
         "__Secure-3PAPISID",
         "__Secure-1PSIDTS",
         "__Secure-3PSIDTS",
-        "SIDCC",
-        "__Secure-1PSIDCC",
-        "__Secure-3PSIDCC",
-        "NID",
     }
 )
 
@@ -282,78 +257,103 @@ def calculate_sapisid_hash(
         parts.append(f"SAPISID3PHASH {ts}_{calc_hash(three)}")
     return " ".join(parts)
 
-def build_google_cookie_list(
-    pairs: Iterable[tuple[str, str]] | dict[str, str],
+
+def build_makersuite_headers(
+    cookies: dict[str, str] | None = None,
     *,
-    allow_url_targets: bool = False,
-    discard_transient: bool = False,
-) -> list[dict[str, object]]:
-    """Build Playwright/CDP compatible cookies from name/value pairs."""
-    now = int(time.time())
-    default_expires = now + 86400 * 180  # 180 天后过期
-
-    seen: set[tuple[str, str, str]] = set()
-    cookies: list[dict[str, object]] = []
-
-    def _add_cookie(name: str, value: str, target: str) -> None:
-        is_host_target = not target.startswith(".")
-
-        if name.startswith("__Host-") and not allow_url_targets:
-            return
-
-        target_kind = "url" if allow_url_targets and is_host_target else "domain"
-        target_value = f"https://{target}/" if target_kind == "url" else target
-        key = (name, target_kind, target_value)
-        if key in seen:
-            return
-        seen.add(key)
-
-        cookie: dict[str, object] = {
-            "name": name,
-            "value": value,
-            "secure": True,
-            "httpOnly": name not in _AUTH_COOKIE_NAMES,
-            "sameSite": "None",
-            "expires": default_expires,
-        }
-        if target_kind == "url":
-            cookie["url"] = target_value
-        else:
-            cookie["domain"] = target
-            cookie["path"] = "/"
-        cookies.append(cookie)
-
-    item_list: list[tuple[str, str]] = (
-        [(str(k), str(v)) for k, v in pairs.items()]
-        if isinstance(pairs, dict)
-        else [(str(k), str(v)) for k, v in pairs]
-    )
-    for name, value in item_list:
-        if discard_transient and (
-            name in DISCARDABLE_IMPORT_COOKIE_NAMES
-            or name.startswith(("_ga_", "_gcl_"))
-        ):
-            continue
-        targets = _DOMAIN_OVERRIDES.get(name)
-        if not targets:
-            targets = [".google.com"]
-        for target in targets:
-            _add_cookie(name, value, target)
-
-    return cookies
+    auth_user: str = "0",
+    tier: str | None = None,
+    include_visit_id: bool = False,
+) -> dict[str, str]:
+    """Build standard Google AI Studio MakerSuiteService RPC headers."""
+    headers: dict[str, str] = {
+        "Content-Type": "application/json+protobuf",
+        "X-User-Agent": DEFAULT_USER_AGENT,
+        "X-Goog-Api-Key": DEFAULT_API_KEY,
+        "X-Goog-AuthUser": str(auth_user or "0"),
+        "X-Goog-Ext-519733851-bin": DEFAULT_EXT_BIN,
+        "Origin": DEFAULT_ORIGIN,
+        "Referer": f"{DEFAULT_ORIGIN}/",
+        "User-Agent": DEFAULT_BROWSER_USER_AGENT,
+    }
+    if include_visit_id:
+        headers["X-AIStudio-Visit-Id"] = f"v1_{uuid.uuid4()}"
+    tier_header = get_tier_header_value(tier)
+    if tier_header:
+        headers["X-AIStudio-G1-Tier"] = tier_header
+    if cookies:
+        auth_header = calculate_sapisid_hash(cookies)
+        if auth_header:
+            headers["Authorization"] = auth_header
+        headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in cookies.items() if v)
+    return headers
 
 
 def parse_cookie_string(
     raw: object, *, discard_transient: bool = True
 ) -> dict[str, object]:
-    """将任意格式 cookie 解析为 storage state dict，包含 cookies 和 origins 字段。"""
+    """将任意格式 Cookie 解析为紧凑的持久化字典结构 `{"cookies": [{"name": ..., "value": ...}]}`。"""
     cookie_dict = parse_raw_cookies(raw)
-    return {
-        "cookies": build_google_cookie_list(
-            cookie_dict, allow_url_targets=False, discard_transient=discard_transient
-        ),
-        "origins": [],
-    }
+    cookies: list[dict[str, str]] = []
+    for name, value in cookie_dict.items():
+        if name.startswith("__Host-"):
+            continue
+        if discard_transient and (
+            name in DISCARDABLE_IMPORT_COOKIE_NAMES
+            or name.startswith(("_ga_", "_gcl_"))
+        ):
+            continue
+        cookies.append({"name": name, "value": value})
+    return {"cookies": cookies}
+
+
+def get_auth_user_from_meta(auth_file: str | Path | None) -> str:
+    """Read auth_user index from meta.json adjacent to auth_file."""
+    if auth_file:
+        try:
+            meta_path = Path(auth_file).parent / "meta.json"
+            if meta_path.is_file():
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                return str(meta.get("auth_user") or "0")
+        except Exception:
+            pass
+    return "0"
+
+
+def get_tier_from_meta(auth_file: str | Path | None) -> str:
+    """Read benefit tier from meta.json adjacent to auth_file."""
+    if auth_file:
+        try:
+            meta_path = Path(auth_file).parent / "meta.json"
+            if meta_path.is_file():
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                return normalize_benefit_tier(str(meta.get("tier") or "Free"))
+        except Exception:
+            pass
+    return "Free"
+
+
+def load_cookies_from_auth_file(auth_file: str | Path | None) -> dict[str, str]:
+    """Read cookies from auth_file into a name-value dictionary."""
+    if not auth_file:
+        return {}
+    path = Path(auth_file)
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        cookies = data.get("cookies") or []
+        if isinstance(cookies, list):
+            return {
+                str(c.get("name") or ""): str(c.get("value") or "")
+                for c in cookies
+                if isinstance(c, dict) and c.get("name")
+            }
+        if isinstance(cookies, dict):
+            return {str(k): str(v) for k, v in cookies.items() if k}
+    except Exception as e:
+        logger.warning("Failed to load cookies from %s: %s", auth_file, e)
+    return {}
 
 
 def parse_emails_from_ogs_html(
@@ -400,7 +400,7 @@ async def probe_account_emails_map(
     u_index = str(auth_user or "0")
     cookie_header = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        "User-Agent": DEFAULT_BROWSER_USER_AGENT,
         "Cookie": cookie_header,
     }
 
@@ -468,22 +468,11 @@ async def probe_account_benefit_tier(
     from aistudio_api.config import settings
 
     u_index = str(auth_user or "0")
-    auth_header = calculate_sapisid_hash(cookie_dict)
-    cookie_header = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
-    headers = {
-        "Content-Type": "application/json+protobuf",
-        "X-User-Agent": DEFAULT_USER_AGENT,
-        "X-Goog-Api-Key": DEFAULT_API_KEY,
-        "X-Goog-AuthUser": u_index,
-        "X-Goog-Ext-519733851-bin": DEFAULT_EXT_BIN,
-        "X-AIStudio-Visit-Id": f"v1_{uuid.uuid4()}",
-        "Origin": DEFAULT_ORIGIN,
-        "Referer": f"{DEFAULT_ORIGIN}/",
-        "Cookie": cookie_header,
-    }
-    if auth_header:
-        headers["Authorization"] = auth_header
-
+    headers = build_makersuite_headers(
+        cookie_dict,
+        auth_user=u_index,
+        include_visit_id=True,
+    )
     tier_url = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GetAiStudioBenefitTier"
     try:
         async with httpx.AsyncClient(timeout=8.0, proxy=settings.proxy_url) as client:
@@ -513,7 +502,6 @@ async def probe_google_accounts_infinite(
 
     from aistudio_api.config import settings
 
-    cookie_header = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
     valid_accounts: list[dict[str, object]] = []
 
     auth_user_idx = 0
@@ -524,21 +512,11 @@ async def probe_google_accounts_infinite(
         )
         while True:
             u_index = str(auth_user_idx)
-            auth_header = calculate_sapisid_hash(cookie_dict)
-            headers = {
-                "Content-Type": "application/json+protobuf",
-                "X-User-Agent": DEFAULT_USER_AGENT,
-                "X-Goog-Api-Key": DEFAULT_API_KEY,
-                "X-Goog-AuthUser": u_index,
-                "X-Goog-Ext-519733851-bin": DEFAULT_EXT_BIN,
-                "X-AIStudio-Visit-Id": f"v1_{uuid.uuid4()}",
-                "Origin": DEFAULT_ORIGIN,
-                "Referer": f"{DEFAULT_ORIGIN}/",
-                "Cookie": cookie_header,
-            }
-            if auth_header:
-                headers["Authorization"] = auth_header
-
+            headers = build_makersuite_headers(
+                cookie_dict,
+                auth_user=u_index,
+                include_visit_id=True,
+            )
             url = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/ListModels"
             try:
                 resp = await client.post(url, headers=headers, content="[]")

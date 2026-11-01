@@ -60,13 +60,9 @@ async def lifespan(_app: FastAPI):
     rotator = init_rotator(account_store)
     runtime_state.rotator = rotator
 
-    for a in account_store.list_accounts():
-        st = rotator.get_account_stats(a.id)
-        if st is not None and not st.session_expired and st.auth_cooldown > 0:
-            st.auth_cooldown = 0.0
     active_auth_path = account_store.get_active_auth_path()
-    if active_auth_path is not None and client.session is not None:
-        client.session._auth_file = str(active_auth_path)
+    if active_auth_path is not None:
+        await client.switch_auth(str(active_auth_path))
     logger.info(
         "服务初始化完成: 监听端口=%d, 已加载账号数=%d",
         settings.port,
@@ -80,30 +76,11 @@ async def lifespan(_app: FastAPI):
         ],
     )
 
-    # 后台预热网关会话，避免首次请求延迟
-    warmup_task = None
-
-    async def _warmup():
-        for attempt in range(3):
-            try:
-                logger.debug("开始预热网关会话: attempt=%d", attempt + 1)
-                await client.warmup()
-                logger.debug("网关会话预热就绪: attempt=%d", attempt + 1)
-                return
-            except Exception as e:
-                if attempt < 2:
-                    await asyncio.sleep(1.0)
-                    continue
-                logger.warning("网关会话预热失败: %s", e)
-
-    warmup_task = asyncio.create_task(_warmup())
-
     tier_task = None
 
     async def _auto_refresh_tiers():
-        import json
-
         from aistudio_api.infrastructure.account.cookie_parser import (
+            load_cookies_from_auth_file,
             probe_account_benefit_tier,
             probe_account_email,
         )
@@ -129,15 +106,9 @@ async def lifespan(_app: FastAPI):
 
         for a in accounts_to_check:
             apath = account_store.get_auth_path(a.id)
-            if apath and apath.is_file():
+            if apath:
                 try:
-                    adata = json.loads(apath.read_text(encoding="utf-8"))
-                    rcookies = adata.get("cookies") or []
-                    cdict = {
-                        str(c.get("name") or ""): str(c.get("value") or "")
-                        for c in rcookies
-                        if isinstance(c, dict) and c.get("name")
-                    }
+                    cdict = load_cookies_from_auth_file(apath)
                     if cdict:
                         checked_count += 1
                         if not a.email:
@@ -174,8 +145,6 @@ async def lifespan(_app: FastAPI):
 
     yield
     logger.info("服务正在关闭")
-    if warmup_task and not warmup_task.done():
-        warmup_task.cancel()
     if tier_task and not tier_task.done():
         tier_task.cancel()
     if client:

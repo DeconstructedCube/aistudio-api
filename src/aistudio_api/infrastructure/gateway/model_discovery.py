@@ -3,23 +3,16 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
-import uuid
 from collections.abc import Mapping
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aistudio_api.infrastructure.gateway.session import GatewaySession
 
 from aistudio_api.infrastructure.account.cookie_parser import (
-    DEFAULT_API_KEY,
-    DEFAULT_EXT_BIN,
-    DEFAULT_ORIGIN,
-    DEFAULT_USER_AGENT,
-    calculate_sapisid_hash,
-    get_tier_header_value,
+    build_makersuite_headers,
+    load_cookies_from_auth_file,
 )
 from aistudio_api.infrastructure.utils.logger import get_logger
 
@@ -224,23 +217,14 @@ class ModelDiscoveryService:
                             effective_tier = getattr(active, "tier", "Free") or "Free"
                     except Exception:
                         pass
-                if auth_file and Path(auth_file).is_file():
-                    try:
-                        data = json.loads(Path(auth_file).read_text(encoding="utf-8"))
-                        raw_cookies = data.get("cookies") or []
-                        effective_cookies = {
-                            str(c.get("name") or ""): str(c.get("value") or "")
-                            for c in raw_cookies
-                            if c.get("name")
-                        }
-                        if session is not None and hasattr(
-                            session, "get_current_auth_user"
-                        ):
-                            effective_auth_user = session.get_current_auth_user()
-                        if session is not None and hasattr(session, "get_current_tier"):
-                            effective_tier = session.get_current_tier()
-                    except Exception:
-                        pass
+                if auth_file:
+                    effective_cookies = load_cookies_from_auth_file(auth_file) or None
+                    if session is not None and hasattr(
+                        session, "get_current_auth_user"
+                    ):
+                        effective_auth_user = session.get_current_auth_user()
+                    if session is not None and hasattr(session, "get_current_tier"):
+                        effective_tier = session.get_current_tier()
 
             if effective_cookies:
                 try:
@@ -435,25 +419,12 @@ class ModelDiscoveryService:
         """通过 HTTP 客户端携带 SAPISIDHASH 拉取。"""
         import httpx
 
-        auth_header = calculate_sapisid_hash(cookies)
-        cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items())
-        headers = {
-            "Content-Type": "application/json+protobuf",
-            "X-User-Agent": DEFAULT_USER_AGENT,
-            "X-Goog-Api-Key": DEFAULT_API_KEY,
-            "X-Goog-AuthUser": auth_user or "0",
-            "X-Goog-Ext-519733851-bin": DEFAULT_EXT_BIN,
-            "X-AIStudio-Visit-Id": f"v1_{uuid.uuid4()}",
-            "Origin": DEFAULT_ORIGIN,
-            "Referer": f"{DEFAULT_ORIGIN}/",
-            "Cookie": cookie_header,
-        }
-        if auth_header:
-            headers["Authorization"] = auth_header
-        tier_header = get_tier_header_value(tier)
-        if tier_header:
-            headers["X-AIStudio-G1-Tier"] = tier_header
-
+        headers = build_makersuite_headers(
+            cookies,
+            auth_user=auth_user or "0",
+            tier=tier,
+            include_visit_id=True,
+        )
         from aistudio_api.config import settings
 
         url = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/ListModels"

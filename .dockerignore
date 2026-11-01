@@ -34,12 +34,6 @@ tests/
 /tmp
 snapshot_*.log
 
-# Chrome/Chromium profiles (not needed in container)
-chromium-profile/
-
-# Botguard fork (not needed for main service)
-botguard-fork/
-
 # Documentation
 docs/
 *.md

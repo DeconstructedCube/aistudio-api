@@ -1,32 +1,34 @@
 import pytest
 
 from aistudio_api.infrastructure.account.cookie_parser import (
-    build_google_cookie_list,
+    build_makersuite_headers,
+    filter_minimal_cookies,
     parse_cookie_string,
 )
 
 
-def test_parse_cookie_string_skips_host_only_cookies_in_storage_state():
+def test_parse_cookie_string_skips_host_only_cookies():
     state = parse_cookie_string("__Host-GAPS=abc; SID=sid123")
     cookies = state.get("cookies")
     assert isinstance(cookies, list)
-    assert state.get("origins") == []
-    assert {cookie["name"] for cookie in cookies if isinstance(cookie, dict)} == {"SID"}
-    assert cookies[0]["domain"] == ".google.com"
+    assert cookies == [{"name": "SID", "value": "sid123"}]
 
 
-def test_build_google_cookie_list_uses_url_for_host_targets_when_injecting():
-    cookies = build_google_cookie_list(
-        [("__Host-GAPS", "abc"), ("LSID", "lsid123"), ("SID", "sid123")],
-        allow_url_targets=True,
-    )
-
-    by_name = {cookie["name"]: cookie for cookie in cookies}
-    assert by_name["__Host-GAPS"]["url"] == "https://accounts.google.com/"
-    assert "domain" not in by_name["__Host-GAPS"]
-    assert by_name["LSID"]["url"] == "https://accounts.google.com/"
-    assert by_name["SID"]["domain"] == ".google.com"
-
+def test_filter_minimal_cookies_and_makersuite_headers():
+    raw_cookies = {
+        "__Host-GAPS": "abc",
+        "LSID": "lsid123",
+        "SID": "sid123",
+        "SAPISID": "sapisid123",
+        "OSID": "stale_osid",
+    }
+    minimal = filter_minimal_cookies(raw_cookies)
+    assert minimal == {"SID": "sid123", "SAPISID": "sapisid123"}
+    headers = build_makersuite_headers(minimal, auth_user="1", tier="Pro")
+    assert headers["X-Goog-AuthUser"] == "1"
+    assert headers["X-AIStudio-G1-Tier"] == "TIER1"
+    assert "SAPISIDHASH " in headers["Authorization"]
+    assert "SID=sid123" in headers["Cookie"]
 
 
 def test_parse_raw_cookies_json_array_and_netscape():
@@ -102,15 +104,6 @@ def test_parse_cookie_string_discards_transient_and_telemetry_cookies():
     assert "SIDCC" not in names
     assert "OSID" not in names
     assert "__Secure-OSID" not in names
-
-
-def test_domain_overrides_scopes_osid_strictly_to_aistudio():
-    from aistudio_api.infrastructure.account.cookie_parser import _DOMAIN_OVERRIDES
-
-    assert _DOMAIN_OVERRIDES["OSID"] == ["aistudio.google.com"]
-    assert _DOMAIN_OVERRIDES["__Secure-OSID"] == ["aistudio.google.com"]
-    assert ".google.com" not in _DOMAIN_OVERRIDES["OSID"]
-    assert ".google.com" not in _DOMAIN_OVERRIDES["__Secure-OSID"]
 
 
 @pytest.mark.asyncio
@@ -262,7 +255,7 @@ def test_parse_emails_from_ogs_html_and_meta_reconciliation(tmp_path):
         "2": "user2@gmail.com",
     }
 
-    # 验证当 meta.json 被外部/浏览器更新了 email 与 tier，而 registry.json 仍为旧值时，加载自动对齐
+    # 验证当 meta.json 被外部更新了 email 与 tier，而 registry.json 仍为旧值时，加载自动对齐
     acc_dir = tmp_path / "accounts_reconcile"
     store = AccountStore(accounts_dir=acc_dir)
     acc = store.save_account(
@@ -286,7 +279,7 @@ def test_parse_emails_from_ogs_html_and_meta_reconciliation(tmp_path):
 
 @pytest.mark.asyncio
 async def test_delete_cookie_group_migrates_active_account(tmp_path):
-    """测试批量删除包含当前活跃账号的 Cookie 组时，正确切换活跃账号与浏览器会话。"""
+    """测试批量删除包含当前活跃账号的 Cookie 组时，正确切换活跃账号与网关会话。"""
     from unittest.mock import AsyncMock, MagicMock
 
     from aistudio_api.api.routes_accounts import delete_cookie_group
@@ -328,7 +321,7 @@ async def test_delete_cookie_group_migrates_active_account(tmp_path):
     mock_session = MagicMock()
     mock_session.switch_auth = AsyncMock()
     mock_client = MagicMock()
-    mock_client._session = mock_session
+    mock_client.session = mock_session
 
     state = RuntimeState(
         client=mock_client,
@@ -347,7 +340,7 @@ async def test_delete_cookie_group_migrates_active_account(tmp_path):
     new_active = svc.get_active_account()
     assert new_active is not None
     assert new_active.id == acc3.id
-    # 且触发了 browser_session.switch_auth
+    # 且触发了 gateway_session.switch_auth
     assert mock_session.switch_auth.called
 
 
@@ -381,7 +374,7 @@ async def test_probe_import_activates_first_account_and_registers_in_rotator(
     gateway_session = MagicMock()
     rotator = MagicMock()
     runtime_state = MagicMock()
-    runtime_state.client._session = gateway_session
+    runtime_state.client.session = gateway_session
     runtime_state.rotator = rotator
 
     monkeypatch.setattr(

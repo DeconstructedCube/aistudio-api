@@ -27,10 +27,8 @@ class RequestError(AistudioError):
         super().__init__(f"HTTP {status}: {message}" if message else f"HTTP {status}")
 
 
-class BrowserTransportError(RuntimeError):
-    """In-page fetch/XHR network transport failure before upstream HTTP completion."""
-
-    net_evidence: list[dict[str, object]] | None = None
+class TransportError(RuntimeError):
+    """Upstream HTTP or WAA proof transport failure before completion."""
 
 
 GRPC_CODE_TO_HTTP: dict[int, int] = {
@@ -119,9 +117,9 @@ def is_transient_rpc_error(exc: Exception) -> bool:
     return False
 
 
-def is_session_hang_error(exc: Exception) -> bool:
-    """识别由于会话中断、签名超时、传输异常引起的会话故障。"""
-    if isinstance(exc, BrowserTransportError):
+def is_transport_error(exc: Exception) -> bool:
+    """识别由于传输中断、签名超时或连接异常引起的网关传输故障。"""
+    if isinstance(exc, TransportError):
         return True
     if isinstance(exc, (RuntimeError, TimeoutError)):
         err = str(exc).lower()

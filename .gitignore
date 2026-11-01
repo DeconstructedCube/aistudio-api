@@ -20,15 +20,9 @@ uv.toml
 .uv.toml
 uv.lock
 /test_*
-/capture_*
-chromium-profile/
-botguard-fork/
-# scripts/ (we now track scripts for bootstrap tools)
 data2/
 .ai_memory
 .antigravitycli
-chrome-headless
-.cloakbrowser/
 server-logs/
 /cache/
 db/
@@ -41,20 +35,4 @@ web/dist/
 # Repomix outputs
 repomix-output.*
 repomix.config.*
-
-# Android / Gradle
-.gradle/
-android/.gradle/
-android/build/
-android/app/build/
-android/local.properties
-android/**/.idea/
-android/**/*.iml
-*.apk
-*.aab
-
-# Reverse engineering dump outputs
-tools/reverse/output/
-tools/reverse/bundles/
-tools/reverse/wasm/
 

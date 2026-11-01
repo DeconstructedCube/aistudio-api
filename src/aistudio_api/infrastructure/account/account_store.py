@@ -1,36 +1,22 @@
-"""账号存储层，管理多 Google 账号的注册表和 storage state。"""
+"""账号存储层，管理多 Google 账号的注册表与 Cookie 凭据。"""
 
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import shutil
 import threading
-import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from os.path import basename, join, realpath
 from pathlib import Path
 from typing import ClassVar
 
+from aistudio_api.infrastructure.utils.common import atomic_write_json
+
 
 def _atomic_write_json(path: Path, data: object) -> None:
-    """写入 JSON 文件，通过临时文件加原子替换防止文件损坏。"""
-    target_path = path.resolve()
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = target_path.with_suffix(f".tmp.{os.getpid()}_{time.time_ns()}")
-    try:
-        tmp_path.write_text(
-            json.dumps(data, ensure_ascii=False, separators=(",", ":")),
-            encoding="utf-8",
-        )
-        tmp_path.replace(target_path)
-    except Exception:
-        if tmp_path.exists():
-            with contextlib.suppress(OSError):
-                tmp_path.unlink()
-        raise
+    atomic_write_json(path, data, compact=True)
 
 
 # 默认搜索路径（与 config.py 保持一致）
@@ -73,15 +59,6 @@ def _resolve_accounts_dir() -> Path:
             return candidate
     # 默认在第一个搜索根下创建
     return (_SEARCH_ROOTS[0] / "data" / "accounts").resolve()
-
-
-def _resolve_legacy_auth_file() -> Path | None:
-    """查找遗留的 data/auth.json 文件。"""
-    for root in _SEARCH_ROOTS:
-        candidate = root / "data" / "auth.json"
-        if candidate.is_file():
-            return candidate
-    return None
 
 
 def _generate_account_id() -> str:
@@ -256,43 +233,12 @@ class AccountStore:
         self._presets: dict[str, AccountPreset] | None = None
         self._lock = threading.Lock()
         self._ensure_dirs()
-        self._migrate_legacy_if_needed()
         self._ensure_default_presets()
         self._initialized = True
 
     def _ensure_dirs(self) -> None:
         """确保目录存在。"""
         self._accounts_dir.mkdir(parents=True, exist_ok=True)
-
-    def _migrate_legacy_if_needed(self) -> None:
-        """如果 accounts 目录为空且存在 data/auth.json，自动迁移。"""
-        if self._registry_path.exists():
-            return  # 已有注册表，无需迁移
-        legacy = _resolve_legacy_auth_file()
-        if legacy is None:
-            return
-        # 创建一个迁移账号
-        account_id = "acc_migrated"
-        now = datetime.now(UTC).isoformat()
-        meta = AccountMeta(
-            id=account_id,
-            name="迁移的账号",
-            email=None,
-            created_at=now,
-            last_used=now,
-        )
-        account_dir = self._accounts_dir / account_id
-        account_dir.mkdir(parents=True, exist_ok=True)
-        # 复制 auth.json
-        shutil.copy2(legacy, account_dir / "auth.json")
-        # 写入 meta.json
-        _atomic_write_json(account_dir / "meta.json", meta.to_dict())
-        # 创建注册表
-        registry = Registry(
-            accounts={account_id: meta},
-            active_account_id=account_id,
-        )
-        self._save_registry(registry)
 
     def _load_registry(self) -> Registry:
         """加载注册表（线程安全）。"""
@@ -564,14 +510,6 @@ class AccountStore:
         if require_exists and not path.exists():
             return None
         return path
-
-    def get_profile_path(self, account_id: str) -> Path | None:
-        """获取指定账号的 profile 目录路径。"""
-        registry = self._load_registry()
-        acc = self._find_registered_account(registry, account_id)
-        if acc is None:
-            return None
-        return _safe_account_dir(self._accounts_dir, acc.id) / "profile"
 
     def toggle_account_enabled(
         self, account_id: str, enabled: bool | None = None

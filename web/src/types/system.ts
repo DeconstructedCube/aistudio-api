@@ -27,7 +27,6 @@ export interface UpdateLoggingConfigResponse {
 
 export interface HealthCheckResponse {
   status: string
-  busy: boolean
 }
 export interface ApiKeyItem {
   name: string

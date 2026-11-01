@@ -53,7 +53,6 @@
 | **Built-in Tools** | Supports official tools such as Google Search, Google Maps, and Code Execution sandbox |
 | **Browserless WAA Engine** | Completely decoupled from Chromium/proot, powered by [aistudio-pg-bridge](https://github.com/Lianues/aistudio-pg-bridge) signing API and HTTP/2 connection pooling |
 | **Web Management Console** | Built-in web dashboard for account management (supporting text and JSON bundle file imports), live request metrics, and runtime `config.yaml` hot reloading |
-| **Android Companion App** | Native Android app (`android/`) built with Jetpack Compose, featuring isolated multi-profile management, on-demand WebView, Bitwarden autofill, and one-click bundle export |
 > [!NOTE]
 > **Memory Footprint**: Operating completely browserless, resident memory is only ~35 - 50 MB with sub-second cold start, running smoothly even on lightweight mobile Termux environments or entry-level servers.
 ## Architecture & Documentation
@@ -208,9 +207,7 @@ Open `http://localhost:8080` in your browser to access the Web Console.
 | `AISTUDIO_PERSIST_ROTATOR` | bool | `true` | Persist account 429 rate limit dates & cooldowns across restarts |
 | `AISTUDIO_PROOF_SERVER_URL` | string | `https://waa.spinsnow.fun` | WAA proof signing server URL powered by [aistudio-pg-bridge](https://github.com/Lianues/aistudio-pg-bridge) (default public relay or self-hosted) |
 | `AISTUDIO_DEFAULT_TEXT_MODEL` | string | `gemini-3.7-flash` | Default text model |
-| `AISTUDIO_DEFAULT_IMAGE_MODEL` | string | `gemini-3.1-flash-image-preview` | Default image generation model |
-| `AISTUDIO_TIMEZONE` | string | Auto | Browser fingerprint & Wire protocol timezone (`America/Los_Angeles` by default) |
-| `AISTUDIO_LOCALE` | string | `en-US` | Browser fingerprint locale |
+| `AISTUDIO_TIMEZONE` | string | Auto | Wire protocol timezone (`America/Los_Angeles` by default) |
 | `AISTUDIO_DUMP_REQUESTS` | bool | `false` | Dump API request/response exchanges to console logs (enabled via `DEBUG=1`) |
 | `AISTUDIO_DUMP_FILE` | bool | `false` | Dump request/response exchanges to individual disk files |
 | `AISTUDIO_DUMP_DIR` | string | `dumps/` | Target directory for dumped exchange files |
@@ -392,13 +389,6 @@ bun x pyright
 
 # Run test suite
 uv run pytest
-```
-
-Android companion app code style checks:
-
-```bash
-# Run Kotlin code style check (configured via ~/.zshrc)
-ktlint "android/app/src/main/java/**/*.kt"
 ```
 
 ---

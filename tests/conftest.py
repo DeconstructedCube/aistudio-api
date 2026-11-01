@@ -73,7 +73,6 @@ rotator:
     rate_limited_short: 60
     rate_limited_drip: 300
     rate_limited_drip_extended: 600
-    auth_error: 300
 tier_quotas:
   Free:
     flash_models:

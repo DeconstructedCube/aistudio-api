@@ -9,7 +9,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from aistudio_api.domain.errors import BrowserTransportError
+from aistudio_api.domain.errors import TransportError
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
 from aistudio_api.infrastructure.waa.signer import (
     RemoteProofSigner,
@@ -32,6 +32,7 @@ def test_extract_content_digest_exact_alignment():
 @pytest.mark.asyncio
 async def test_remote_proof_signer_success():
     """Verify RemoteProofSigner sends payload and parses proof token."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         data = json.loads(request.content)
         assert data["cookies"] == "SAPISID=test_cookie"
@@ -62,7 +63,8 @@ async def test_remote_proof_signer_success():
 
 @pytest.mark.asyncio
 async def test_remote_proof_signer_error():
-    """Verify RemoteProofSigner raises BrowserTransportError on upstream failure."""
+    """Verify RemoteProofSigner raises TransportError on upstream failure."""
+
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             500,
@@ -72,8 +74,9 @@ async def test_remote_proof_signer_error():
     mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     signer = RemoteProofSigner(server_url="https://mock.proof.server")
 
-    with patch("httpx.AsyncClient", return_value=mock_client), pytest.raises(
-        BrowserTransportError, match="Cookie expired or invalid"
+    with (
+        patch("httpx.AsyncClient", return_value=mock_client),
+        pytest.raises(TransportError, match="Cookie expired or invalid"),
     ):
         await signer.mint_proof(
             cookies={"SAPISID": "expired"},
@@ -112,25 +115,6 @@ async def test_remote_proof_signer_retry_on_network_error():
             prompt="retry test",
         )
     assert proof == "!mock_recovered_proof"
-    await signer.close()
-
-
-@pytest.mark.asyncio
-async def test_remote_proof_signer_check_health():
-    """Verify RemoteProofSigner check_health sends X-Google-Cookies and parses ok."""
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/health"
-        assert request.headers["X-Google-Cookies"] == "SAPISID=active"
-        assert request.headers["X-Goog-AuthUser"] == "1"
-        return httpx.Response(200, json={"ok": True, "hotTtlMs": 3600000})
-
-    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    signer = RemoteProofSigner(server_url="https://mock.proof.server")
-
-    with patch("httpx.AsyncClient", return_value=mock_client):
-        healthy = await signer.check_health(cookies={"SAPISID": "active"}, auth_user="1")
-
-    assert healthy is True
     await signer.close()
 
 

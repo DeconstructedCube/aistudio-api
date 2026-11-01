@@ -8,8 +8,8 @@ from collections.abc import AsyncGenerator
 import httpx
 import pytest
 
-from aistudio_api.domain.errors import BrowserTransportError
-from aistudio_api.infrastructure.gateway.capture import CapturedRequest
+from aistudio_api.domain.errors import TransportError
+from aistudio_api.infrastructure.gateway.client import PreparedRequest
 from aistudio_api.infrastructure.gateway.streaming import StreamingGateway
 from aistudio_api.infrastructure.gateway.transport import HTTPStreamTransport
 
@@ -25,7 +25,7 @@ async def test_transport_non_streaming_request():
     mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     transport._client = mock_client
 
-    status, body = await transport.send_hooked_request(
+    status, body = await transport.send_request(
         url="https://example.com/api",
         headers={"Content-Type": "application/json"},
         body="{}",
@@ -65,7 +65,7 @@ async def test_transport_streaming_request():
 
 @pytest.mark.asyncio
 async def test_transport_error_handling():
-    """Verify non-streaming HTTP failure raises BrowserTransportError."""
+    """Verify non-streaming HTTP failure raises TransportError."""
     transport = HTTPStreamTransport()
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -74,8 +74,8 @@ async def test_transport_error_handling():
     mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     transport._client = mock_client
 
-    with pytest.raises(BrowserTransportError, match="HTTP request failed"):
-        await transport.send_hooked_request(
+    with pytest.raises(TransportError, match="HTTP request failed"):
+        await transport.send_request(
             url="https://example.com/fail",
             headers={},
             body="{}",
@@ -110,10 +110,10 @@ async def test_streaming_gateway_split_utf8_chunks():
                 yield ("chunk", full_raw[i : i + 3])
 
     gateway = StreamingGateway(session=MockSession())  # type: ignore[arg-type]
-    captured = CapturedRequest(url="https://example.com", headers={}, body="{}")
+    prepared = PreparedRequest(url="https://example.com", headers={}, body="{}")
     results: list[str] = []
     async for event_type, val in gateway.stream_chat(
-        captured=captured, model="models/gemini-2.5-flash"
+        request=prepared, model="models/gemini-2.5-flash"
     ):
         if event_type == "body" and isinstance(val, str):
             results.append(val)

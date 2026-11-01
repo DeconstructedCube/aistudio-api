@@ -71,7 +71,6 @@ export interface ImportCookiesResponse {
   account_id: string
   name: string
   cookie_count: number
-  domain_summary: Record<string, number>
   auth_user: string
   tier?: string
 }

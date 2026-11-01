@@ -5,7 +5,7 @@ from aistudio_api.infrastructure.gateway.wire_codec import (
     AistudioWireCodec,
     build_image_generation_search_tool,
     build_tools_from_names,
-    modify_body,
+    encode_request_body,
 )
 from aistudio_api.infrastructure.gateway.wire_types import (
     AistudioGenerationConfig,
@@ -18,10 +18,8 @@ from aistudio_api.infrastructure.gateway.wire_types import (
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 
 
-def test_modify_body_updates_generation_config_and_prompt():
-    original = '["models/original",[[[[null,"old"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"!snap",null,null]'
-    rewritten = modify_body(
-        original,
+def test_encode_request_body_updates_generation_config_and_prompt():
+    rewritten = encode_request_body(
         model="models/new",
         prompt="new prompt",
         system_instruction="sys",
@@ -30,7 +28,6 @@ def test_modify_body_updates_generation_config_and_prompt():
         top_p=0.9,
         top_k=32,
     )
-
     assert '"models/new"' in rewritten
     assert '"new prompt"' in rewritten
     assert '"sys"' in rewritten
@@ -139,24 +136,8 @@ def test_wire_codec_decodes_semantic_fields():
     assert decoded.generation_config.max_tokens == 128
 
 
-def test_modify_body_sanitizes_plain_text_generation_config():
-    original = '["models/original",[[[[null,"old"]],"user"]],null,[null,null,null,128,0.5,0.8,16,"application/json",[6],null,null,null,null,null,null,null,[1,null,null,3]],"!snap",null,null]'
-    rewritten = modify_body(
-        original,
-        model="models/gemma-4-31b-it",
-        prompt="hello",
-    )
-
-    assert json.loads(rewritten)[3][7] is None
-    assert '"application/json"' not in rewritten
-    assert "[6]" not in rewritten
-    assert json.loads(rewritten)[3][16] == [1, None, None, 3]
-    assert len(json.loads(rewritten)[3]) <= 17 or json.loads(rewritten)[3][17] is None
-
-def test_modify_body_enables_thinking_for_any_model():
-    original = '["models/original",[[[[null,"old"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"!snap",null,null]'
-    rewritten = modify_body(
-        original,
+def test_encode_request_body_enables_thinking_for_any_model():
+    rewritten = encode_request_body(
         model="models/new-text-model",
         prompt="hello",
     )
@@ -166,20 +147,8 @@ def test_modify_body_enables_thinking_for_any_model():
     assert len(body[3]) <= 17 or body[3][17] is None
 
 
-def test_modify_body_can_override_image_output_resolution():
-    original = json.dumps(
-        [
-            "models/original",
-            [[[[None, "old"]], "user"]],
-            None,
-            [None] * 27,
-            "!snap",
-            None,
-            None,
-        ]
-    )
-    rewritten = modify_body(
-        original,
+def test_encode_request_body_can_override_image_output_resolution():
+    rewritten = encode_request_body(
         model="models/gemini-3.1-flash-image-preview",
         prompt="hello",
         generation_config_overrides={"output_resolution": ["16:9", "1K"]},
@@ -189,10 +158,8 @@ def test_modify_body_can_override_image_output_resolution():
     assert body[3][26] == ["16:9", "1K"]
 
 
-def test_modify_body_applies_model_safety_defaults():
-    original = '["models/original",[[[[null,"old"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"!snap",null,null]'
-    rewritten = modify_body(
-        original,
+def test_encode_request_body_applies_model_safety_defaults():
+    rewritten = encode_request_body(
         model="models/gemma-4-31b-it",
         prompt="hello",
     )
@@ -206,20 +173,8 @@ def test_modify_body_applies_model_safety_defaults():
     ]
 
 
-def test_modify_body_applies_image_model_defaults():
-    original = json.dumps(
-        [
-            "models/original",
-            [[[[None, "old"]], "user"]],
-            [[None, None, 7, 4]],
-            [None] * 27,
-            "!snap",
-            None,
-            None,
-        ]
-    )
-    rewritten = modify_body(
-        original,
+def test_encode_request_body_applies_image_model_defaults():
+    rewritten = encode_request_body(
         model="models/gemini-3.1-flash-image-preview",
         prompt="hello",
     )
@@ -230,20 +185,8 @@ def test_modify_body_applies_image_model_defaults():
     assert body[3][16] == [1, None, None, 4]
 
 
-def test_modify_body_keeps_image_model_tools():
-    original = json.dumps(
-        [
-            "models/original",
-            [[[[None, "old"]], "user"]],
-            None,
-            [None] * 27,
-            "!snap",
-            None,
-            None,
-        ]
-    )
-    rewritten = modify_body(
-        original,
+def test_encode_request_body_keeps_image_model_tools():
+    rewritten = encode_request_body(
         model="models/gemini-3.1-flash-image-preview",
         prompt="hello",
         tools=[[None, None, None, [None, [[], []]]]],
@@ -253,28 +196,8 @@ def test_modify_body_keeps_image_model_tools():
     assert body[6] == [[None, None, None, [None, [[], []]]]]
 
 
-def test_modify_body_safety_off_uses_off_threshold():
-    original = '["models/original",[[[[null,"old"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"!snap",null,null]'
-    rewritten = modify_body(
-        original,
-        model="models/gemma-4-31b-it",
-        prompt="hello",
-        safety_off=True,
-    )
-
-    body = json.loads(rewritten)
-    assert body[2] == [
-        [None, None, 7, 5],
-        [None, None, 8, 5],
-        [None, None, 9, 5],
-        [None, None, 10, 5],
-    ]
-
-
-def test_modify_body_can_override_safety_settings():
-    original = '["models/original",[[[[null,"old"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"!snap",null,null]'
-    rewritten = modify_body(
-        original,
+def test_encode_request_body_can_override_safety_settings():
+    rewritten = encode_request_body(
         model="models/gemini-3.5-flash",
         prompt="hello",
         safety_settings=[
@@ -294,10 +217,8 @@ def test_modify_body_can_override_safety_settings():
     ]
 
 
-def test_modify_body_keeps_structured_generation_config_for_gemini_mode():
-    original = '["models/original",[[[[null,"old"]],"user"]],null,[null,["6"],null,128,0.5,0.8,16,"application/json",[6],0.1,0.2,true,5,null,[2,1],null,[1,null,null,3],2],"!snap",null,null,null,null,null,1,"cached",null,[[null,null,"Asia/Shanghai"],null,1]]'
-    rewritten = modify_body(
-        original,
+def test_encode_request_body_keeps_structured_generation_config_for_gemini_mode():
+    rewritten = encode_request_body(
         model="models/gemini-2.5-pro-preview-05-06",
         prompt="hello",
         generation_config_overrides={
@@ -312,9 +233,7 @@ def test_modify_body_keeps_structured_generation_config_for_gemini_mode():
             "thinking_config": [1, None, None, 3],
             "media_resolution": 2,
         },
-        sanitize_plain_text=False,
     )
-
     body = json.loads(rewritten)
     assert body[3][1] == ["STOP"]
     assert body[3][7] == "application/json"
@@ -399,9 +318,7 @@ def test_generation_config_seed_maps_to_index_18():
 
 def test_wire_codec_retains_schema_with_tools():
     """Verify response_schema and response_mime_type are retained when tools are present."""
-    original = '["models/original",[[[[null,"old"]],"user"]],null,[null,null,null,128,0.5,0.8,16,"application/json",[6]],"!snap",null,null]'
-    rewritten = modify_body(
-        original,
+    rewritten = encode_request_body(
         model="models/gemini-3.5-flash",
         prompt="test",
         tools=[[[]]],
@@ -409,7 +326,6 @@ def test_wire_codec_retains_schema_with_tools():
             "response_mime_type": "application/json",
             "response_schema": [6],
         },
-        sanitize_plain_text=False,
     )
     decoded = AistudioWireCodec().decode(rewritten)
     assert decoded.tools == [[[]]]
@@ -417,11 +333,10 @@ def test_wire_codec_retains_schema_with_tools():
     assert decoded.generation_config.response_schema == [6]
 
 
-def test_modify_body_handles_tool_config_semantically_and_preserves_evergreen_uri():
-    original = '["models/gemini-3.7-flash",[[[[null,"hi"]],"user"]],null,[null,null,null,65536,1,0.95,64],"!snap",null,null,null,null,null,1]'
-    rewritten = modify_body(
-        original,
+def test_encode_request_body_handles_tool_config_semantically_and_preserves_evergreen_uri():
+    rewritten = encode_request_body(
         model="models/gemini-3.7-flash",
+        prompt="hi",
         tools=[[None, [["get_weather", "desc", None], ["other_fn", "desc", None]]]],
         tool_config=[None, [2, ["get_weather"]]],
     )
@@ -432,12 +347,12 @@ def test_modify_body_handles_tool_config_semantically_and_preserves_evergreen_ur
     assert body[6] == [[None, [["get_weather", "desc", None]]]]
 
     # Mode NONE suppresses tools completely
-    rewritten_none = modify_body(
-        original,
+    rewritten_none = encode_request_body(
         model="models/gemini-3.7-flash",
+        prompt="hi",
         tools=[[None, [["get_weather", "desc", None]]]],
         tool_config=[None, [3]],
     )
     body_none = json.loads(rewritten_none)
-    assert body_none[6] is None
-    assert body_none[7] is None
+    assert len(body_none) <= 6 or body_none[6] is None
+    assert len(body_none) <= 7 or body_none[7] is None

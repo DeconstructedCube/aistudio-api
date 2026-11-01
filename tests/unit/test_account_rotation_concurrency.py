@@ -18,60 +18,49 @@ from aistudio_api.application.account_rotator import (
     get_seconds_until_pacific_midnight,
 )
 from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
-from aistudio_api.infrastructure.gateway.capture import (
-    CapturedRequest,
-    RequestCaptureService,
+from aistudio_api.infrastructure.gateway.client import (
+    AIStudioClient,
+    PreparedRequest,
 )
-from aistudio_api.infrastructure.gateway.session import GatewaySession
+from aistudio_api.infrastructure.gateway.session import (
+    GENERATE_CONTENT_URL,
+    GatewaySession,
+    SessionContext,
+)
 
 
 @pytest.mark.asyncio
-async def test_capture_service_concurrency_and_caching():
-    """并发请求抓取模板时，模板捕获只执行 1 次，快照签名每次实时生成（不复用缓存）。"""
+async def test_prepare_request_concurrency():
+    """并发构建请求时，每次请求均实时生成全新的 WAA 快照签名。"""
     mock_session = MagicMock(spec=GatewaySession)
-    mock_session.generate_snapshot = AsyncMock(return_value="mock_snap")
+    mock_session.ensure_ready = AsyncMock(return_value=SessionContext(auth_user="0"))
+    mock_session.generate_snapshot = AsyncMock(return_value="!mock_snap")
 
-    call_count = 0
+    client = AIStudioClient()
+    client._session = mock_session
 
-    async def fake_capture_template(model: str):
-        nonlocal call_count
-        call_count += 1
-        await asyncio.sleep(0.001)
-        return {
-            "url": "https://example.com/generate",
-            "headers": {"content-type": "application/json"},
-            "body": '["models/gemini-2.5-flash",[[[[null,"old"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"orig_snap"]',
-        }
-
-    mock_session.capture_template = AsyncMock(side_effect=fake_capture_template)
-    service = RequestCaptureService(session=mock_session)
-
-    # 5 个并发请求同时请求同一个 model
     tasks = [
-        service.capture(prompt=f"hi {i}", model="gemini-2.5-flash") for i in range(5)
+        client.prepare_request(prompt=f"hi {i}", model="gemini-2.5-flash")
+        for i in range(5)
     ]
     results = await asyncio.gather(*tasks)
 
-    # capture_template 应当只被执行 1 次（模板复用）
-    assert call_count == 1
     assert len(results) == 5
-    # 快照签名是每次实时生成的，共调用 5 次
     assert mock_session.generate_snapshot.call_count == 5
     for res in results:
-        assert isinstance(res, CapturedRequest)
-        assert res.url == "https://example.com/generate"
+        assert isinstance(res, PreparedRequest)
+        assert res.url == GENERATE_CONTENT_URL
 
-    # 再次请求，模板直接命中，快照签名生成第 6 次
-    res6 = await service.capture(prompt="hi again", model="gemini-2.5-flash")
-    assert call_count == 1
+    res6 = await client.prepare_request(prompt="hi again", model="gemini-2.5-flash")
     assert mock_session.generate_snapshot.call_count == 6
     assert res6 is not None
 
 
 @pytest.mark.asyncio
-async def test_capture_service_ephemeral_signature_identical_prompts():
+async def test_prepare_request_ephemeral_signature_identical_prompts():
     """相同 Prompt 并发请求时，每次都生成全新快照签名，绝不复用。"""
     mock_session = MagicMock(spec=GatewaySession)
+    mock_session.ensure_ready = AsyncMock(return_value=SessionContext(auth_user="0"))
     snap_counter = 0
 
     async def fake_snapshot(contents, *args, **kwargs):
@@ -80,24 +69,16 @@ async def test_capture_service_ephemeral_signature_identical_prompts():
         return f"!snap_token_{snap_counter}"
 
     mock_session.generate_snapshot = AsyncMock(side_effect=fake_snapshot)
-    mock_session.capture_template = AsyncMock(
-        return_value={
-            "url": "https://example.com/generate",
-            "headers": {"content-type": "application/json"},
-            "body": '["models/gemini-2.5-flash",[[[[null,"old"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"orig"]',
-        }
-    )
-    service = RequestCaptureService(session=mock_session)
+    client = AIStudioClient()
+    client._session = mock_session
 
-    # 3 个完全相同的并发 Prompt
     tasks = [
-        service.capture(prompt="same question", model="gemini-2.5-flash")
+        client.prepare_request(prompt="same question", model="gemini-2.5-flash")
         for _ in range(3)
     ]
     results = await asyncio.gather(*tasks)
 
     assert len(results) == 3
-    # 签名各不相同，杜绝 403 重放
     snapshots = [r.snapshot for r in results if r]
     assert snapshots == ["!snap_token_1", "!snap_token_2", "!snap_token_3"]
     assert len(set(snapshots)) == 3
@@ -254,7 +235,7 @@ async def test_try_switch_account_avalanche_protection():
     mock_rotator = MagicMock(spec=AccountRotator)
     mock_acc_service = MagicMock()
     mock_client = MagicMock()
-    mock_client._session = MagicMock()
+    mock_client.session = MagicMock()
 
     acc1 = AccountMeta(
         id="acc_1", name="Acc 1", email="acc1@test.com", created_at="2026-01-01"
@@ -331,28 +312,22 @@ async def test_runtime_state_record_model_stats():
 
 
 @pytest.mark.asyncio
-async def test_capture_model_preservation_when_template_differs():
-    """测试当 Hook 拦截模板为 3.7-flash 时，请求 3.8-flash 不会被模板模型覆盖。"""
+async def test_prepare_request_model_preservation():
+    """测试构建请求时模型名称准确写入顶层 wire 数组。"""
     mock_session = MagicMock(spec=GatewaySession)
+    mock_session.ensure_ready = AsyncMock(return_value=SessionContext(auth_user="0"))
     mock_session.generate_snapshot = AsyncMock(return_value="!mock_snap")
-    mock_session.capture_template = AsyncMock(
-        return_value={
-            "url": "https://example.com/generate",
-            "headers": {"content-type": "application/json"},
-            "body": '["models/gemini-3.7-flash",[[[[null,"template prompt"]],"user"]],null,[null,null,null,128,0.5,0.8,16],"old_snap"]',
-        }
-    )
-    service = RequestCaptureService(session=mock_session)
+    client = AIStudioClient()
+    client._session = mock_session
 
-    captured = await service.capture(
+    prepared = await client.prepare_request(
         prompt="Hello",
         model="models/gemini-3.8-flash",
     )
-    assert captured is not None
-    # 确认 captured.model 是用户请求的模型，而不是模板的 gemini-3.7-flash
-    assert captured.model == "models/gemini-3.8-flash"
+    assert prepared is not None
+    assert prepared.model == "models/gemini-3.8-flash"
 
-    body = json.loads(captured.body)
+    body = json.loads(prepared.body)
     assert body[0] == "models/gemini-3.8-flash"
 
 
@@ -429,14 +404,13 @@ async def test_ensure_authorization_header_concurrency_and_fallback():
 
 @pytest.mark.asyncio
 async def test_try_switch_account_concurrent_403_avalanche_and_in_place_recovery():
-    """并发多个协程遭遇 403 时，在位自愈仅执行 1 次，自愈后立即清除 auth_cooldown 避免连锁 403。"""
+    """并发多个协程遭遇 403 时，在位自愈仅执行 1 次，自愈后立即重置错误状态避免连锁 403。"""
     from aistudio_api.api.state import runtime_state
 
     mock_rotator = MagicMock(spec=AccountRotator)
     mock_acc_service = MagicMock()
     mock_client = MagicMock()
-    mock_client._session = MagicMock()
-
+    mock_client.session = MagicMock()
     acc1 = AccountMeta(
         id="acc_1", name="Account 1", email="acc1@test.com", created_at="2026-01-01"
     )
@@ -473,9 +447,7 @@ async def test_try_switch_account_concurrent_403_avalanche_and_in_place_recovery
     ):
         # 3 个并发协程同时遇到 403 并尝试切号/自愈
         tasks = [
-            try_switch_account(
-                model="gemini-3.8-flash", failed_account_id="acc_1"
-            )
+            try_switch_account(model="gemini-3.8-flash", failed_account_id="acc_1")
             for _ in range(3)
         ]
         results = await asyncio.gather(*tasks)
@@ -483,6 +455,6 @@ async def test_try_switch_account_concurrent_403_avalanche_and_in_place_recovery
         assert all(results)
         # 1. 防雪崩：在位自愈只应当执行 1 次实质性的 activate_account 调用
         assert activate_count == 1
-        # 2. 自愈成功后，必须清除账号的 auth_cooldown，使账号立即恢复健康可用，杜绝并发下后续请求直接 403
+        # 2. 自愈成功后，必须清除账号的错误状态，使账号立即恢复健康可用，杜绝并发下后续请求直接 403
         assert stats.is_available("gemini-3.8-flash")
-        assert stats.auth_cooldown == 0.0
+        assert stats.auth_errors == 0

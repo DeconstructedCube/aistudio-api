@@ -14,7 +14,7 @@ body:
       label: 运行平台与环境 (Operating Environment)
       description: 请选择你当前运行 aistudio-api 的主要平台
       options:
-        - "Android (Termux / proot-distro)"
+        - "Android (Termux)"
         - "Linux (Docker 容器部署)"
         - "Linux (原生宿主 Python)"
         - "macOS"

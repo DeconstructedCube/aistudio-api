@@ -33,7 +33,7 @@ protected_router = APIRouter()
 
 
 def health_response() -> HealthResponse:
-    return HealthResponse(status="ok", busy=False)
+    return HealthResponse(status="ok")
 
 
 def stats_response() -> StatsResponse:
@@ -124,6 +124,7 @@ def stats_response() -> StatsResponse:
 async def health():
     return health_response()
 
+
 @protected_router.get("/stats", response_model=StatsResponse)
 async def stats():
     return stats_response()
@@ -172,7 +173,11 @@ async def clear_cooldown(
         rotator.clear_cooldown(req.account_id, model=req.model)
     else:
         rotator.clear_all_cooldowns()
-    logger.info("已清除冷却状态: 账号=%s, 模型=%s", req.account_id or "全部", req.model or "全部")
+    logger.info(
+        "已清除冷却状态: 账号=%s, 模型=%s",
+        req.account_id or "全部",
+        req.model or "全部",
+    )
 
     return {"ok": True, "accounts": rotator.get_all_stats()}
 
@@ -223,12 +228,12 @@ async def force_next_account(
     account_service = runtime_state.account_service
     client = runtime_state.client
 
-    if account_service is None or client is None or client._session is None:
+    if account_service is None or client is None or client.session is None:
         raise HTTPException(503, detail="服务未就绪")
 
     result = await account_service.activate_account(
         next_account.id,
-        client._session,
+        client.session,
     )
 
     if result is None:
