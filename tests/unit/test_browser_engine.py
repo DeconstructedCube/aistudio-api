@@ -115,12 +115,12 @@ def test_find_chromium_executable_strictly_requires_cloakbrowser(tmp_path):
     def fake_opt_is_dir(self):
         if self.name == ".cloakbrowser":
             return False
-        if str(self) == "/opt/cloakbrowser":
+        if Path(self) == Path("/opt/cloakbrowser"):
             return True
         return orig_is_dir(self)
 
     def fake_opt_glob(self, pat):
-        if str(self) == "/opt/cloakbrowser":
+        if Path(self) == Path("/opt/cloakbrowser"):
             return [fake_opt_chrome]
         return orig_glob(self, pat)
 

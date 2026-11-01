@@ -42,11 +42,19 @@ def to_gemini_usage_metadata(
     completion_tokens = _coerce_usage_int(usage.get("completion_tokens"))
     if completion_tokens == 0:
         completion_tokens = visible_tokens + reasoning_tokens
-    candidates_tokens = completion_tokens
+    candidates_tokens = (
+        visible_tokens if completion_details else completion_tokens
+    )
+    # Gemini 语义：candidatesTokenCount 只统计可见输出，思考 token 单独计入
+    # thoughtsTokenCount，且 totalTokenCount = prompt + candidates + thoughts。
+    # 上游的 completion_tokens 已包含 reasoning，直接赋给 candidates 会让
+    # candidates + thoughts 超过 total（思考 token 被重复计数）。
     prompt_tokens = _coerce_usage_int(usage.get("prompt_tokens"))
     total_tokens = _coerce_usage_int(usage.get("total_tokens"))
-    if total_tokens == 0 and (prompt_tokens or candidates_tokens):
-        total_tokens = prompt_tokens + candidates_tokens
+    if total_tokens == 0 and (
+        prompt_tokens or candidates_tokens or reasoning_tokens
+    ):
+        total_tokens = prompt_tokens + candidates_tokens + reasoning_tokens
     raw_cached = usage.get("cached_tokens")
     cached_tokens = (
         _coerce_usage_int(raw_cached)

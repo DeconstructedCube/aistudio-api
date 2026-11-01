@@ -136,6 +136,8 @@ def is_browser_session_hang_error(exc: Exception) -> bool:
                 "aborted",
                 "snapshot",
                 "hook install",
+                "session transition",
+                "not ready",
             )
         )
     return False

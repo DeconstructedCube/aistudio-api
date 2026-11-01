@@ -257,6 +257,9 @@ class ConfigYamlUpdateRequest(BaseModel):
 async def get_system_config() -> dict[str, object]:
     """获取系统运行配置与 config.yaml 内容。"""
     from aistudio_api.config import settings
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        get_configured_proof_engine_settings,
+    )
     from aistudio_api.infrastructure.utils.logger import (
         get_dump_dir,
         get_log_level,
@@ -282,6 +285,7 @@ async def get_system_config() -> dict[str, object]:
         "debug_env_active": is_debug_env_active(),
         "dump_to_file": is_dump_to_file_enabled(),
         "dump_dir": str(get_dump_dir()),
+        "proof_engine": get_configured_proof_engine_settings(),
     }
 
 
@@ -557,3 +561,29 @@ async def update_api_key_name(
     logger.info("更新 API Key 备注: 前缀=%s, 备注=%s", key_value[:8] + "...", new_name)
 
     return updated_item
+
+
+class ProofEngineConfigRequest(BaseModel):
+    provider: str | None = None
+    remote_url: str | None = None
+    auto_fallback: bool | None = None
+    timeout_seconds: int | None = None
+
+
+@protected_router.put("/config/proof-engine")
+async def update_proof_engine_config(
+    req: ProofEngineConfigRequest,
+) -> dict[str, object]:
+    """更新 WAA / BotGuard 签名引擎配置（支持热切换）。"""
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        update_configured_proof_engine_settings,
+    )
+
+    updated = update_configured_proof_engine_settings(
+        provider=req.provider,
+        remote_url=req.remote_url,
+        auto_fallback=req.auto_fallback,
+        timeout_seconds=req.timeout_seconds,
+    )
+    logger.info("签名引擎配置已更新: %s", updated)
+    return {"ok": True, "message": "签名引擎配置已保存并生效", "proof_engine": updated}

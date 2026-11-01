@@ -271,6 +271,10 @@ class Settings:
     dump_to_file: bool = _load_dump_to_file_env()
     dump_dir: str = os.getenv("AISTUDIO_DUMP_DIR", str(_PROJECT_ROOT / "dumps"))
     log_level: str = "INFO"
+    proof_engine_provider: str = os.getenv("AISTUDIO_PROOF_ENGINE", "browser")
+    proof_engine_remote_url: str = os.getenv("AISTUDIO_PROOF_REMOTE_URL", "https://waa.spinsnow.fun")
+    proof_engine_auto_fallback: bool = _load_bool_env("AISTUDIO_PROOF_AUTO_FALLBACK", default=True)
+    proof_engine_timeout: int = _load_int_env("AISTUDIO_PROOF_TIMEOUT", default=15)
 
     @property
     def auth_enabled(self) -> bool:

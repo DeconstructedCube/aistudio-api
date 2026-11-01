@@ -1,4 +1,12 @@
+export interface ProofEngineConfig {
+  provider: 'browser' | 'remote'
+  remote_url: string
+  auto_fallback: boolean
+  timeout_seconds?: number
+}
+
 export interface SystemConfig {
+  proof_engine?: ProofEngineConfig
   port: number
   browser_port: number
   browser_headless: boolean

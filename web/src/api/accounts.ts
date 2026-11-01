@@ -38,6 +38,27 @@ export const accountsApi = {
     })
   },
 
+  rotateCookies(): Promise<{ ok: boolean; message: string }> {
+    return request('/api/accounts/rotate-cookies', {
+      method: 'POST',
+    })
+  },
+
+  test(id: string): Promise<{
+    ok: boolean
+    alive: boolean
+    status_code: number
+    elapsed_ms: number
+    tier?: string
+    email?: string
+    reply?: string
+    error?: string
+  }> {
+    return request(`/api/accounts/${id}/test`, {
+      method: 'POST',
+    })
+  },
+
   delete(id: string): Promise<{ ok: boolean }> {
     return request<{ ok: boolean }>(`/api/accounts/${id}`, {
       method: 'DELETE',
