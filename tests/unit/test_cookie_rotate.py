@@ -1,12 +1,14 @@
 import json
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from aistudio_api.infrastructure.gateway.cookie_rotate import (
-    parse_set_cookie_header,
     build_cookie_header_string,
-    rotate_google_cookies_http,
     merge_rotated_cookies,
+    parse_set_cookie_header,
     rotate_account_cookies,
+    rotate_google_cookies_http,
 )
 
 
@@ -59,7 +61,12 @@ async def test_rotate_google_cookies_http_success():
     ])
 
     with patch("httpx.AsyncClient.post", return_value=fake_resp):
-        ok, updated, err = await rotate_google_cookies_http([{"name": "SID", "value": "s1"}])
+        ok, updated, err = await rotate_google_cookies_http(
+            [
+                {"name": "SID", "value": "s1"},
+                {"name": "LSID", "value": "l1", "domain": "accounts.google.com"},
+            ]
+        )
         assert ok is True
         assert err is None
         assert len(updated) == 2
@@ -76,6 +83,7 @@ async def test_rotate_account_cookies_end_to_end(tmp_path):
         "cookies": [
             {"name": "SID", "value": "test_sid"},
             {"name": "__Secure-1PSIDTS", "value": "old_ts"},
+            {"name": "LSID", "value": "test_lsid", "domain": "accounts.google.com"},
         ]
     }), encoding="utf-8")
 

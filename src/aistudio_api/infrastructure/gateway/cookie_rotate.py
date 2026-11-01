@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from aistudio_api.infrastructure.gateway.session_auth import (
+    sync_cookies_to_sibling_accounts,
+)
 from aistudio_api.infrastructure.utils.common import atomic_write_json
-from aistudio_api.infrastructure.gateway.session_auth import sync_cookies_to_sibling_accounts
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 if TYPE_CHECKING:
@@ -23,6 +26,35 @@ DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
 )
+
+# RotateCookies 依赖 accounts.google.com 的 host-only 凭据。缺了它们 Google 会
+# 直接返回 401；上游实现（aistudio-pg-bridge）的经验是：用不完整的 cookie 硬调，
+# Google 可能反过来把 SID 会话作废，所以宁可跳过也不要盲试。
+ROTATE_REQUIRED_COOKIES = ("LSID", "__Host-1PLSID", "__Host-3PLSID")
+
+# 跳过（凭据不全）与真正失败要分开：前者是预期状态，不该刷 warning。
+SKIP_PREFIX = "skipped:"
+
+
+def cookie_names(cookies: list[dict[str, Any]] | dict[str, str] | None) -> set[str]:
+    """从 auth.json 的 list 形态或普通 dict 里取出 cookie 名集合。"""
+    if isinstance(cookies, dict):
+        return {str(k) for k in cookies}
+    names: set[str] = set()
+    for c in cookies or []:
+        if isinstance(c, dict):
+            name = c.get("name")
+            if name:
+                names.add(str(name))
+    return names
+
+
+def has_rotate_credentials(
+    cookies: list[dict[str, Any]] | dict[str, str] | None,
+) -> bool:
+    """判断这组 cookie 是否具备调用 RotateCookies 的前提条件。"""
+    present = cookie_names(cookies)
+    return any(name in present for name in ROTATE_REQUIRED_COOKIES)
 
 
 def parse_set_cookie_header(header: str) -> dict[str, Any]:
@@ -60,10 +92,8 @@ def parse_set_cookie_header(header: str) -> dict[str, Any]:
             elif kl == "samesite":
                 cookie["sameSite"] = vl
             elif kl == "max-age":
-                try:
+                with suppress(ValueError):
                     cookie["expires"] = now + int(vl)
-                except ValueError:
-                    pass
         else:
             kl = part.strip().lower()
             if kl == "httponly":
@@ -104,6 +134,16 @@ async def rotate_google_cookies_http(
     cookie_str = build_cookie_header_string(cookies)
     if not cookie_str:
         return False, [], "Missing cookies"
+
+    if not has_rotate_credentials(cookies):
+        return (
+            False,
+            [],
+            (
+                f"{SKIP_PREFIX} 缺少 {'/'.join(ROTATE_REQUIRED_COOKIES)}"
+                "（accounts.google.com host-only cookie），跳过轮转"
+            ),
+        )
 
     headers = {
         "Cookie": cookie_str,
@@ -202,7 +242,13 @@ async def rotate_account_cookies(
     latency_ms = int((time.perf_counter() - t0) * 1000)
 
     if not ok:
-        logger.warning("RotateCookies: 轮转失败 (耗时 %d ms): %s", latency_ms, err)
+        if err and err.startswith(SKIP_PREFIX):
+            # 凭据不全是常态（导入时没抓 host-only cookie），按 info 记录
+            logger.info("RotateCookies: %s", err[len(SKIP_PREFIX) :].strip())
+        else:
+            logger.warning(
+                "RotateCookies: 轮转失败 (耗时 %d ms): %s", latency_ms, err
+            )
         return False
 
     merged = merge_rotated_cookies(raw_cookies, new_cookies)
