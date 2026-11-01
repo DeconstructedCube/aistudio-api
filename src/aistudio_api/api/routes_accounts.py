@@ -139,6 +139,30 @@ class ImportCookiesRequest(BaseModel):
     tier: str | None = None
 
 
+def _rotate_capability_notice(
+    cookies: list[dict[str, object]] | None,
+) -> tuple[bool, list[str]]:
+    """检查 cookie 是否具备纯 HTTP RotateCookies 的前提。
+
+    Google 的 RotateCookies 依赖 accounts.google.com 的 host-only 凭据
+    （LSID / __Host-1PLSID / __Host-3PLSID）。缺了它们必然 401，而且用不完整
+    的 cookie 硬调可能反过来作废 SID 会话，所以这里只提示、不尝试。
+    """
+    from aistudio_api.infrastructure.gateway.cookie_rotate import (
+        has_rotate_credentials,
+    )
+
+    if has_rotate_credentials(cookies):
+        return True, []
+    return False, [
+        "缺少 accounts.google.com 的 host-only cookie"
+        "（LSID / __Host-1PLSID / __Host-3PLSID），"
+        "纯 HTTP RotateCookies 轮换不可用，将依赖浏览器心跳保活。"
+        "如需启用：先在浏览器登录 accounts.google.com，"
+        "再导出该域的全量 cookie 重新导入。"
+    ]
+
+
 class ImportCookiesResponse(BaseModel):
     account_id: str
     name: str
@@ -146,6 +170,9 @@ class ImportCookiesResponse(BaseModel):
     domain_summary: dict[str, int]
     auth_user: str = "0"
     tier: str = "Free"
+    # 是否具备纯 HTTP RotateCookies 的前提（accounts.google.com 的 host-only 凭据）
+    rotate_ready: bool = False
+    warnings: list[str] = []
 
 
 class ProbeAndImportRequest(BaseModel):
@@ -156,6 +183,7 @@ class ProbeAndImportRequest(BaseModel):
 class ProbeAndImportResponse(BaseModel):
     imported_count: int
     accounts: list[AccountResponse]
+    warnings: list[str] = []
 
 
 class BundleAccountItem(BaseModel):
@@ -801,6 +829,11 @@ async def import_cookies(
             log.info("已导入 Cookie 并保存文件: 数量=%d, 账号=%s", count, account.name)
     except Exception as e:
         log.warning("为 %s 注入浏览器 Cookie 失败: %s", account.name, e)
+
+    rotate_ready, warnings = _rotate_capability_notice(cookie_list)
+    if not rotate_ready:
+        log.warning("账号 %s 缺少 LSID，纯 HTTP 轮换不可用", account.name)
+
     return ImportCookiesResponse(
         account_id=account.id,
         name=account.name,
@@ -808,6 +841,8 @@ async def import_cookies(
         domain_summary=domain_summary,
         auth_user=account.auth_user,
         tier=account.tier,
+        rotate_ready=rotate_ready,
+        warnings=warnings,
     )
 
 
@@ -852,10 +887,14 @@ async def probe_and_import(
         browser_session = client_obj._session
         if browser_session is not None:
             await account_service.activate_account(metas[0].id, browser_session)
+    _rotate_ok, rotate_warnings = _rotate_capability_notice(
+        storage_state.get("cookies") if isinstance(storage_state, dict) else None
+    )
     log.info("Cookie 探活完成: 导入账号数=%d", len(imported_accounts))
     return ProbeAndImportResponse(
         imported_count=len(imported_accounts),
         accounts=imported_accounts,
+        warnings=rotate_warnings,
     )
 
 
