@@ -39,6 +39,9 @@ from aistudio_api.domain.errors import (
     parse_upstream_grpc_error,
 )
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
+from aistudio_api.infrastructure.gateway.model_defaults import (
+    strip_model_thinking_suffix,
+)
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("api.gemini")
@@ -280,9 +283,24 @@ async def handle_attempt_exception(
             exc,
         )
         client.clear_templates()
-        if not has_yielded_data and await try_switch_account(
-            model=target_model, failed_account_id=failed_id
-        ):
+        switched = False
+        if not has_yielded_data:
+            try:
+                switched = await try_switch_account(
+                    model=target_model, failed_account_id=failed_id
+                )
+            except (RuntimeError, TimeoutError) as recovery_error:
+                # 切号本身会触发 BotGuard 重握手；恢复阶段再抛异常时不能直接
+                # 穿透出去，否则连“关掉浏览器重建”的兜底都执行不到，第一次
+                # 尝试就放弃整个重试循环。
+                logger.warning(
+                    "会话恢复失败 (%d/%d)，关闭浏览器后重试: %s",
+                    attempt + 1,
+                    MAX_RETRIES,
+                    recovery_error,
+                )
+                exc = recovery_error
+        if switched:
             logger.info("已切换账号重试: 尝试=%d/%d", attempt + 1, MAX_RETRIES)
             return True
         if (
@@ -346,7 +364,8 @@ async def handle_gemini_generate_content(
 
     last_error: Exception | None = None
     for attempt in range(MAX_RETRIES):
-        await ensure_active_account(attempt, model=model_path)
+        clean_model_for_account, _ = strip_model_thinking_suffix(model_path)
+        await ensure_active_account(attempt, model=clean_model_for_account)
         normalized = None
         try:
             normalized = normalize_gemini_request(req, model_path)

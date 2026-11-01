@@ -78,7 +78,7 @@ async def test_capture_service_ephemeral_signature_identical_prompts():
     mock_session = MagicMock(spec=BrowserSession)
     snap_counter = 0
 
-    async def fake_snapshot(contents):
+    async def fake_snapshot(contents, *args, **kwargs):
         nonlocal snap_counter
         snap_counter += 1
         return f"!snap_token_{snap_counter}"

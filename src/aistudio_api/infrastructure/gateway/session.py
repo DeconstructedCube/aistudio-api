@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import json
+import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager, suppress
 from hashlib import sha256
@@ -24,6 +25,7 @@ from aistudio_api.infrastructure.browser.scripts import (
 from aistudio_api.infrastructure.gateway.botguard_bootstrap import (
     bootstrap_botguard_and_template,
 )
+from aistudio_api.infrastructure.gateway.remote_proof import RemoteProofClient
 from aistudio_api.infrastructure.gateway.session_auth import (
     bootstrap_google_session,
     derive_profile_dir,
@@ -80,10 +82,12 @@ class BrowserSession:
         self._transition_lock = asyncio.Lock()
         self._snapshot_lock = asyncio.Lock()
         self._transport = XHRStreamTransport()
+        self._remote_proof_client = RemoteProofClient()
         self._retiring_contexts: list[SessionContext] = []
         self._background_tasks: set[asyncio.Task[object]] = set()
         self._in_flight: int = 0
         self._stream_cleanup_count: int = 0
+        self._last_activity: float = time.time()
 
     @property
     def state(self) -> SessionState:
@@ -138,17 +142,33 @@ class BrowserSession:
     async def request_scope(self):
         """追踪活动请求。"""
         self._in_flight += 1
+        self._last_activity = time.time()
+        ctx = self.active_context
+        if ctx is not None:
+            ctx.in_flight += 1
         try:
-            yield self.active_context
+            yield ctx
         finally:
             self._in_flight = max(0, self._in_flight - 1)
+            self._last_activity = time.time()
+            if ctx is not None:
+                ctx.decr_in_flight()
 
     async def ensure_ready(self) -> SessionContext:
         """Wait until session is 100% READY."""
         if self._gate.is_ready() and self._gate.active_context is not None:
             return self._gate.active_context
 
-        if self._gate.state == SessionState.UNINITIALIZED:
+        # 会话门处于 FAILED 时不再永久卡死：重置后重建会话。
+        # 原逻辑只在 UNINITIALIZED 时重建，一旦 set_failed 就永远抛错，
+        # 后续每个请求都在几十毫秒内直接失败，只能重启进程。
+        if self._gate.state in (SessionState.UNINITIALIZED, SessionState.FAILED):
+            if self._gate.state == SessionState.FAILED:
+                log.warning(
+                    "会话门处于 FAILED 状态（%s），重置后重建会话",
+                    getattr(self._gate, "_last_error", None),
+                )
+                self._gate.reset()
             await self.transition_to_account(self._auth_file, force_refresh=False)
 
         return await self._gate.wait_ready()
@@ -223,7 +243,12 @@ class BrowserSession:
                 else:
                     new_page = await self._cdp_client.connect_page(block_assets=True)
 
-                await load_cookies_to_page(new_page, auth_file)
+                await load_cookies_to_page(
+                    new_page,
+                    auth_file,
+                    switching_account=old_context is not None,
+                    previous_auth=old_context.auth_file if old_context else None,
+                )
                 await navigate_to_aistudio(
                     new_page,
                     auth_user=target_auth_user,
@@ -231,7 +256,9 @@ class BrowserSession:
                 )
 
                 async def _reload_cb(page: CDPPage) -> bool:
-                    return await load_cookies_to_page(page, auth_file)
+                    return await load_cookies_to_page(
+                        page, auth_file, force_inject=True
+                    )
 
                 snap_key, base_template = await bootstrap_botguard_and_template(
                     new_page,
@@ -362,12 +389,39 @@ class BrowserSession:
             log.debug("适配模型名称至模板失败: %s", e)
         return base
 
-    async def generate_snapshot(
+    def _extract_account_cookies(self, ctx: SessionContext) -> str:
+        from aistudio_api.infrastructure.gateway.remote_proof import _format_cookies
+
+        auth_file = ctx.auth_file or self._auth_file
+        if auth_file and Path(auth_file).is_file():
+            try:
+                data = json.loads(Path(auth_file).read_text(encoding="utf-8"))
+                cookies = data.get("cookies")
+                formatted = _format_cookies(cookies)
+                if formatted:
+                    return formatted
+            except Exception as e:
+                log.debug("Failed to read cookies from auth_file %s: %s", auth_file, e)
+        return ""
+
+    async def _get_cookies_for_remote_proof(self, ctx: SessionContext) -> str:
+        cookies_str = self._extract_account_cookies(ctx)
+        if cookies_str:
+            return cookies_str
+        if ctx.page and not ctx.page.is_closed():
+            try:
+                raw_cookies = await ctx.page.evaluate("() => document.cookie")
+                if raw_cookies and isinstance(raw_cookies, str):
+                    return raw_cookies
+            except Exception:
+                pass
+        return ""
+
+    async def _generate_browser_snapshot(
         self,
         contents: list[AistudioContent],
-        ctx: SessionContext | None = None,
+        ctx: SessionContext,
     ) -> str:
-        active_ctx = ctx or await self.ensure_ready()
         # 严格遵守 Google AI Studio 前端 JS 逆向逻辑 (见 live_m=_b.js: _.gD / _.jn / _.VC):
         # 1. 仅提取 contents (字段 2)，绝不包含 system_instruction
         # 2. 遍历每个 Part: 文本 -> getText(), 内联图片 -> getData().Fe(), 文件 -> getId(), 其余 -> ""
@@ -390,7 +444,7 @@ class BrowserSession:
             args = build_snapshot_args(prompt=prompt, content_hash=content_hash)
             for attempt in range(3):
                 try:
-                    raw_res = await active_ctx.page.evaluate(
+                    raw_res = await ctx.page.evaluate(
                         SNAPSHOT_GENERATE_JS, args=args, timeout_s=15.0
                     )
                     snapshot = ""
@@ -402,13 +456,55 @@ class BrowserSession:
                         log.debug("内容快照计算完成: hash=%s, 长度=%d", content_hash[:8], len(snapshot))
                         return snapshot
                 except Exception as e:
-                    log.debug("计算内容快照失败: 尝试=%d, 错误=%s", attempt + 1, e)
+                    log.debug("浏览器快照计算第 %d 次尝试失败: %s", attempt + 1, e)
                 if attempt < 2:
-                    await active_ctx.page.wait_for_timeout(300)
+                    await ctx.page.wait_for_timeout(300)
 
         raise RuntimeError(
             f"Snapshot generation failed for content hash {content_hash[:8]}"
         )
+
+    async def generate_snapshot(
+        self,
+        contents: list[AistudioContent],
+        ctx: SessionContext | None = None,
+        model: str | None = None,
+    ) -> str:
+        from aistudio_api.infrastructure.gateway.model_defaults import (
+            get_configured_proof_engine_settings,
+        )
+
+        active_ctx = ctx or await self.ensure_ready()
+        engine_cfg = get_configured_proof_engine_settings()
+        provider = str(engine_cfg.get("provider") or "browser").lower()
+        auto_fallback = bool(engine_cfg.get("auto_fallback", True))
+        remote_url = str(engine_cfg.get("remote_url") or "https://waa.spinsnow.fun")
+        timeout = float(engine_cfg.get("timeout_seconds") or 15)
+
+        if provider == "remote":
+            try:
+                cookies = await self._get_cookies_for_remote_proof(active_ctx)
+                if not cookies:
+                    raise RuntimeError("Active session has no valid cookies for remote proof")
+                auth_user = active_ctx.auth_user or "0"
+                return await self._remote_proof_client.mint_proof(
+                    cookies=cookies,
+                    model=model or "models/gemini-3.8-flash",
+                    auth_user=auth_user,
+                    contents=contents,
+                    remote_url=remote_url,
+                    timeout=timeout,
+                )
+            except Exception as e:
+                if auto_fallback:
+                    log.warning(
+                        "⚠️ 远程 WAA 逆向签名失败 (%s)，正在自动降级至本地 Chrome 浏览器生成快照...",
+                        e,
+                    )
+                    return await self._generate_browser_snapshot(contents, active_ctx)
+                raise
+
+        return await self._generate_browser_snapshot(contents, active_ctx)
 
     async def send_hooked_request(
         self,
@@ -482,10 +578,17 @@ class BrowserSession:
         ):
             with suppress(Exception):
                 await target_page.evaluate(DOM_GC_CLEANUP_JS)
-            if self._stream_cleanup_count % 10 == 0:
-                with suppress(Exception):
-                    await target_page.collect_garbage()
-                gc.collect()
+            if self._in_flight <= 0 and (self._stream_cleanup_count % 5 == 0):
+                # Google rolls __Secure-1PSIDTS inside the browser every ~15
+                # minutes. Without this write-back a restart re-seeds the
+                # session from hours-old credentials and immediately 403s.
+                if self._auth_file:
+                    with suppress(Exception):
+                        await save_browser_cookies(target_page, self._auth_file)
+                if self._stream_cleanup_count % 10 == 0:
+                    with suppress(Exception):
+                        await target_page.collect_garbage()
+                    gc.collect()
 
     async def import_cookies(
         self, cookie_string: str, auth_file: str | None = None
@@ -528,7 +631,71 @@ class BrowserSession:
 
     async def reload_current_account_cookies(self, page: CDPPage | None = None) -> bool:
         target = page or (self.active_context.page if self.active_context else None)
-        return bool(target and await load_cookies_to_page(target, self._auth_file))
+        return bool(
+            target and await load_cookies_to_page(target, self._auth_file, force_inject=True)
+        )
+
+    async def rotate_cookies_now(self) -> bool:
+        """Manually trigger immediate cookie rotation for the active account."""
+        if not self._auth_file:
+            raise RuntimeError("当前活跃会话无有效 auth_file 凭据文件")
+        from aistudio_api.infrastructure.gateway.cookie_rotate import (
+            rotate_account_cookies,
+        )
+        ok = await rotate_account_cookies(self._auth_file, page=self.page)
+        if ok:
+            self._last_activity = time.time()
+        return ok
+
+    async def keepalive_tick(self) -> bool:
+        """Perform a periodic lightweight keep-alive if the session has been idle."""
+        if self._in_flight > 0:
+            return False
+        if not self._gate.is_ready():
+            return False
+
+        now = time.time()
+        # Only perform keep-alive if idle for >= 15 minutes (900 seconds)
+        if now - self._last_activity < 900:
+            return False
+
+        auth_user = self.get_current_auth_user()
+        log.info(
+            "[keepalive] 会话已空闲 %.1f 分钟，启动双层保活流程 (u/%s)...",
+            (now - self._last_activity) / 60,
+            auth_user,
+        )
+
+        # 1. 第一层：优先尝试纯 HTTP RotateCookies (极速 ~100ms、零浏览器 CPU 开销)
+        if self._auth_file:
+            try:
+                from aistudio_api.infrastructure.gateway.cookie_rotate import (
+                    rotate_account_cookies,
+                )
+                rotated = await rotate_account_cookies(self._auth_file, page=self.page)
+                if rotated:
+                    self._last_activity = time.time()
+                    log.info("[keepalive] 🚀 纯 HTTP RotateCookies 轮转成功，凭据已刷新并同步！")
+                    return True
+            except Exception as e:
+                log.warning("[keepalive] 纯 HTTP RotateCookies 轮转异常 (%s)，降级为浏览器心跳...", e)
+
+        # 2. 第二层：本地浏览器保活兜底 (如果 HTTP 轮转失败)
+        page = self.page
+        if page is None or page.is_closed():
+            return False
+
+        try:
+            log.info("[keepalive] 执行浏览器页面心跳保活 (u/%s)...", auth_user)
+            await extract_account_tier(page, auth_user=auth_user)
+            if self._auth_file:
+                await save_browser_cookies(page, self._auth_file)
+            self._last_activity = time.time()
+            log.info("[keepalive] 浏览器保活心跳完成，凭据已同步回写")
+            return True
+        except Exception as e:
+            log.warning("[keepalive] 浏览器保活心跳执行失败: %s", e)
+            return False
 
     async def _save_cookies(
         self,
@@ -570,6 +737,8 @@ class BrowserSession:
         self._gate.reset()
         self._retiring_contexts.clear()
         self._transport.close("session_closed")
+        with suppress(Exception):
+            await self._remote_proof_client.close()
 
         for task in list(self._background_tasks):
             if not task.done():

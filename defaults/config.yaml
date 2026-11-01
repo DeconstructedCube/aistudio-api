@@ -1,6 +1,14 @@
 # API 客户端调用鉴权密钥列表 (用于外部客户端调用 /v1beta/... 接口鉴权)
 api_keys: []
 
+# 签名与验证引擎配置 (WAA / BotGuard Proof Engine)
+proof_engine:
+  provider: browser # browser (本地真实 Chrome 浏览器) 或 remote (逆向免浏览器 API)
+  remote_url: https://waa.spinsnow.fun # 逆向 API 服务地址
+  auto_fallback: true # 当逆向 API 异常时自动降级到本地 Chrome 浏览器
+  timeout_seconds: 15 # 逆向 API 超时时间 (秒)
+
+
 # 服务端日志与请求转储调试配置
 logging:
   level: INFO

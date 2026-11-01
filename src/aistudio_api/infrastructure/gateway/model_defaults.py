@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +21,31 @@ from .wire_types import (
 )
 
 _resolve_config_path = resolve_config_file
+THINKING_SUFFIX_MAP: dict[str, ThinkingLevel] = {
+    "high": ThinkingLevel.HIGH,
+    "medium": ThinkingLevel.MEDIUM,
+    "low": ThinkingLevel.LOW,
+    "minimal": ThinkingLevel.MINIMAL,
+}
+
+_THINKING_SUFFIX_RE = re.compile(r"-(high|medium|low|minimal)$", re.IGNORECASE)
+
+
+def strip_model_thinking_suffix(model: str) -> tuple[str, ThinkingLevel | None]:
+    """Extract and strip thinking level suffix from model name.
+
+    E.g. 'gemini-3.8-flash-high' -> ('gemini-3.8-flash', ThinkingLevel.HIGH)
+         'models/gemini-4-argon-minimal' -> ('models/gemini-4-argon', ThinkingLevel.MINIMAL)
+         'gemini-3.8-flash' -> ('gemini-3.8-flash', None)
+    """
+    m = _THINKING_SUFFIX_RE.search(model)
+    if not m:
+        return model, None
+    suffix = m.group(1).lower()
+    clean_model = model[: m.start()]
+    return clean_model, THINKING_SUFFIX_MAP.get(suffix)
+
+
 _SAFETY_CATEGORY_ORDER = (
     ("harassment", 7),
     ("hate", 8),
@@ -803,3 +829,80 @@ def get_configured_paid_model_rules(
     if isinstance(def_rules, dict):
         return def_rules
     return {}
+
+
+def get_configured_proof_engine_settings(
+    config_path: str | os.PathLike[str] | None = None,
+) -> dict[str, object]:
+    """获取 config.yaml 中配置的 proof_engine 设置。"""
+    from aistudio_api.config import settings
+
+    resolved_path = _resolve_config_path(config_path)
+    config = _load_yaml_config(resolved_path)
+    raw = config.get("proof_engine")
+    if isinstance(raw, dict):
+        provider = str(raw.get("provider") or settings.proof_engine_provider).strip().lower()
+        if provider not in ("browser", "remote"):
+            provider = "browser"
+        remote_url = str(raw.get("remote_url") or settings.proof_engine_remote_url).strip()
+        auto_fallback = bool(raw.get("auto_fallback", settings.proof_engine_auto_fallback))
+        timeout_seconds = int(raw.get("timeout_seconds") or settings.proof_engine_timeout)
+        return {
+            "provider": provider,
+            "remote_url": remote_url,
+            "auto_fallback": auto_fallback,
+            "timeout_seconds": timeout_seconds,
+        }
+    return {
+        "provider": settings.proof_engine_provider,
+        "remote_url": settings.proof_engine_remote_url,
+        "auto_fallback": settings.proof_engine_auto_fallback,
+        "timeout_seconds": settings.proof_engine_timeout,
+    }
+
+
+def update_configured_proof_engine_settings(
+    provider: str | None = None,
+    remote_url: str | None = None,
+    auto_fallback: bool | None = None,
+    timeout_seconds: int | None = None,
+    config_path: str | os.PathLike[str] | None = None,
+) -> dict[str, object]:
+    """更新 config.yaml 中的 proof_engine 设置，同步内存 settings 并刷新缓存。"""
+    from aistudio_api.config import settings
+
+    resolved_path = _resolve_config_path(config_path)
+    content = (
+        resolved_path.read_text(encoding="utf-8") if resolved_path.exists() else ""
+    )
+    parsed = yaml.safe_load(content) or {}
+    if not isinstance(parsed, dict):
+        parsed = {}
+
+    raw_engine = parsed.get("proof_engine")
+    engine_dict = dict(raw_engine) if isinstance(raw_engine, dict) else {}
+
+    if provider is not None:
+        p = provider.strip().lower()
+        if p in ("browser", "remote"):
+            engine_dict["provider"] = p
+            settings.proof_engine_provider = p
+    if remote_url is not None:
+        u = remote_url.strip()
+        if u:
+            engine_dict["remote_url"] = u
+            settings.proof_engine_remote_url = u
+    if auto_fallback is not None:
+        engine_dict["auto_fallback"] = bool(auto_fallback)
+        settings.proof_engine_auto_fallback = bool(auto_fallback)
+    if timeout_seconds is not None:
+        engine_dict["timeout_seconds"] = int(timeout_seconds)
+        settings.proof_engine_timeout = int(timeout_seconds)
+
+    parsed["proof_engine"] = engine_dict
+    resolved_path.write_text(
+        yaml.dump(parsed, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    invalidate_config_cache()
+    return get_configured_proof_engine_settings(config_path)

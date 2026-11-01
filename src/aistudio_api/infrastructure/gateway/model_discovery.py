@@ -349,9 +349,11 @@ class ModelDiscoveryService:
         """判定目标模型是否为付费模型（由 config.yaml 的 paid_model_rules 严格驱动，结合 upstream accessModes）。"""
         from aistudio_api.infrastructure.gateway.model_defaults import (
             get_configured_paid_model_rules,
+            strip_model_thinking_suffix,
         )
 
-        clean_m = model_id.removeprefix("models/").lower()
+        base_m, _ = strip_model_thinking_suffix(model_id)
+        clean_m = base_m.removeprefix("models/").lower()
         rules = get_configured_paid_model_rules()
         for rule_cfg in rules.values():
             if not isinstance(rule_cfg, dict):
@@ -399,7 +401,12 @@ class ModelDiscoveryService:
 
     def get_required_tiers(self, model_id: str) -> list[str]:
         """获取目标模型所允许调用的账号层级列表（由 upstream accessModes 与 config.yaml 共同驱动）。"""
-        clean_m = model_id.removeprefix("models/").lower()
+        from aistudio_api.infrastructure.gateway.model_defaults import (
+            strip_model_thinking_suffix,
+        )
+
+        base_m, _ = strip_model_thinking_suffix(model_id)
+        clean_m = base_m.removeprefix("models/").lower()
         info = self.get_cached_model_info(clean_m)
         if info:
             modes = info.get("accessModes")

@@ -4,6 +4,7 @@ import type {
   RotationStatusResponse,
   ClearCooldownRequest,
   SystemConfig,
+  ProofEngineConfig,
   ApiKeyItem,
   CreateApiKeyRequest,
   UpdateApiKeyRequest,
@@ -53,6 +54,13 @@ export const systemApi = {
     return request('/config/yaml', {
       method: 'PUT',
       body: JSON.stringify({ yaml_content: yamlContent }),
+    })
+  },
+
+  updateProofEngineConfig(req: ProofEngineConfig): Promise<{ ok: boolean; message: string; proof_engine: ProofEngineConfig }> {
+    return request('/config/proof-engine', {
+      method: 'PUT',
+      body: JSON.stringify(req),
     })
   },
 

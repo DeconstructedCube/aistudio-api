@@ -30,6 +30,18 @@ log = get_logger("accounts")
 router = APIRouter(prefix="/accounts")
 
 
+class AccountTestResponse(BaseModel):
+    ok: bool = True
+    alive: bool
+    status_code: int = 200
+    elapsed_ms: int = 0
+    tier: str | None = None
+    email: str | None = None
+    model: str | None = None
+    reply: str | None = None
+    error: str | None = None
+
+
 class AccountResponse(BaseModel):
     id: str
     name: str
@@ -127,6 +139,30 @@ class ImportCookiesRequest(BaseModel):
     tier: str | None = None
 
 
+def _rotate_capability_notice(
+    cookies: list[dict[str, object]] | None,
+) -> tuple[bool, list[str]]:
+    """检查 cookie 是否具备纯 HTTP RotateCookies 的前提。
+
+    Google 的 RotateCookies 依赖 accounts.google.com 的 host-only 凭据
+    （LSID / __Host-1PLSID / __Host-3PLSID）。缺了它们必然 401，而且用不完整
+    的 cookie 硬调可能反过来作废 SID 会话，所以这里只提示、不尝试。
+    """
+    from aistudio_api.infrastructure.gateway.cookie_rotate import (
+        has_rotate_credentials,
+    )
+
+    if has_rotate_credentials(cookies):
+        return True, []
+    return False, [
+        "缺少 accounts.google.com 的 host-only cookie"
+        "（LSID / __Host-1PLSID / __Host-3PLSID），"
+        "纯 HTTP RotateCookies 轮换不可用，将依赖浏览器心跳保活。"
+        "如需启用：先在浏览器登录 accounts.google.com，"
+        "再导出该域的全量 cookie 重新导入。"
+    ]
+
+
 class ImportCookiesResponse(BaseModel):
     account_id: str
     name: str
@@ -134,6 +170,9 @@ class ImportCookiesResponse(BaseModel):
     domain_summary: dict[str, int]
     auth_user: str = "0"
     tier: str = "Free"
+    # 是否具备纯 HTTP RotateCookies 的前提（accounts.google.com 的 host-only 凭据）
+    rotate_ready: bool = False
+    warnings: list[str] = []
 
 
 class ProbeAndImportRequest(BaseModel):
@@ -144,6 +183,7 @@ class ProbeAndImportRequest(BaseModel):
 class ProbeAndImportResponse(BaseModel):
     imported_count: int
     accounts: list[AccountResponse]
+    warnings: list[str] = []
 
 
 class BundleAccountItem(BaseModel):
@@ -346,6 +386,102 @@ async def detect_account_tier(
     if not acc:
         raise HTTPException(status_code=404, detail="账号不存在")
     return to_account_response(acc)
+
+
+@router.post("/{account_id}/test", response_model=AccountTestResponse)
+async def test_account(
+    account_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.\@]+$"),
+    account_service: AccountService = Depends(get_account_service),
+) -> AccountTestResponse:
+    """对指定账号发起真实上游 Google RPC 测活，验证 Cookie 鉴权有效性与订阅等级。"""
+    import time
+    t0 = time.perf_counter()
+    acc = account_service.get_account(account_id)
+    if not acc:
+        raise HTTPException(status_code=404, detail="账号不存在")
+
+    target_auth = account_service.get_account_auth_path(account_id)
+    if not target_auth or not target_auth.is_file():
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        return AccountTestResponse(
+            ok=True,
+            alive=False,
+            status_code=404,
+            elapsed_ms=elapsed_ms,
+            error="账号凭据文件 (auth.json) 不存在",
+        )
+
+    try:
+        import json
+        auth_data = json.loads(target_auth.read_text(encoding="utf-8"))
+        raw_cookies = auth_data.get("cookies") or []
+        cookie_dict = {
+            str(c.get("name") or ""): str(c.get("value") or "")
+            for c in raw_cookies
+            if isinstance(c, dict) and c.get("name")
+        }
+    except Exception as e:
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        return AccountTestResponse(
+            ok=True,
+            alive=False,
+            status_code=500,
+            elapsed_ms=elapsed_ms,
+            error=f"解析凭据失败: {e}",
+        )
+
+    if not cookie_dict:
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        return AccountTestResponse(
+            ok=True,
+            alive=False,
+            status_code=400,
+            elapsed_ms=elapsed_ms,
+            error="Cookie 为空",
+        )
+
+    try:
+        from aistudio_api.infrastructure.account.cookie_parser import (
+            probe_account_benefit_tier,
+            probe_account_email,
+        )
+
+        detected_tier = await probe_account_benefit_tier(
+            cookie_dict, auth_user=acc.auth_user or "0"
+        )
+        detected_email = await probe_account_email(
+            cookie_dict, auth_user=acc.auth_user or "0"
+        )
+
+        if detected_tier:
+            account_service.update_account_tier(account_id, detected_tier)
+        if detected_email:
+            account_service.update_account_email(account_id, detected_email)
+
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        return AccountTestResponse(
+            ok=True,
+            alive=True,
+            status_code=200,
+            elapsed_ms=elapsed_ms,
+            tier=detected_tier or acc.tier or "Free",
+            email=detected_email or acc.email,
+            model="GetAiStudioBenefitTier",
+            reply="Google RPC 鉴权通过",
+        )
+    except Exception as e:
+        elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        err_msg = str(e)
+        status = 401 if ("401" in err_msg or "expired" in err_msg.lower()) else (403 if "403" in err_msg else 500)
+        return AccountTestResponse(
+            ok=True,
+            alive=False,
+            status_code=status,
+            elapsed_ms=elapsed_ms,
+            tier=acc.tier,
+            email=acc.email,
+            error=f"测活失败: {err_msg}",
+        )
 
 
 @router.delete("/{account_id}")
@@ -693,6 +829,11 @@ async def import_cookies(
             log.info("已导入 Cookie 并保存文件: 数量=%d, 账号=%s", count, account.name)
     except Exception as e:
         log.warning("为 %s 注入浏览器 Cookie 失败: %s", account.name, e)
+
+    rotate_ready, warnings = _rotate_capability_notice(cookie_list)
+    if not rotate_ready:
+        log.warning("账号 %s 缺少 LSID，纯 HTTP 轮换不可用", account.name)
+
     return ImportCookiesResponse(
         account_id=account.id,
         name=account.name,
@@ -700,6 +841,8 @@ async def import_cookies(
         domain_summary=domain_summary,
         auth_user=account.auth_user,
         tier=account.tier,
+        rotate_ready=rotate_ready,
+        warnings=warnings,
     )
 
 
@@ -744,10 +887,14 @@ async def probe_and_import(
         browser_session = client_obj._session
         if browser_session is not None:
             await account_service.activate_account(metas[0].id, browser_session)
+    _rotate_ok, rotate_warnings = _rotate_capability_notice(
+        storage_state.get("cookies") if isinstance(storage_state, dict) else None
+    )
     log.info("Cookie 探活完成: 导入账号数=%d", len(imported_accounts))
     return ProbeAndImportResponse(
         imported_count=len(imported_accounts),
         accounts=imported_accounts,
+        warnings=rotate_warnings,
     )
 
 
@@ -881,3 +1028,20 @@ async def import_bundle(
         imported_count=len(imported_accounts),
         accounts=imported_accounts,
     )
+
+
+@router.post("/rotate-cookies")
+async def rotate_active_cookies(
+    runtime_state: RuntimeState = Depends(get_runtime_state),
+) -> dict[str, object]:
+    """手动触发当前活跃账号的 HTTP RotateCookies 轮转刷新。"""
+    client = runtime_state.client
+    if not client or not client._session:
+        raise HTTPException(503, detail="服务未就绪")
+    try:
+        ok = await client._session.rotate_cookies_now()
+        if not ok:
+            raise HTTPException(500, detail="RotateCookies 轮转刷新失败，请检查账号状态")
+        return {"ok": True, "message": "Cookie 轮转刷新成功，已自动同步到同组所有账号"}
+    except Exception as e:
+        raise HTTPException(500, detail=f"轮转刷新失败: {e}") from e

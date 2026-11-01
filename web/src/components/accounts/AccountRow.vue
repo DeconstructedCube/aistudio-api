@@ -4,7 +4,10 @@ import type { AccountWithStats } from '@/types/accounts.ts'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
 import ModelQuotaGrid from './ModelQuotaGrid.vue'
+import { accountsApi } from '@/api/accounts.ts'
+import { useToastStore } from '@/stores/toast.ts'
 import {
+  Zap,
   CheckCircle2,
   Clock,
   Trash2,
@@ -106,6 +109,34 @@ async function handleDetectTier() {
     detectingTier.value = false
   }
 }
+const toast = useToastStore()
+const testing = ref(false)
+const testResult = ref<{ alive: boolean; elapsed_ms: number; tier?: string; error?: string } | null>(null)
+
+async function handleTestAccount() {
+  testing.value = true
+  try {
+    const res = await accountsApi.test(props.account.id)
+    testResult.value = {
+      alive: res.alive,
+      elapsed_ms: res.elapsed_ms,
+      tier: res.tier,
+      error: res.error,
+    }
+    if (res.alive) {
+      toast.success(`账号 ${props.account.name || props.account.id} 测活通过 (${res.elapsed_ms}ms, ${res.tier || 'Free'})`)
+      await accountsStore.fetchAll()
+    } else {
+      toast.error(`测活失败: ${res.error || '未响应'}`)
+    }
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
+    testResult.value = { alive: false, elapsed_ms: 0, error: msg }
+    toast.error(`测活请求失败: ${msg}`)
+  } finally {
+    testing.value = false
+  }
+}
 </script>
 
 <template>
@@ -155,6 +186,16 @@ async function handleDetectTier() {
           ]"
         >
           u/{{ account.auth_user }}
+        </span>
+
+        <!-- Test Probe Live Badge -->
+        <span
+          v-if="testResult"
+          class="px-2 py-0.5 rounded-full text-[11px] font-mono shrink-0 transition-all"
+          :class="testResult.alive ? 'bg-emerald-50 text-emerald-700 border border-emerald-300' : 'bg-rose-50 text-rose-700 border border-rose-300'"
+          :title="testResult.error || ''"
+        >
+          {{ testResult.alive ? `⚡ ${testResult.elapsed_ms}ms` : '❌ 失败' }}
         </span>
 
         <!-- Benefit Tier Badge: Free / Plus / Pro / Ultra -->
@@ -326,6 +367,17 @@ async function handleDetectTier() {
           >
             <span>激活</span>
           </Button>
+
+          <button
+            type="button"
+            class="p-1 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+            :class="{ 'opacity-50 cursor-not-allowed text-amber-500 animate-pulse': testing }"
+            title="⚡ 发起实时 Google RPC 测活"
+            :disabled="testing"
+            @click="handleTestAccount"
+          >
+            <Zap class="w-3.5 h-3.5" />
+          </button>
 
           <button
             type="button"

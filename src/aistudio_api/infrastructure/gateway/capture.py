@@ -67,7 +67,7 @@ class RequestCaptureService:
         ]
 
         # 签名是一次性的票据（根据请求内容穿进 snapshot 计算），每次请求实时生成，不可复用缓存
-        snapshot = await self._session.generate_snapshot(snapshot_contents)
+        snapshot = await self._session.generate_snapshot(snapshot_contents, ctx=ctx, model=model)
 
         body = modify_body(
             template.body,

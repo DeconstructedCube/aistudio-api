@@ -4,6 +4,7 @@ import { systemApi } from '@/api/system.ts'
 import { useToastStore } from '@/stores/toast.ts'
 import type { SystemConfig } from '@/types/system.ts'
 import ApiKeyManagerCard from '@/components/settings/ApiKeyManagerCard.vue'
+import ProofEngineCard from '@/components/settings/ProofEngineCard.vue'
 import LogConfigCard from '@/components/settings/LogConfigCard.vue'
 import VisualConfigEditor from '@/components/config/VisualConfigEditor.vue'
 import {
@@ -58,6 +59,12 @@ onMounted(() => {
         </div>
         <div class="text-[11px] text-gray-400 mt-1">
           无头模式: {{ config?.browser_headless ? '开启 (Headless)' : '禁用' }}
+        </div>
+        <div
+          class="text-[11px] mt-1 font-medium"
+          :class="config?.proof_engine?.provider === 'remote' ? 'text-indigo-600' : 'text-emerald-600'"
+        >
+          引擎: {{ config?.proof_engine?.provider === 'remote' ? '🚀 逆向免浏览器' : '🛡️ 本地 Chrome' }}
         </div>
       </div>
 
@@ -141,6 +148,13 @@ onMounted(() => {
     />
     <!-- API Key Management Card -->
     <ApiKeyManagerCard />
+
+    <!-- WAA / BotGuard Proof Engine Card (Below API Key Card, Above Model Config Editor) -->
+    <ProofEngineCard
+      v-if="config"
+      :initial-engine="config.proof_engine"
+      @saved="loadConfig"
+    />
 
     <!-- Visual & YAML Model Config Editor -->
     <VisualConfigEditor
