@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path as FastApiPath
@@ -623,7 +624,10 @@ async def import_cookies(
     runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> ImportCookiesResponse:
     """从 cookie 导入账号（支持 JSON 数组、Netscape 或 KV）。"""
-    storage_state = parse_cookie_string(req.cookies)
+    try:
+        storage_state = parse_cookie_string(req.cookies)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     raw_cookies = storage_state.get("cookies")
     cookie_list: list[dict[str, object]] = (
         raw_cookies if isinstance(raw_cookies, list) else []
@@ -633,10 +637,6 @@ async def import_cookies(
     if cookie_count == 0:
         raise HTTPException(status_code=400, detail="未解析到有效 cookie")
 
-    domain_summary: dict[str, int] = {}
-    for cookie in cookie_list:
-        domain = str(cookie.get("domain", ""))
-        domain_summary[domain] = domain_summary.get(domain, 0) + 1
     name = req.name or (
         f"Google Account (u/{req.auth_user})" if req.auth_user != "0" else "导入的账号"
     )
@@ -691,12 +691,24 @@ async def import_cookies(
                 auth_file=str(auth_path) if auth_path else None,
             )
             log.info("已导入 Cookie 并保存文件: 数量=%d, 账号=%s", count, account.name)
+            if auth_path:
+                cookie_list = json.loads(auth_path.read_text(encoding="utf-8"))[
+                    "cookies"
+                ]
     except Exception as e:
         log.warning("为 %s 注入浏览器 Cookie 失败: %s", account.name, e)
+        raise HTTPException(
+            status_code=502,
+            detail="凭据文件已保存，但浏览器导入或保存校验未完成，请检查服务日志后重试",
+        ) from e
+    domain_summary: dict[str, int] = {}
+    for cookie in cookie_list:
+        domain = str(cookie.get("domain", ""))
+        domain_summary[domain] = domain_summary.get(domain, 0) + 1
     return ImportCookiesResponse(
         account_id=account.id,
         name=account.name,
-        cookie_count=cookie_count,
+        cookie_count=len(cookie_list),
         domain_summary=domain_summary,
         auth_user=account.auth_user,
         tier=account.tier,
@@ -715,12 +727,15 @@ async def probe_and_import(
         probe_google_accounts_infinite,
     )
 
+    try:
+        storage_state = parse_cookie_string(req.cookies)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     had_active_account = account_service.get_active_account() is not None
     probed = await probe_google_accounts_infinite(req.cookies)
     if not probed:
         raise HTTPException(status_code=400, detail="未探测到有效已登录 Google 账号")
 
-    storage_state = parse_cookie_string(req.cookies)
     prefix = req.name_prefix.strip() if req.name_prefix else "Google Account"
     import secrets
 
@@ -824,12 +839,20 @@ async def import_bundle(
             status_code=400, detail="未解析到任何包含有效 cookies 的账号条目"
         )
 
+    # Validate the whole bundle before saving any account.
+    try:
+        parsed_states = [
+            parse_cookie_string(str(item.get("cookies") or ""))
+            for item in items_to_import
+        ]
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     imported_accounts: list[AccountResponse] = []
     for idx, item in enumerate(items_to_import):
         raw_cookie_str = str(item.get("cookies") or "")
         if not raw_cookie_str:
             continue
-        storage_state = parse_cookie_string(raw_cookie_str)
+        storage_state = parsed_states[idx]
         if not storage_state.get("cookies"):
             continue
 

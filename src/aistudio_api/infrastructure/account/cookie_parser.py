@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Iterable
 from contextlib import suppress
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
     import httpx
@@ -314,6 +315,31 @@ def build_google_cookie_list(
     return cookies
 
 
+def host_cookie_url(cookie: dict[str, object]) -> str:
+    """Validate a scoped __Host- cookie and return its HTTPS readback URL."""
+    if cookie.get("path", "/") != "/" or cookie.get("secure", True) is not True:
+        raise ValueError("__Host-* Cookie 必须使用 path=/ 和 secure=true")
+    domain = cookie.get("domain")
+    if domain is not None:
+        if not isinstance(domain, str) or not re.fullmatch(
+            r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*", domain.lstrip(".")
+        ):
+            raise ValueError("__Host-* Cookie 的 domain 必须是非空主机名")
+        return f"https://{domain.lstrip('.').lower()}/"
+    try:
+        url = urlsplit(str(cookie.get("url") or ""))
+        if (
+            url.scheme == "https"
+            and url.hostname
+            and not url.username
+            and not url.password
+        ):
+            return f"https://{url.hostname}/"
+    except ValueError:
+        pass
+    raise ValueError("__Host-* Cookie 必须提供有效的 HTTPS url 或 domain")
+
+
 def parse_cookie_string(
     raw: object, *, discard_transient: bool = True
 ) -> dict[str, object]:
@@ -346,6 +372,8 @@ def parse_cookie_string(
 
             # Keep same-name cookies at different domains/paths as separate entries.
             cookie = dict(entry)
+            if name.startswith("__Host-"):
+                host_cookie_url(cookie)
             if "expirationDate" in cookie:
                 cookie.setdefault("expires", cookie.pop("expirationDate"))
             # Browser exports use -1 (or session=true) for session cookies.
