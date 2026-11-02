@@ -8,7 +8,9 @@ import re
 import time
 import uuid
 from collections.abc import Iterable
+from contextlib import suppress
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 if TYPE_CHECKING:
     import httpx
@@ -125,6 +127,10 @@ DISCARDABLE_IMPORT_COOKIE_NAMES: frozenset[str] = frozenset(
         "__Secure-OSID",
     }
 )
+
+
+def _is_discardable_import_cookie(name: str) -> bool:
+    return name in DISCARDABLE_IMPORT_COOKIE_NAMES or name.startswith(("_ga_", "_gcl_"))
 
 
 def parse_raw_cookies(raw: object) -> dict[str, str]:
@@ -298,10 +304,7 @@ def build_google_cookie_list(
         else [(str(k), str(v)) for k, v in pairs]
     )
     for name, value in item_list:
-        if discard_transient and (
-            name in DISCARDABLE_IMPORT_COOKIE_NAMES
-            or name.startswith(("_ga_", "_gcl_"))
-        ):
+        if discard_transient and _is_discardable_import_cookie(name):
             continue
         targets = _DOMAIN_OVERRIDES.get(name)
         if not targets:
@@ -312,10 +315,88 @@ def build_google_cookie_list(
     return cookies
 
 
+def host_cookie_url(cookie: dict[str, object]) -> str:
+    """Validate a scoped __Host- cookie and return its HTTPS readback URL."""
+    if cookie.get("path", "/") != "/" or cookie.get("secure", True) is not True:
+        raise ValueError("__Host-* Cookie 必须使用 path=/ 和 secure=true")
+    domain = cookie.get("domain")
+    if domain is not None:
+        if not isinstance(domain, str) or not re.fullmatch(
+            r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*", domain.lstrip(".")
+        ):
+            raise ValueError("__Host-* Cookie 的 domain 必须是非空主机名")
+        return f"https://{domain.lstrip('.').lower()}/"
+    try:
+        url = urlsplit(str(cookie.get("url") or ""))
+        if (
+            url.scheme == "https"
+            and url.hostname
+            and not url.username
+            and not url.password
+        ):
+            return f"https://{url.hostname}/"
+    except ValueError:
+        pass
+    raise ValueError("__Host-* Cookie 必须提供有效的 HTTPS url 或 domain")
+
+
 def parse_cookie_string(
     raw: object, *, discard_transient: bool = True
 ) -> dict[str, object]:
     """将任意格式 cookie 解析为 storage state dict，包含 cookies 和 origins 字段。"""
+    structured = raw
+    if isinstance(raw, str):
+        with suppress(json.JSONDecodeError):
+            structured = json.loads(raw)
+    entries = structured.get("cookies") if isinstance(structured, dict) else structured
+    if isinstance(entries, list):
+        cookies: list[dict[str, object]] = []
+        for entry in entries:
+            if (
+                not isinstance(entry, dict)
+                or not entry.get("name")
+                or entry.get("value") is None
+            ):
+                continue
+            name = str(entry["name"]).strip()
+            if discard_transient and _is_discardable_import_cookie(name):
+                continue
+            if not (entry.get("domain") or entry.get("url")):
+                cookies.extend(
+                    build_google_cookie_list(
+                        parse_raw_cookies([entry]),
+                        discard_transient=discard_transient,
+                    )
+                )
+                continue
+
+            # Keep same-name cookies at different domains/paths as separate entries.
+            cookie = dict(entry)
+            if name.startswith("__Host-"):
+                host_cookie_url(cookie)
+            if "expirationDate" in cookie:
+                cookie.setdefault("expires", cookie.pop("expirationDate"))
+            # Browser exports use -1 (or session=true) for session cookies.
+            # Sending -1 to Network.setCookies would expire them immediately.
+            if cookie.get("session") is True or cookie.get("expires") == -1:
+                cookie.pop("expires", None)
+            same_site = cookie.get("sameSite")
+            if isinstance(same_site, str):
+                normalized = same_site.lower()
+                if normalized == "no_restriction":
+                    cookie["sameSite"] = "None"
+                elif normalized in {"none", "lax", "strict"}:
+                    cookie["sameSite"] = normalized.capitalize()
+                elif normalized == "unspecified":
+                    cookie.pop("sameSite", None)
+            cookies.append(cookie)
+
+        origins = structured.get("origins", []) if isinstance(structured, dict) else []
+        return {
+            "cookies": cookies,
+            "origins": origins if isinstance(origins, list) else [],
+        }
+
     cookie_dict = parse_raw_cookies(raw)
     return {
         "cookies": build_google_cookie_list(

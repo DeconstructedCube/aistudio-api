@@ -6,6 +6,7 @@ import time
 
 from aistudio_api.infrastructure.account.cookie_parser import (
     DISCARDABLE_IMPORT_COOKIE_NAMES,
+    parse_cookie_string,
     parse_raw_cookies,
 )
 from aistudio_api.infrastructure.utils.logger import get_logger
@@ -28,7 +29,8 @@ AUTH_COOKIE_NAMES = {
 def _should_skip_browser_injection(name: str) -> bool:
     """Skip cookies that CDP rejects or that pollute fresh session negotiation.
 
-    1. __Host-* cookies must be excluded because attaching domain causes CDP rejection.
+    1. Unscoped __Host-* cookies cannot safely be assigned a broad domain.
+       Scoped JSON entries are restored separately with their original metadata.
     2. Transient/telemetry/stale challenge cookies are skipped so the browser can negotiate
        fresh origin-bound tokens under the current network and TLS fingerprint.
     """
@@ -78,6 +80,17 @@ def load_cookies_from_string(cookie_string: str) -> list[dict[str, object]]:
     returns Playwright-format cookies for browser injection.
     Real expires come from browser export after visiting the page.
     """
+    state = parse_cookie_string(cookie_string)
+    scoped_cookies = state.get("cookies")
+    host_cookies = (
+        [
+            c
+            for c in scoped_cookies
+            if isinstance(c, dict) and str(c.get("name", "")).startswith("__Host-")
+        ]
+        if isinstance(scoped_cookies, list)
+        else []
+    )
     parsed = parse_raw_cookies(cookie_string)
     refreshed = _refresh_session_cookies(parsed)
     merged = dict(parsed)
@@ -113,5 +126,6 @@ def load_cookies_from_string(cookie_string: str) -> list[dict[str, object]]:
             "跳过 Host-only Cookie 注入: %s",
             sorted(skipped_names),
         )
+    cookies.extend(host_cookies)
     log.info("Cookie 解析完成: 有效凭据数=%d", len(cookies))
     return cookies

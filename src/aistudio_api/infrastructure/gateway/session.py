@@ -11,6 +11,7 @@ from hashlib import sha256
 from pathlib import Path
 
 from aistudio_api.config import settings
+from aistudio_api.infrastructure.account.cookie_parser import host_cookie_url
 from aistudio_api.infrastructure.browser.browser_engine import (
     ChromiumProcess,
     launch_chromium_process,
@@ -508,9 +509,46 @@ class BrowserSession:
                 await bootstrap_google_session(page)
             browser_cookies = await page.get_cookies()
             final_cookies = browser_cookies or pw_cookies
+            # The current AI Studio page cannot see accounts.google.com cookies.
+            # Read back only the imported host scopes; keep the existing refresh flow.
+            host_cookies = [
+                c for c in pw_cookies if str(c.get("name", "")).startswith("__Host-")
+            ]
+            if host_cookies:
+                expected = {(str(c["name"]), host_cookie_url(c)) for c in host_cookies}
+                result = await page.cdp.send(
+                    "Network.getCookies", {"urls": sorted({url for _, url in expected})}
+                )
+                stored = result.get("cookies")
+                restored = (
+                    [
+                        c
+                        for c in stored
+                        if isinstance(c, dict)
+                        and str(c.get("name", "")).startswith("__Host-")
+                        and (str(c["name"]), host_cookie_url(c)) in expected
+                    ]
+                    if isinstance(stored, list)
+                    else []
+                )
+                if {(str(c["name"]), host_cookie_url(c)) for c in restored} != expected:
+                    raise RuntimeError("导入的 __Host-* Cookie 未能完整写入浏览器")
+                final_cookies = [
+                    c
+                    for c in final_cookies
+                    if not str(c.get("name", "")).startswith("__Host-")
+                    or (str(c["name"]), host_cookie_url(c)) not in expected
+                ]
+                for cookie in restored:
+                    if cookie.get("expires") == -1:
+                        cookie.pop("expires")
+                final_cookies += restored
             await save_browser_cookies(
                 page, auth_file=target_auth, cookies=final_cookies
             )
+            saved = json.loads(Path(target_auth).read_text(encoding="utf-8"))
+            if saved.get("cookies") != final_cookies:
+                raise RuntimeError("Cookie 文件保存校验失败")
             return len(final_cookies)
         finally:
             with suppress(Exception):
