@@ -176,13 +176,38 @@ def _coerce_generation_defaults(raw: dict[str, object] | None) -> dict[str, obje
     coerced: dict[str, object] = {}
     for key, value in raw.items():
         if key == "thinking_config" and isinstance(value, dict):
-            level = _coerce_thinking_level(value.get("level", ThinkingLevel.HIGH))
-            mode = int(value.get("mode", 1))
-            coerced[key] = AistudioThinkingConfig(level=level, mode=mode).to_wire()
+            raw_level = value.get(
+                "level", value.get("thinkingLevel", value.get("thinking_level"))
+            )
+            raw_budget = value.get(
+                "budget", value.get("thinkingBudget", value.get("thinking_budget"))
+            )
+            raw_mode = value.get("mode")
+            level = _coerce_thinking_level(raw_level) if raw_level is not None else None
+            budget = (
+                int(str(raw_budget))
+                if raw_budget is not None and not isinstance(raw_budget, bool)
+                else None
+            )
+            if level is not None or budget is not None or raw_mode is not None:
+                mode = (
+                    int(str(raw_mode))
+                    if raw_mode is not None and not isinstance(raw_mode, bool)
+                    else 1
+                )
+                coerced[key] = AistudioThinkingConfig(
+                    level=level, mode=mode, budget=budget
+                ).to_wire()
+            else:
+                coerced[key] = None
         elif key == "image_output_mode":
-            coerced[key] = _coerce_image_output_mode(value)
+            coerced[key] = (
+                _coerce_image_output_mode(value) if value is not None else None
+            )
         elif key == "media_resolution":
-            coerced[key] = _coerce_media_resolution(value)
+            coerced[key] = (
+                _coerce_media_resolution(value) if value is not None else None
+            )
         else:
             coerced[key] = value
     return coerced
@@ -310,12 +335,6 @@ def _default_config() -> dict[str, object]:
                     "name": "image_models",
                     "match": {"contains": ["image", "imagen"]},
                     "is_image_model": True,
-                    "generation_config_defaults": {
-                        "response_mime_type": None,
-                        "image_output_mode": "image_only",
-                        "thinking_config": {"level": "MINIMAL", "mode": 1},
-                    },
-                    "clear_generation_config_indexes": [7, 13, 17],
                     "disable_safety_settings": True,
                 },
                 {
@@ -326,7 +345,6 @@ def _default_config() -> dict[str, object]:
                 {
                     "name": "gemma_models",
                     "match": {"prefixes": ["gemma-"]},
-                    "default_tools": ["google_search"],
                     "safety_settings": {
                         "Harassment": 5,
                         "Hate": 5,
@@ -343,6 +361,7 @@ def _default_config() -> dict[str, object]:
                         "Sexually Explicit": 5,
                         "Dangerous Content": 5,
                     },
+                    "drop_unsupported_params": True,
                 },
             ],
             "models": {},

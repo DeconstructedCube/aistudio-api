@@ -129,7 +129,6 @@ function handleAddProfile() {
     match: {
       prefixes: ['gemini-'],
     },
-    default_tools: ['google_search'],
     safety_settings: {
       Harassment: 5,
       Hate: 5,
@@ -209,16 +208,6 @@ function handleResetDefaults() {
               contains: ['image', 'imagen'],
             },
             is_image_model: true,
-            default_tools: ['google_search_and_image_search'],
-            generation_config_defaults: {
-              response_mime_type: null,
-              image_output_mode: 'image_only',
-              thinking_config: {
-                level: 'MINIMAL',
-                mode: 1,
-              },
-            },
-            clear_generation_config_indexes: [7, 13, 17],
             disable_safety_settings: true,
           },
           {
@@ -234,7 +223,6 @@ function handleResetDefaults() {
             match: {
               prefixes: ['gemma-'],
             },
-            default_tools: ['google_search'],
             safety_settings: {
               Harassment: 5,
               Hate: 5,
@@ -247,7 +235,6 @@ function handleResetDefaults() {
             match: {
               prefixes: ['gemini-'],
             },
-            default_tools: ['google_search'],
             safety_settings: {
               Harassment: 5,
               Hate: 5,

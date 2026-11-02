@@ -134,7 +134,7 @@ export const CONFIG_SCHEMA: Record<string, FieldDefinition> = {
     type: 'tags',
     description: '客户端调用未显式传 tools 参数时，系统默认自动挂载的 Google 内置工具。',
     explanation: 'Google AI Studio 原生支持搜索、代码执行等内置工具。注意生图模型仅支持 google_search_and_image_search / google_search / image_search。',
-    defaultValue: ['google_search'],
+    defaultValue: [],
     suggestions: [
       { label: '网页+图片搜索', value: 'google_search_and_image_search', description: '生图模型推荐 (支持搜索参考图)' },
       { label: 'Google 网页搜索', value: 'google_search', description: '常规文本问答联网搜索' },
@@ -152,8 +152,7 @@ export const CONFIG_SCHEMA: Record<string, FieldDefinition> = {
     type: 'select',
     description: '控制生图模型生成内容的返回结构。',
     explanation: 'image_only 会过滤模型多余文本只输出图片；text_and_image 则同时保留模型生成图片的解说文本与图片实体。',
-    defaultValue: 'image_only',
-    recommendedValue: 'image_only',
+    defaultValue: null,
     options: [
       { value: 'image_only', label: '仅输出图片 (image_only)', description: '推荐：适合第三方画图客户端', recommended: true },
       { value: 'text_and_image', label: '文字与图片混排 (text_and_image)', description: '包含提示词分析与图片' },
@@ -168,8 +167,7 @@ export const CONFIG_SCHEMA: Record<string, FieldDefinition> = {
     type: 'select',
     description: '控制 Gemini 思考过程强度。',
     explanation: '生图模型推荐 MINIMAL 避免生成冗长思考过程；深度数学或代码推理推荐 HIGH。',
-    defaultValue: 'HIGH',
-    recommendedValue: 'MINIMAL',
+    defaultValue: null,
     options: [
       { value: 'MINIMAL', label: '最小思考 (MINIMAL)', description: '生图与即时问答推荐', recommended: true },
       { value: 'LOW', label: '轻度思考 (LOW)', description: '兼顾速度与简单推理' },
@@ -201,8 +199,7 @@ export const CONFIG_SCHEMA: Record<string, FieldDefinition> = {
     type: 'indexes',
     description: '请求发送给 Google 前，从内部 wire 数组中强制清空的字段下标。',
     explanation: 'Google 部分生图模型若携带下标 7, 13, 17 会报错 400 Bad Request，清空这些下标可确保生图请求成功。',
-    defaultValue: [7, 13, 17],
-    recommendedValue: [7, 13, 17],
+    defaultValue: [],
     tags: ['高级项', '生图兼容'],
   },
   'generation.defaults': {

@@ -225,15 +225,9 @@ class AistudioWireCodec:
             body[self.SESSION_TOKEN_INDEX] = request.session_token
 
         model_defaults = resolve_model_defaults(request.model)
-        gc = body[self.GENERATION_CONFIG_INDEX]
-        if model_defaults.is_image_model:
-            if isinstance(gc, list):
-                for idx in model_defaults.clear_generation_config_indexes:
-                    if idx < len(gc):
-                        gc[idx] = None
-            if model_defaults.disable_safety_settings:
-                body[self.SAFETY_INDEX] = None
-        else:
+        if model_defaults.disable_safety_settings:
+            body[self.SAFETY_INDEX] = None
+        if not model_defaults.is_image_model:
             if request.tools or request.location is not None:
                 self._ensure_len(body, self.TIMEZONE_INDEX + 1)
                 tz_str = settings.timezone
@@ -287,6 +281,8 @@ class AistudioWireCodec:
         defaults = model_defaults.generation_config_overrides()
         for attr, value in defaults.items():
             setattr(gc, attr, value)
+        for idx in model_defaults.clear_generation_config_indexes:
+            gc._set_slot(idx, None)
 
         effective_safety = (
             safety_settings
@@ -305,20 +301,7 @@ class AistudioWireCodec:
         for attr, value in (generation_config_overrides or {}).items():
             if not hasattr(gc, attr):
                 continue
-            if value is None and attr != "thinking_config":
-                continue
             setattr(gc, attr, value)
-
-        explicit_thinking_null = (
-            "thinking_config" in defaults and defaults["thinking_config"] is None
-        ) or (
-            generation_config_overrides is not None
-            and "thinking_config" in generation_config_overrides
-            and generation_config_overrides["thinking_config"] is None
-        )
-        if not explicit_thinking_null:
-            gc.enable_default_thinking()
-
         effective_tools: list[list] | None = tools if tools else None
         if tool_config is not None:
             is_none_mode = False

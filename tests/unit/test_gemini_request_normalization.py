@@ -72,7 +72,6 @@ def test_normalize_gemini_request_exposes_generation_config_overrides():
         "frequency_penalty": 0.2,
         "response_logprobs": True,
         "logprobs": 5,
-        "image_output_mode": AistudioImageOutputMode.image_only(),
         "media_resolution": 2,
         "thinking_config": [1, None, None, 3],
     }
@@ -192,14 +191,75 @@ def test_normalize_gemini_request_encodes_function_declarations_to_wire_tools():
     ]
 
 
-def test_normalize_gemini_request_applies_gemma_default_tools():
+def test_normalize_gemini_request_does_not_inject_unrequested_default_tools():
     req = GeminiGenerateContentRequest(
         contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])],
     )
 
-    normalized = normalize_gemini_request(req, "models/gemma-4-31b-it")
+    normalized_gemma = normalize_gemini_request(req, "models/gemma-4-31b-it")
+    assert normalized_gemma.tools is None
 
-    assert normalized.tools == [[None, None, None, [None, [[]]]]]
+    normalized_gemini = normalize_gemini_request(req, "models/gemini-3.8-flash")
+    assert normalized_gemini.tools is None
+
+    normalized_image = normalize_gemini_request(
+        req, "models/gemini-3.1-flash-image-preview"
+    )
+    assert normalized_image.tools is None
+    assert normalized_image.generation_config_overrides is None
+
+
+def test_normalize_gemini_request_thinking_and_reasoning_effort():
+    # 1. No thinkingConfig or reasoningEffort -> no thinking_config injected
+    req_plain = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+            "generationConfig": {"temperature": 0.7},
+        }
+    )
+    norm_plain = normalize_gemini_request(req_plain, "models/gemini-3.8-flash")
+    assert norm_plain.generation_config_overrides == {"temperature": 0.7}
+
+    # 2. Empty thinkingConfig or includeThoughts=False or thinkingBudget=0 -> never forces HIGH
+    for empty_tc in (
+        {},
+        {"includeThoughts": True},
+        {"includeThoughts": False},
+        {"thinkingBudget": 0},
+        {"thinkingLevel": "NONE"},
+    ):
+        req_tc = GeminiGenerateContentRequest.model_validate(
+            {
+                "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+                "generationConfig": {"thinkingConfig": empty_tc},
+            }
+        )
+        norm_tc = normalize_gemini_request(req_tc, "models/gemini-3.8-flash")
+        assert norm_tc.generation_config_overrides is None
+
+    # 3. Positive thinkingBudget -> [1, budget]
+    req_budget = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+            "generationConfig": {"thinkingConfig": {"thinkingBudget": 2048}},
+        }
+    )
+    norm_budget = normalize_gemini_request(req_budget, "models/gemini-3.8-flash")
+    assert norm_budget.generation_config_overrides == {"thinking_config": [1, 2048]}
+
+    # 4. Top-level reasoning_effort (e.g. Tavern "reasoning_effort": "low") -> [1, None, None, 1]
+    req_effort = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+            "generationConfig": {"temperature": 1.0},
+            "reasoning_effort": "low",
+        }
+    )
+    norm_effort = normalize_gemini_request(req_effort, "models/gemini-4-argon")
+    assert norm_effort.generation_config_overrides == {
+        "temperature": 1.0,
+        "thinking_config": [1, None, None, 1],
+    }
 
 
 def test_normalize_gemini_request_encodes_builtin_tools_to_wire():

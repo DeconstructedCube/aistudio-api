@@ -5,7 +5,7 @@ from aistudio_api.infrastructure.gateway.wire_types import AistudioImageOutputMo
 def test_resolve_model_defaults_uses_repo_config_for_gemma():
     defaults = resolve_model_defaults("models/gemma-4-31b-it")
 
-    assert defaults.default_tools == ("google_search",)
+    assert defaults.default_tools == ()
     assert defaults.is_image_model is False
     assert defaults.safety_settings == (
         (None, None, 7, 5),

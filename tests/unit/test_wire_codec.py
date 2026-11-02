@@ -36,8 +36,7 @@ def test_encode_request_body_updates_generation_config_and_prompt():
     assert body[3][4] == 0.2
     assert body[3][5] == 0.9
     assert body[3][6] == 32
-    assert body[3][16] == [1, None, None, 3]
-    assert len(body[3]) <= 17 or body[3][17] is None
+    assert len(body[3]) == 7
 
 
 def test_build_image_generation_search_tool_variants():
@@ -136,15 +135,14 @@ def test_wire_codec_decodes_semantic_fields():
     assert decoded.generation_config.max_tokens == 128
 
 
-def test_encode_request_body_enables_thinking_for_any_model():
+def test_encode_request_body_does_not_inject_default_thinking_when_omitted():
     rewritten = encode_request_body(
         model="models/new-text-model",
         prompt="hello",
     )
 
     body = json.loads(rewritten)
-    assert body[3][16] == [1, None, None, 3]
-    assert len(body[3]) <= 17 or body[3][17] is None
+    assert body[3] == []
 
 
 def test_encode_request_body_can_override_image_output_resolution():
@@ -181,8 +179,7 @@ def test_encode_request_body_applies_image_model_defaults():
 
     body = json.loads(rewritten)
     assert body[2] is None
-    assert body[3][14] == [2]
-    assert body[3][16] == [1, None, None, 4]
+    assert body[3] == []
 
 
 def test_encode_request_body_keeps_image_model_tools():
@@ -284,13 +281,18 @@ def test_thinking_config_encodes_high_level_wire_shape():
     assert AistudioThinkingConfig(ThinkingLevel.HIGH).to_wire() == [1, None, None, 3]
 
 
-def test_generation_config_enables_default_thinking():
+def test_generation_config_stays_empty_by_default_and_trims_none():
     config = AistudioGenerationConfig([])
 
-    config.enable_default_thinking()
-
-    assert config.thinking_config == [1, None, None, 3]
+    assert config.thinking_config is None
     assert config.media_resolution is None
+    assert config.values == []
+
+    config.thinking_config = [1, None, None, 3]
+    assert config.thinking_config == [1, None, None, 3]
+    config.thinking_config = None
+    assert config.thinking_config is None
+    assert config.values == []
 
 
 def test_generation_config_accepts_readable_image_output_mode_wrapper():

@@ -169,6 +169,10 @@ class GeminiGenerationConfig(BaseModel):
     thinkingConfig: list[object] | dict[str, object] | None = Field(
         default=None, validation_alias=AliasChoices("thinkingConfig", "thinking_config")
     )
+    reasoningEffort: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("reasoningEffort", "reasoning_effort"),
+    )
     imageConfig: dict[str, object] | None = Field(
         default=None, validation_alias=AliasChoices("imageConfig", "image_config")
     )
@@ -195,4 +199,8 @@ class GeminiGenerateContentRequest(BaseModel):
     )
     toolConfig: dict[str, object] | None = Field(
         default=None, validation_alias=AliasChoices("toolConfig", "tool_config")
+    )
+    reasoningEffort: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("reasoningEffort", "reasoning_effort"),
     )
