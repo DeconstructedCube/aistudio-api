@@ -292,7 +292,7 @@ def _default_config() -> dict[str, object]:
                     "name": "远程公共服务 (spinsnow / NodeVM)",
                     "description": "远程 Node.js VM 沙箱证明签名服务，绑定 Chromium 模拟特征环境",
                     "url": "https://waa.spinsnow.fun",
-                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+                    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
                     "headers": {
                         "X-User-Agent": "grpc-web-javascript/0.1",
                     },
