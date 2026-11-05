@@ -38,8 +38,8 @@ flowchart TD
     end
 
     subgraph DomainLayer ["3. Domain 领域层"]
-        Models["models.py<br/>纯净领域模型 (Candidate, ModelOutput)"]
-        Errors["errors.py<br/>统一异常体系 (AuthError, UsageLimitExceeded)"]
+        Models["models.py<br/>领域模型 (Candidate, ModelOutput)"]
+        Errors["errors.py<br/>异常定义 (AuthError, UsageLimitExceeded, TransportError)"]
     end
 
     subgraph InfraLayer ["4. Infrastructure 基础设施层"]
@@ -105,8 +105,8 @@ flowchart TD
 
 | 文件 | 核心职责 |
 |---|---|
-| `models.py` | 纯净领域数据结构定义（`Candidate`, `ModelOutput`, `GeneratedImage`），杜绝外部协议与 Protobuf 数组下标耦合 |
-| `errors.py` | 统一异常体系定义（`SessionExpiredError`, `AuthError`, `UsageLimitExceeded`, `RequestError` 等） |
+| `models.py` | 领域数据结构定义（`Candidate`, `ModelOutput`, `GeneratedImage`），不耦合外部 Protobuf 数组下标 |
+| `errors.py` | 异常体系定义（`SessionExpiredError`, `AuthError`, `UsageLimitExceeded`, `RequestError`, `TransportError` 等） |
 
 ### 2.4 基础设施层 (`src/aistudio_api/infrastructure/`)
 
@@ -120,8 +120,8 @@ flowchart TD
   - `wire_parser.py`：JSPB 响应解析器，处理 Struct 结构体、ListValue 数组与状态码映射。
   - `wire_types.py`：领域数据结构契约（`AistudioContent`、`AistudioPart`、`AistudioGenerationConfig`）。
   - `stream_parser.py`：流式 JSON 增量状态机解析器，去除 XSSI 前缀并按括号深度切片分块。
-  - `transport.py`：`HTTPStreamTransport` 直接 HTTP 传输层，基于 `httpx.AsyncClient` 连接池与异步字节流读取。
-  - `streaming.py`：流式响应增量 UTF-8 解码、分块解析与异常映射。
+  - `transport.py`：`HTTPStreamTransport` HTTP 传输层，基于 `httpx.AsyncClient` 连接池与异步字节流读取，保证流式响应在结束或异常时关闭底层流并上报具体异常类型。
+  - `streaming.py`：流式响应增量 UTF-8 解码、分块解析与传输异常（`TransportError`）映射。
   - `model_discovery.py`：可用模型列表动态探测与本地降级。
   - `model_defaults.py`：模型默认规则解析与 mtime 驱动的内存缓存。
 - **账号与持久化子系统 (`account/`)**：
@@ -168,11 +168,10 @@ sequenceDiagram
 
 ## 4. 并发控制与高可用设计
 
-### 4.1 纯异步连接池与无浏览器流式管道
+### 4.1 异步连接池与增量流式解析
 
-- 全局通过 `HTTPStreamTransport` 维护共享的 `httpx.AsyncClient` 连接池，彻底消除本地受控浏览器进程开销。
-- 流式请求通过 `codecs.getincrementaldecoder("utf-8")` 与 `IncrementalJSONStreamParser` 进行零拷贝增量解析，保障多字节字符跨包不乱码。
-
+- 通过 `HTTPStreamTransport` 维护共享 `httpx.AsyncClient` 连接池。
+- 流式请求通过 `codecs.getincrementaldecoder("utf-8")` 与 `IncrementalJSONStreamParser` 进行增量解码与括号深度切块，避免多字节 UTF-8 字符跨 chunk 截断乱码。
 ### 4.2 模型独立限流、403 鉴权隔离与 Sticky 调度
 
 - **模型级配额隔离**：各账号针对不同模型（如 `gemini-3.7-flash`、`gemini-3.8-flash`）的 429 状态独立记录，单模型额度耗尽不影响其他模型的正常调用。
@@ -187,11 +186,11 @@ sequenceDiagram
 2. 后续排队获得锁的协程通过双重检查（Double-Checked Locking），识别到账号已被切换至健康账号且对当前模型可用，直接复用重试，避免并发异常导致多次无谓切号；
 3. 若为单账号或备用账号全部耗尽时，系统自动对当前账号触发在位会话刷新（In-Place Refresh）并重新签名重试。
 
-### 4.4 内存态会话瞬时切换与请求上下文绑定
+### 4.4 会话切换与请求上下文绑定
 
-针对多账号并发场景，`GatewaySession` 实现了毫秒级内存切换与请求级凭据绑定：
-1. **瞬时内存切换**：当触发账号轮换时，`GatewaySession.transition_to_account` 直接从目标账号的 `auth.json` 与 `meta.json` 加载 Cookie 字典、`auth_user` 与 `tier`，构造并更新当前活跃 `SessionContext`；
-2. **上下文强绑定**：每个 `PreparedRequest` 在签名时绑定对应的 `SessionContext`，后续 HTTP 发送直接使用该上下文的 `auth_user`、`tier` 与 `auth_file`，杜绝并发切号期间发生跨账号身份错位。
+在多账号并发场景下，`GatewaySession` 维护请求级凭据隔离：
+1. **内存上下文切换**：触发账号轮换时，`GatewaySession.transition_to_account` 从目标账号的 `auth.json` 与 `meta.json` 加载 Cookie、`auth_user` 与 `tier`，构造新的 `SessionContext`；
+2. **请求上下文绑定**：每个 `PreparedRequest` 在签名时绑定当时的 `SessionContext`，后续 HTTP 传输直接使用该上下文的凭据，避免并发切号期间跨账号串号。
 
 ## 5. 跨平台支持与依赖隔离
 

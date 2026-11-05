@@ -84,8 +84,9 @@
 
 - [系统架构设计 (ARCHITECTURE.md)](./docs/ARCHITECTURE.md)：分层架构、请求生命周期、Wire Codec 编解码与并发控制模型。
 - [Wire 协议逆向技术规范 (WIRE_SPECIFICATION.md)](./docs/WIRE_SPECIFICATION.md)：Protobuf-JSON 数组映射、字段索引、多模态 Part 结构与 Schema 编码。
-- [BotGuard 验证链路机制 (BOTGUARD_VERIFICATION_CHAIN.md)](./docs/BOTGUARD_VERIFICATION_CHAIN.md)：WAA 挑战握手、Wasm 动态签名、内容哈希与服务端校验流程。
-- [智能体与协作规范 (AGENT.md)](./AGENT.md)：类型系统要求、代码质量检查与开发指南。
+- [BotGuard 验证链路机制 (BOTGUARD_VERIFICATION_CHAIN.md)](./docs/BOTGUARD_VERIFICATION_CHAIN.md)：WAA 挑战握手、内容哈希计算、快照签名与服务端校验流程。
+- [WAA 虚拟机内部架构与签名协议规范 (WAA_VM_ARCHITECTURE.md)](./docs/WAA_VM_ARCHITECTURE.md)：多态指令集 (ISA)、五阶段 ARX 流密钥派生、环境探针与 `!proof` TLV 字典。
+- [开发与协作规范 (AGENT.md)](./AGENT.md)：类型系统要求、代码质量检查与开发指南。
 
 ---
 

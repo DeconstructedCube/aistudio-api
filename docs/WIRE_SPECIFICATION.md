@@ -16,14 +16,14 @@
 - [6. 工具与函数声明 (Tools & Function Calling)](#6-工具与函数声明-tools--function-calling)
   - [6.1 内置工具模板](#61-内置工具模板)
   - [6.2 自定义函数声明 (Function Declarations)](#62-自定义函数声明-function-declarations)
-  - [6.3 结构化 Schema 编码与类型字典](#63-结构化-schema-编码与类型字典)
+  - [6.3 结构化 Schema 完整逆向编码表](#63-结构化-schema-完整逆向编码表)
   - [6.4 工具控制模式 (ToolConfig)](#64-工具控制模式-toolconfig)
 - [7. 响应报文解析与 Token 使用量 (Response & Usage)](#7-响应报文解析与-token-使用量-response--usage)
   - [7.1 响应 Chunk 容器](#71-响应-chunk-容器)
   - [7.2 Candidate 与 Part 字段解析](#72-candidate-与-part-字段解析)
   - [7.3 Token 使用量 (UsageMetadata)](#73-token-使用量-usagemetadata)
   - [7.4 FinishReason 完整状态码映射表](#74-finishreason-完整状态码映射表)
-- [8. 前端逆向新特性与高价值发现](#8-前端逆向新特性与高价值发现)
+- [8. 前端逆向未公开特性参考](#8-前端逆向未公开特性参考)
 ---
 
 ## 1. 协议概览与序列化机制
@@ -329,21 +329,17 @@ AI Studio Web 核心过滤数组：
 
 ## 8. 前端逆向未公开特性参考
 
-通过对 AI Studio 前端代码包（`m=_b.js`）的 AST 逆向分析，整理以下协议特性与未公开接口参考：
-1. **原生 MCP (Model Context Protocol) 支持**：
-   前端 `toolType` 解析中内置 `mcp_server_tool_call`（枚举代码 `6`），表明 Google 正在或已在 AI Studio 底层协议中预留了连接本地/远程 MCP Server 的标准工具通道。
-2. **原生文件检索工具 (`file_search`)**：
-   工具分支代码中存在 `case 8: return "file_search"` 与 `file_search_call`，区别于传统的代码执行与普通检索，属于针对多文档的大规模知识库检索能力。
+通过对 AI Studio 前端代码包（`m=_b.js`）的 AST 分析，记录以下协议字段与枚举定义：
+1. **MCP (Model Context Protocol) 工具枚举**：
+   前端 `toolType` 分支包含 `mcp_server_tool_call`（枚举值 `6`）。
+2. **文件检索工具 (`file_search`)**：
+   工具分支包含 `case 8: return "file_search"` 与 `file_search_call`。
 3. **语音自定义词汇表 (`customVocabulary`)**：
-   GenerationConfig 字段 32（`_.cu` / Field 32）下支持向语音端点下发专属专业术语、专有名词与人名词典，用于提升音频转录与识别精度。
-4. **音频高级控制标记**：
-   - `wordTimestamps`：字级别（Word-level）输出时间戳；
-   - `speakerDiarization`：多说话人角色分离与标签标记；
-   - `smartTranscription`：去除口语赘字（Filler words）、自动语法重构与口误纠正；
-   - `fillerWords`：允许自然停顿与语气词（"hmm", "ahh"）。
-5. **视频帧流式抽取服务 (`StreamExtractVideoFrames`)**：
-   RPC 服务 `/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/StreamExtractVideoFrames`，用于在后端按时间戳或指定采样率无损切片视频流并回传图片帧。
-
+   GenerationConfig Field 32（`_.cu`）用于传递音频转录自定义词汇表。
+4. **音频控制标记**：
+   包含 `wordTimestamps`（字级时间戳）、`speakerDiarization`（说话人分离）、`smartTranscription` 与 `fillerWords`。
+5. **视频帧抽取服务 (`StreamExtractVideoFrames`)**：
+   RPC 路径 `/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/StreamExtractVideoFrames`。
 ### 8.1 前端 JS (JSPB) 工具调用参数压缩机制与解包原则
 
 根据对 AI Studio 前端生产包动态逆向分析，Google 前端在处理 `FunctionCall.args` 与 JSON Schema 时存在特定的 JSPB 优化机制：

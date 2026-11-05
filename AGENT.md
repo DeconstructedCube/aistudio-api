@@ -18,11 +18,11 @@
 
 `aistudio-api` 是 Google AI Studio 反向代理网关，提供原生 **Gemini API 兼容接口**（`/v1beta/...`）。
 
-- **原生 Gemini 协议专一性**：服务于 Gemini 官方 API 规范（包含 thinking、multimodal、image-generation、function calling 等），不引入额外的跨厂商协议转译层。
-- **无浏览器纯净 WAA 签名架构**：基于独立轻量级 `waa-signer`（嵌入式 SpiderMonkey 152 + Firefox 152 现场）或 `aistudio-pg-bridge` 证明签名服务，配合 `httpx` HTTP/2 异步连接池直连 Google AI Studio，无需启动重型无头浏览器或 `proot-distro` 容器。
-- **代码即事实标准（Code as Ground Truth）**：通过全量测试验证的代码是系统的事实标准。当技术规范文档与真实代码逻辑出现分歧时以代码为准，并在重构过程中同步更新文档。
-- **架构事实优先（Fact & Architecture over Brittle Tests）**：保持架构整洁与低耦合。避免为了迁就耦合了私有变量的脆弱 mock 测试而妥协生产设计；遇冲突时应重构测试以对齐公共接口契约，消除抽象泄露。
-- **协议索引常量化（Specification Constants & No Magic Numbers）**：Protobuf-over-JSON 逆向数组索引统一提取为具备明确语义的规范枚举或常量（如 `wire_spec.py`），杜绝裸数字散落业务逻辑中。
+- **Gemini 协议实现**：实现 Gemini 官方 `/v1beta/...` 接口规范（包含 thinking、multimodal、image-generation、function calling 等），不引入其他厂商的协议转译层。
+- **无浏览器 WAA 签名架构**：通过独立 `waa-signer`（嵌入式 SpiderMonkey 152 + Firefox 152 DOM 宿主）或兼容的远程证明签名服务生成 `!proof` 令牌，配合 `httpx` HTTP/2 异步连接池直连 Google AI Studio。
+- **代码即事实标准（Code as Ground Truth）**：以通过测试验证的代码为准。当文档与代码逻辑不一致时，以代码为准并同步更新文档。
+- **接口契约优先（Contract over Brittle Mocks）**：测试应对齐公共接口契约，避免耦合私有属性。
+- **协议索引常量化（No Magic Numbers）**：Protobuf-over-JSON 数组下标统一定义为 `wire_spec.py` 中的具名常量或枚举。
 
 ## 2. 运行时与环境约束 (Termux)
 
@@ -141,7 +141,7 @@ uv run python3 main.py server --port 8080
 | 工具 / 阶段 | 命令 | 判定标准 |
 |---|---|---|
 | **Python 代码风格与 Lint** | `uv run ruff check .` | 0 errors |
-| **Python 代码格式化** | `uv run ruff format --check .` | 70 files already formatted |
+| **Python 代码格式化** | `uv run ruff format --check .` | 全部文件已格式化 |
 | **Python 类型检查** | `bun x pyright src tests` | 0 errors |
 | **Python 单元测试** | `uv run pytest` | 全部通过 |
 | **前端代码规范** | `cd web && bun run lint` | 0 errors, 0 warnings |
@@ -158,12 +158,12 @@ uv run python3 main.py server --port 8080
 ## 4. 并发安全与多账号守则
 
 > [!IMPORTANT]
-> 1. **原子化文件持久化**：所有持久化文件（`registry.json`、`auth.json`、`meta.json`、`stats.json`、`rotator_state.json` 等）操作必须统一使用 `common.atomic_write_json`（写入临时文件后通过 `Path.replace` 原子替换），防止并发写入截断。
-> 2. **内存级瞬时会话热切**：切换账号时，`GatewaySession` 在内存中直接加载目标账号的 Cookie 凭据与 `auth_user` / `tier` 元数据并更新 `SessionContext`，无需重启任何连接。
-> 3. **请求级实时快照签名**：每次请求根据当前 `contents` 计算 SHA-256 摘要，并实时通过 `WaaSigner` 获取全新的一次性 `!` 前缀证明令牌，绝不跨请求复用。
-> 4. **鉴权故障快速隔离与自愈**：当遇到 `The caller does not have permission` (403) 时，立即累加当前账号 `auth_errors`（调度加权分 +200）进行动态避让并快速故障转移至健康账号，不加硬冷却锁；单账号或备用号耗尽时自动触发在位会话刷新自愈。
-> 5. **Cookie 智能精简**：外部导入 Cookie 时自动过滤旧设备或跨 IP 绑定的易腐败凭据（`OSID`、`__Secure-OSID`、`SIDCC` 及 `_ga` 等追踪标记），并在发起上游 RPC 时通过 `MINIMAL_COOKIE_WHITELIST` 仅发送核心认证项（`SID`、`SAPISID`、`__Secure-1PSIDTS` 等）。
-> 6. **账号接口解耦与 SPA 缓存隔离**：对外标准 REST 接口统一位于 `/api/accounts`（保持 `/accounts` 向下兼容），并在 SPA 单页应用与 API 响应中下发 `Vary: Accept` 与 `Cache-Control: no-store`，杜绝浏览器与代理网关发生缓存错乱。
+> 1. **原子化文件写入**：所有 JSON 状态文件（`registry.json`、`auth.json`、`meta.json`、`stats.json`、`rotator_state.json`）必须使用 `common.atomic_write_json`（写入临时文件后通过 `Path.replace` 替换），防止并发写入截断。
+> 2. **内存会话切换**：切换账号时，`GatewaySession` 直接加载目标账号的 Cookie 与 `auth_user` / `tier` 元数据并更新 `SessionContext`。
+> 3. **单请求独立快照签名**：每次请求根据 `contents` 计算 SHA-256 摘要，并调用 `WaaSigner` 生成新的一次性 `!` 前缀证明令牌，不跨请求复用。
+> 4. **403 故障转移与重签**：遇到 `The caller does not have permission` (403) 时，累加当前账号 `auth_errors`（调度惩罚权重 +200）并切换至备用账号；无备用号可用时触发当前账号重签重试。
+> 5. **Cookie 过滤**：导入 Cookie 时过滤设备/IP 绑定的易失效项（`OSID`、`__Secure-OSID`、`SIDCC`、`_ga` 等），向上游发请求时通过 `MINIMAL_COOKIE_WHITELIST` 仅携带核心认证项。
+> 6. **接口路由与缓存控制**：账号管理 REST 接口位于 `/api/accounts`（兼容 `/accounts`），SPA 与 API 响应下发 `Vary: Accept` 与 `Cache-Control: no-store`。
 
 ## 5. 代码结构索引
 
@@ -194,23 +194,31 @@ aistudio-api/
 │   │   ├── account_rotator.py     # 黏性账号调度器 (按模型记录 429 与太平洋午夜重置)
 │   │   ├── account_service.py     # 账号存储与激活上下文协调
 │   │   ├── api_service_gemini.py  # Gemini 请求生命周期与流式处理
-│   │   ├── account_orchestrator.py# _switch_lock 防雪崩切号与故障转移编排
+│   │   ├── account_orchestrator.py# _switch_lock 切号互斥与故障转移编排
 │   │   └── chat_service.py        # 消息规范化与多模态数据处理
-│   ├── domain/                    # 纯净领域模型与异常体系
-│   │   ├── errors.py              # 业务异常定义 (AuthError, UsageLimitExceeded 等)
+│   ├── domain/                    # 领域模型与异常定义
+│   │   ├── errors.py              # 业务异常定义 (AuthError, UsageLimitExceeded, TransportError 等)
 │   │   └── models.py              # 领域数据结构 (Candidate, ModelOutput 等)
 │   ├── infrastructure/            # 基础设施层
-│   │   ├── account/               # Cookie 解析、SAPISIDHASH 计算与凭据持久化 (account_store, cookie_parser)
-│   │   ├── waa/                   # 无浏览器 WAA 证明令牌签名引擎 (signer)
+│   │   ├── account/               # Cookie 解析、SAPISIDHASH 计算与凭据存储 (account_store, cookie_parser)
+│   │   ├── waa/                   # WAA 证明令牌签名客户端 (signer)
 │   │   └── gateway/               # 会话管理 (session)、HTTP/2 传输层 (transport)、模型发现 (model_discovery)、Wire 编解码与流式管道
-├── waa-signer/                    # 独立轻量级 Go WAA 签名服务 (SpiderMonkey 152 + Firefox 152 DOM)
+├── waa-signer/                    # 独立 Go WAA 签名服务 (SpiderMonkey 152 + Firefox 152 DOM)
 │   ├── build.sh                   # 跨平台一键自动下载依赖与静态构建脚本
 │   ├── cmd/waa-signer/main.go     # HTTP 服务入口 (/health, /v1/proof/mint, /v1/rpc/send)
 │   └── internal/                  # WAA 解释器、SpiderMonkey CGO 绑定与网络栈
+├── scripts/
+│   ├── setup-env.sh               # 跨平台环境自动检测与 TUR 源配置脚本
+│   └── waa_vm_inspector.js        # WAA 虚拟机 AST 规格提取、五阶段符号反汇编与 Proof 解码 CLI 工具
+├── docs/
+│   ├── ARCHITECTURE.md            # 系统整体分层架构与并发控制设计
+│   ├── BOTGUARD_VERIFICATION_CHAIN.md # BotGuard 验证交互链路规范
+│   ├── WAA_VM_ARCHITECTURE.md     # WAA 字节码虚拟机 ISA、密钥派生、打分蜜罐与 TLV 签名协议规范
+│   └── WIRE_SPECIFICATION.md      # Protobuf-over-JSON (JSPB) 数组索引规范
 ├── config.yaml                    # 模型规则与工具默认行为配置 (支持在线热重载)
 ├── main.py                        # 本地统一启动入口
-└── tests/                         # 单元测试套件 (模块化轻量架构，全量通过 <5s)
-    ├── conftest.py                # 气密性隔离配置 (monkeypatch AISTUDIO_* 数据目录)
+└── tests/                         # 单元测试套件
+    ├── conftest.py                # 测试目录隔离配置 (monkeypatch AISTUDIO_* 数据目录)
     ├── fixtures/                  # 真实 Protobuf JSON 请求与响应报文
     └── unit/                      # 按职责严格划分的单元测试模块
         ├── test_account_*         # 账号调度、并发轮换防雪崩与凭据导入

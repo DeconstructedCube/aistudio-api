@@ -197,3 +197,32 @@ async def test_session_transition_preserves_in_flight(tmp_path):
     assert session.active_context is not None
     assert session.get_current_auth_user() == "1"
     assert session.active_context.cookies.get("SAPISID") == "new"
+
+
+@pytest.mark.asyncio
+async def test_streaming_gateway_raises_transport_error_instead_of_http_0():
+    """Regression test: transport error events or missing HTTP status must raise TransportError, never RequestError(0) ('HTTP 0')."""
+    from aistudio_api.domain.errors import TransportError
+    from aistudio_api.infrastructure.gateway.client import PreparedRequest
+    from aistudio_api.infrastructure.gateway.streaming import StreamingGateway
+
+    session = GatewaySession()
+
+    async def fake_error_stream(**_kwargs):
+        yield ("error", "ReadTimeout")
+
+    session.send_streaming_request = fake_error_stream
+    gateway = StreamingGateway(session=session)
+    prepared = PreparedRequest(
+        url="https://example.com",
+        headers={},
+        body="[]",
+        model="models/gemini-4-argon",
+        snapshot="!snap",
+    )
+
+    with pytest.raises(TransportError, match="ReadTimeout"):
+        async for _ in gateway.stream_chat(
+            request=prepared, model="models/gemini-4-argon"
+        ):
+            pass

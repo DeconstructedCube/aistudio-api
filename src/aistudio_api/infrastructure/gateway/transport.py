@@ -174,8 +174,11 @@ class HTTPStreamTransport:
             )
             return resp.status_code, resp.content
         except Exception as exc:
-            logger.error("HTTP request failed: url=%s, err=%s", url, exc)
-            raise TransportError(f"HTTP request failed: {exc}") from exc
+            err_detail = (
+                f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            )
+            logger.error("HTTP request failed: url=%s, err=%s", url, err_detail)
+            raise TransportError(f"HTTP request failed: {err_detail}") from exc
 
     async def send_streaming_request(
         self,
@@ -200,6 +203,7 @@ class HTTPStreamTransport:
 
         client = await self._get_client()
 
+        resp = None
         try:
             req = client.build_request(
                 "POST", url, headers=clean_headers, content=body.encode("utf-8")
@@ -217,5 +221,11 @@ class HTTPStreamTransport:
                     yield ("chunk", chunk)
 
         except Exception as exc:
-            logger.warning("Streaming request encountered exception: %s", exc)
-            yield ("error", str(exc))
+            err_detail = (
+                f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            )
+            logger.warning("Streaming request encountered exception: %s", err_detail)
+            yield ("error", err_detail)
+        finally:
+            if resp is not None:
+                await resp.aclose()

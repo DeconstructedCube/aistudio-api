@@ -1079,10 +1079,17 @@
     return found;
   };
   const layoutRect = element => {
+    if (!element || !connected(element)) return [0, 0, 0, 0];
+    const style = styleOf(element);
+    if (style.display === 'none') return [0, 0, 0, 0];
     if (realmName === 'top' && (element === api.singleton('document.body') || element === api.singleton('document.documentElement'))) {
       return [0, 0, g.innerWidth, g.innerHeight];
     }
-    return [0, 0, 0, 0];
+    const x = pixels(style.left) ?? 16;
+    const y = pixels(style.top) ?? 16;
+    const w = pixels(style.width) ?? Math.max(100, Math.min(g.innerWidth || 1024, 600));
+    const h = pixels(style.height) ?? Math.max(24, layoutHeight(element) || 40);
+    return [x, y, w, h];
   };
   const rect = (iface, [x, y, width, height]) => {
     const object = create(iface);
@@ -1255,7 +1262,15 @@
     if (elements.length) return elements.reduce((sum, child) => sum + layoutHeight(child), 0);
     const text = textOf(brand);
     if (!text) return 0;
-    return pixels(style.lineHeight) ?? Math.round((pixels(style.fontSize) || 16) * 1.2);
+    const lh = pixels(style.lineHeight) ?? Math.round((pixels(style.fontSize) || 16) * 1.2);
+    const chMatch = /^([\d.]+)ch$/.exec(String(style.width || ''));
+    if (chMatch) {
+      const cols = Math.max(1, Number(chMatch[1]));
+      const hyphens = style.hyphens === 'auto' || style.webkitHyphens === 'auto';
+      const lines = Math.max(1, Math.ceil(text.length / (hyphens ? cols : Math.max(1, cols - 1))));
+      return lines * lh;
+    }
+    return lh;
   };
   const trustedImage = (element, brand, source) => {
     brand.over.src = source;
@@ -1491,6 +1506,24 @@
       const event = create('PointerEvent');
       Object.assign(brandFor(event).over, { type: 'click', bubbles: true, cancelable: true, composed: true, detail: 0, view: null, pointerId: -1, pointerType: '', width: 1, height: 1, pressure: 0, isPrimary: true, altitudeAngle: Math.PI / 2, azimuthAngle: 0, timeStamp: host.performanceNow() });
       dispatch(this, event);
+    },
+    'HTMLElement.focus': function () {
+      const now = host.performanceNow();
+      const focusEv = create('FocusEvent');
+      Object.assign(brandFor(focusEv).over, { type: 'focus', bubbles: false, cancelable: false, composed: true, view: g, detail: 0, relatedTarget: null, isTrusted: true, timeStamp: now });
+      dispatch(this, focusEv);
+      const focusInEv = create('FocusEvent');
+      Object.assign(brandFor(focusInEv).over, { type: 'focusin', bubbles: true, cancelable: false, composed: true, view: g, detail: 0, relatedTarget: null, isTrusted: true, timeStamp: now });
+      dispatch(this, focusInEv);
+    },
+    'HTMLElement.blur': function () {
+      const now = host.performanceNow();
+      const blurEv = create('FocusEvent');
+      Object.assign(brandFor(blurEv).over, { type: 'blur', bubbles: false, cancelable: false, composed: true, view: g, detail: 0, relatedTarget: null, isTrusted: true, timeStamp: now });
+      dispatch(this, blurEv);
+      const focusOutEv = create('FocusEvent');
+      Object.assign(brandFor(focusOutEv).over, { type: 'focusout', bubbles: true, cancelable: false, composed: true, view: g, detail: 0, relatedTarget: null, isTrusted: true, timeStamp: now });
+      dispatch(this, focusOutEv);
     },
     'IntersectionObserver.observe': function (brand, [target]) {
       brandOf(target, 'Element', 'observe');

@@ -112,6 +112,13 @@ class StreamingGateway:
             headers=request.headers,
             ctx=request.ctx,
         ):
+            if event_type == "error":
+                err_msg = (
+                    str(payload).strip()
+                    if payload
+                    else "unknown streaming transport error"
+                )
+                raise TransportError(f"Streaming request failed: {err_msg}")
             if event_type == "status" and payload and not status_code:
                 status_code = int(str(payload))
             elif event_type == "chunk" and payload:
@@ -143,6 +150,10 @@ class StreamingGateway:
             "流式数据流接收结束: model=%s, 分块到达=%s", model, has_received_chunks
         )
         raw_response = "".join(raw_parts)
+        if status_code == 0:
+            raise TransportError(
+                "stream ended before HTTP response status arrived (connection failed)"
+            )
         if status_code != 200:
             detail = _summarize_error_body(raw_response)
             if (

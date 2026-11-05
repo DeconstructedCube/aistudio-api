@@ -51,9 +51,15 @@ const promptScript = `((prompt, submit) => {
     run.appendChild(document.createElement('button'));
   }
   const textarea = box.querySelector('textarea');
+  textarea.focus();
+  const ch = String(prompt || 'a').charAt(0) || 'a';
+  const code = 'Key' + ch.toUpperCase();
+  const kc = ch.toUpperCase().charCodeAt(0) || 65;
+  textarea.dispatchEvent(new KeyboardEvent('keydown', { key: ch, code, keyCode: kc, which: kc, bubbles: true, cancelable: true }));
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
   setter.call(textarea, prompt);
   textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: prompt }));
+  textarea.dispatchEvent(new KeyboardEvent('keyup', { key: ch, code, keyCode: kc, which: kc, bubbles: true, cancelable: true }));
   textarea.dispatchEvent(new Event('change', { bubbles: true }));
   if (submit) document.querySelector('ms-run-button').querySelector('button').click();
   return textarea.value;
