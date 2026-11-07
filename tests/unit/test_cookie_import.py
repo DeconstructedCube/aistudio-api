@@ -86,22 +86,26 @@ async def test_model_discovery_parse():
 def test_parse_cookie_string_discards_transient_and_telemetry_cookies():
     raw = (
         "SID=sid_val; SAPISID=sapisid_val; __Secure-1PSID=psid_val; "
-        "_ga=GA1.2.123; NID=511=nid_val; SIDCC=sidcc_val; "
+        "_ga=GA1.2.123; NID=511=nid_val; SIDCC=sidcc_val; LSID=lsid_val; "
+        "__Host-1PLSID=host_lsid; __Host-GAPS=host_gaps; "
         "OSID=stale_osid; __Secure-OSID=stale_sec_osid"
     )
     state = parse_cookie_string(raw, discard_transient=True)
     raw_cookies = state.get("cookies")
     assert isinstance(raw_cookies, list)
     names = {c["name"] for c in raw_cookies if isinstance(c, dict)}
-    # Core credentials must be kept
+    # Core & rotation credentials must be kept
     assert "SID" in names
     assert "SAPISID" in names
     assert "__Secure-1PSID" in names
+    assert "SIDCC" in names
+    assert "LSID" in names
+    assert "__Host-1PLSID" in names
 
     # Stale/transient/tracking cookies must be discarded
     assert "_ga" not in names
     assert "NID" not in names
-    assert "SIDCC" not in names
+    assert "__Host-GAPS" not in names
     assert "OSID" not in names
     assert "__Secure-OSID" not in names
 
@@ -395,3 +399,170 @@ async def test_probe_import_activates_first_account_and_registers_in_rotator(
     account_service.activate_account.assert_awaited_once_with(
         "acc_new", gateway_session
     )
+
+
+def test_apply_set_cookies_and_filter_host_only():
+    from aistudio_api.infrastructure.account.cookie_parser import (
+        apply_set_cookies,
+        filter_minimal_cookies,
+    )
+
+    cookies = {
+        "SID": "sid_1",
+        "SAPISID": "sapisid_1",
+        "LSID": "lsid_1",
+        "__Host-1PLSID": "h_lsid_1",
+        "__Secure-1PSIDTS": "old_ts",
+    }
+    # Default RPC filter excludes LSID & __Host-*
+    rpc_cookies = filter_minimal_cookies(cookies, include_account_host=False)
+    assert "LSID" not in rpc_cookies
+    assert "__Host-1PLSID" not in rpc_cookies
+    assert rpc_cookies["__Secure-1PSIDTS"] == "old_ts"
+
+    # RotateCookies filter includes LSID & __Host-1PLSID
+    rot_cookies = filter_minimal_cookies(cookies, include_account_host=True)
+    assert rot_cookies["LSID"] == "lsid_1"
+    assert rot_cookies["__Host-1PLSID"] == "h_lsid_1"
+
+    set_cookie_headers = [
+        "__Secure-1PSIDTS=new_ts_val; Path=/; Domain=.google.com; Secure; HttpOnly",
+        "SIDCC=new_sidcc_val; Path=/; Domain=.google.com; Secure",
+        "__Secure-3PSIDTS=deleted; Expires=Thu, 01-Jan-1970 00:00:01 GMT; Path=/",
+        "NID=ignore_gstatic; Domain=.gstatic.com; Path=/",
+        "_ga=ignore_non_whitelist; Path=/",
+    ]
+    updated = apply_set_cookies(cookies, set_cookie_headers)
+    assert set(updated) == {"__Secure-1PSIDTS", "SIDCC"}
+    assert cookies["__Secure-1PSIDTS"] == "new_ts_val"
+    assert cookies["SIDCC"] == "new_sidcc_val"
+    assert "_ga" not in cookies
+
+
+@pytest.mark.asyncio
+async def test_rotate_google_cookies_and_sibling_sync(tmp_path):
+    import httpx
+
+    from aistudio_api.application.account_service import AccountService
+    from aistudio_api.infrastructure.account.account_store import AccountStore
+    from aistudio_api.infrastructure.account.cookie_parser import (
+        load_cookies_from_auth_file,
+        probe_aistudio_session,
+        rotate_google_cookies,
+    )
+    from aistudio_api.infrastructure.gateway.session import (
+        GatewaySession,
+        SessionContext,
+    )
+
+    # 1. Missing rotation seed skips call cleanly
+    res_skip = await rotate_google_cookies({"SID": "s1", "SAPISID": "sap1"})
+    assert res_skip["ok"] is False
+    assert res_skip.get("skipped") == "missing_seed"
+
+    # 2. Mock RotateCookies endpoint & session probe
+    def mock_handler(request: httpx.Request) -> httpx.Response:
+        if "RotateCookies" in str(request.url):
+            assert "LSID=lsid_shared" in request.headers.get("cookie", "")
+            return httpx.Response(
+                200,
+                headers=[
+                    (
+                        "Set-Cookie",
+                        "__Secure-1PSIDTS=rotated_ts_999; Path=/; Domain=.google.com; Secure; HttpOnly",
+                    ),
+                    (
+                        "Set-Cookie",
+                        "SIDCC=rotated_sidcc_888; Path=/; Domain=.google.com",
+                    ),
+                ],
+                content=b'[null,"-1234567890"]',
+            )
+        if str(request.url) == "https://aistudio.google.com/":
+            if "dead_sid" in request.headers.get("cookie", ""):
+                return httpx.Response(
+                    302,
+                    headers={"Location": "https://aistudio.google.com/welcome"},
+                )
+            return httpx.Response(200, text="<html>AI Studio</html>")
+        return httpx.Response(404)
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(mock_handler))
+    try:
+        # Test session liveness probe
+        alive_ok, reason_ok = await probe_aistudio_session(
+            {"SID": "live_sid", "SAPISID": "sap1"}, client=mock_client
+        )
+        assert alive_ok is True
+        assert reason_ok == "ok"
+
+        alive_dead, reason_dead = await probe_aistudio_session(
+            {"SID": "dead_sid", "SAPISID": "sap1"}, client=mock_client
+        )
+        assert alive_dead is False
+        assert reason_dead == "signed_out"
+
+        # Test multi-account sibling synchronization on rotation
+        store = AccountStore(accounts_dir=tmp_path / "accounts_rot_sync")
+        svc = AccountService(store)
+
+        # u/0 has LSID, u/1 shares the same SAPISID session anchor
+        acc_u0 = svc.save_account_from_cookies(
+            name="Account u/0",
+            email="u0@gmail.com",
+            storage_state={
+                "cookies": [
+                    {"name": "SID", "value": "shared_sid"},
+                    {"name": "SAPISID", "value": "shared_sapisid"},
+                    {"name": "LSID", "value": "lsid_shared"},
+                    {"name": "__Secure-1PSIDTS", "value": "initial_ts"},
+                ]
+            },
+            auth_user="0",
+            cookie_id="cid_shared",
+        )
+        acc_u1 = svc.save_account_from_cookies(
+            name="Account u/1",
+            email="u1@gmail.com",
+            storage_state={
+                "cookies": [
+                    {"name": "SID", "value": "shared_sid"},
+                    {"name": "SAPISID", "value": "shared_sapisid"},
+                ]
+            },
+            auth_user="1",
+            cookie_id="cid_shared",
+        )
+
+        session = GatewaySession()
+        u1_auth_path = store.get_auth_path(acc_u1.id)
+        assert u1_auth_path is not None
+        session.set_ready_context(
+            SessionContext(
+                auth_user="1",
+                auth_file=str(u1_auth_path),
+                cookies=load_cookies_from_auth_file(u1_auth_path),
+            )
+        )
+
+        # Rotate via u/1 (which borrows LSID from sibling u/0 and updates both u/0 and u/1 + active session!)
+        rot_result = await svc.rotate_account_cookies(
+            acc_u1.id, session=session, client=mock_client
+        )
+        assert rot_result["ok"] is True
+        updated_list = rot_result.get("updated")
+        assert isinstance(updated_list, list) and "__Secure-1PSIDTS" in updated_list
+
+        # Verify both u/0 and u/1 on disk received the rotated cookies
+        u0_cookies = load_cookies_from_auth_file(store.get_auth_path(acc_u0.id))
+        u1_cookies = load_cookies_from_auth_file(store.get_auth_path(acc_u1.id))
+        assert u0_cookies["__Secure-1PSIDTS"] == "rotated_ts_999"
+        assert u1_cookies["__Secure-1PSIDTS"] == "rotated_ts_999"
+        assert u0_cookies["SIDCC"] == "rotated_sidcc_888"
+        assert u1_cookies["SIDCC"] == "rotated_sidcc_888"
+
+        # Verify active in-memory session context was updated immediately
+        assert session.active_context is not None
+        assert session.active_context.cookies["__Secure-1PSIDTS"] == "rotated_ts_999"
+    finally:
+        await mock_client.aclose()

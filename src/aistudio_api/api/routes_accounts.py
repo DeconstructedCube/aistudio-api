@@ -237,15 +237,14 @@ async def detect_account_email(
                 if http_tier:
                     detected_tier = http_tier
         except Exception as e:
-            log.debug("通过 HTTP 探测账号 %s 邮箱/等级失败: %s", account_id, e)
+            log.debug("探测账号 %s 邮箱/等级失败: %s", account_id, e)
     if email:
         account_service.update_account_email(account_id, email)
-        log.info("已更新账号邮箱: id=%s, email=%s", account_id, mask_email(email))
+        log.info("更新账号邮箱: id=%s, email=%s", account_id, mask_email(email))
 
     if detected_tier:
         account_service.update_account_tier(account_id, detected_tier)
-        log.info("已更新账号订阅等级: id=%s, tier=%s", account_id, detected_tier)
-
+        log.info("更新账号订阅等级: id=%s, tier=%s", account_id, detected_tier)
     acc = account_service.get_account(account_id)
     if not acc:
         raise HTTPException(status_code=404, detail="账号不存在")
@@ -272,16 +271,41 @@ async def detect_account_tier(
                     cookie_dict, auth_user=acc.auth_user or "0"
                 )
         except Exception as e:
-            log.debug("通过 HTTP 探测账号 %s 订阅等级失败: %s", account_id, e)
+            log.debug("探测账号 %s 订阅等级失败: %s", account_id, e)
 
     if detected_tier:
         account_service.update_account_tier(account_id, detected_tier)
-        log.info("已更新账号订阅等级: id=%s, tier=%s", account_id, detected_tier)
+        log.info("更新账号订阅等级: id=%s, tier=%s", account_id, detected_tier)
 
     acc = account_service.get_account(account_id)
     if not acc:
         raise HTTPException(status_code=404, detail="账号不存在")
     return to_account_response(acc)
+
+
+@router.post("/{account_id}/rotate-cookies")
+async def rotate_account_cookies(
+    account_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@]+$"),
+    account_service: AccountService = Depends(get_account_service),
+    runtime_state: RuntimeState = Depends(get_runtime_state),
+) -> dict[str, object]:
+    """手动触发指定账号及其同源子账号的 Google Cookie 轮换续期。"""
+    acc = account_service.get_account(account_id)
+    if not acc:
+        raise HTTPException(status_code=404, detail="账号不存在")
+    gateway_session = runtime_state.client.session if runtime_state.client else None
+    res = await account_service.rotate_account_cookies(account_id, gateway_session)
+    ok = bool(res.get("ok"))
+    if ok and runtime_state.rotator:
+        runtime_state.rotator.clear_cooldown(account_id)
+    return {
+        "ok": ok,
+        "account_id": account_id,
+        "status": res.get("status", 0),
+        "updated": res.get("updated", []),
+        "skipped": res.get("skipped"),
+        "error": res.get("error"),
+    }
 
 
 @router.delete("/{account_id}")

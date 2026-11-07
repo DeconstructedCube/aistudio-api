@@ -72,21 +72,21 @@ async def lifespan(_app: FastAPI):
     if active_auth_path is not None:
         await client.switch_auth(str(active_auth_path))
     logger.info(
-        "服务初始化完成: 监听端口=%d, 已加载账号数=%d",
+        "服务启动完成: port=%d, 账号数=%d",
         settings.port,
         len(account_store.list_accounts()),
     )
     logger.debug(
-        "账号初始状态: %s",
+        "账号列表: %s",
         [
             f"{a.id}(u/{a.auth_user},tier={a.tier},enabled={a.enabled})"
             for a in account_store.list_accounts()
         ],
     )
 
-    tier_task = None
+    async def _auto_refresh_tiers() -> None:
+        import httpx
 
-    async def _auto_refresh_tiers():
         from aistudio_api.infrastructure.account.cookie_parser import (
             load_cookies_from_auth_file,
             probe_account_benefit_tier,
@@ -102,31 +102,40 @@ async def lifespan(_app: FastAPI):
             or (now_ts - (a.tier_checked_at or 0) > 86400 * 3)
         ]
         if not accounts_to_check:
-            logger.debug("所有账号邮箱与订阅等级最近均已校验，跳过启动探测")
             return
 
-        logger.info(
-            "开始自动校验账号订阅等级与邮箱 (共 %d 个账号待检测)...",
-            len(accounts_to_check),
-        )
+        logger.info("校验账号邮箱与订阅等级: 待检测=%d", len(accounts_to_check))
         upgraded_count = 0
         checked_count = 0
+        sem = asyncio.Semaphore(4)
 
-        for a in accounts_to_check:
-            apath = account_store.get_auth_path(a.id)
-            if apath:
-                try:
-                    cdict = load_cookies_from_auth_file(apath)
-                    if cdict:
+        async with httpx.AsyncClient(
+            timeout=8.0, proxy=settings.proxy_url, follow_redirects=True
+        ) as probe_client:
+
+            async def _check_one(a):
+                nonlocal checked_count, upgraded_count
+                apath = account_store.get_auth_path(a.id)
+                if not apath:
+                    return
+                async with sem:
+                    try:
+                        cdict = load_cookies_from_auth_file(apath)
+                        if not cdict:
+                            return
                         checked_count += 1
                         if not a.email:
                             em = await probe_account_email(
-                                cdict, auth_user=a.auth_user or "0"
+                                cdict,
+                                auth_user=a.auth_user or "0",
+                                client=probe_client,
                             )
                             if em:
                                 account_store.update_account_email(a.id, em)
                         t = await probe_account_benefit_tier(
-                            cdict, auth_user=a.auth_user or "0"
+                            cdict,
+                            auth_user=a.auth_user or "0",
+                            client=probe_client,
                         )
                         resolved_tier = t or "Free"
                         account_store.update_account_tier(
@@ -135,31 +144,111 @@ async def lifespan(_app: FastAPI):
                         if resolved_tier != "Free" and a.tier == "Free":
                             upgraded_count += 1
                             logger.info(
-                                "账号订阅等级自动升级: id=%s (u/%s) -> %s",
+                                "账号订阅等级更新: id=%s (u/%s) -> %s",
                                 a.id,
                                 a.auth_user,
                                 resolved_tier,
                             )
-                except Exception as e:
-                    logger.debug("账号 %s 订阅检测异常: %s", a.id, e)
+                    except Exception as e:
+                        logger.debug("账号 %s 订阅检测失败: %s", a.id, e)
+
+            await asyncio.gather(*(_check_one(a) for a in accounts_to_check))
 
         logger.info(
-            "账号订阅校验完成: 检测=%d 个, 发现付费订阅=%d 个",
+            "账号校验完成: 已检测=%d, 付费升级=%d",
             checked_count,
             upgraded_count,
         )
 
+    async def _cookie_rotation_loop() -> None:
+        """后台定时轮换账号滚动 Cookie (__Secure-1PSIDTS / SIDCC)，间隔 7 分钟。"""
+        import httpx
+
+        from aistudio_api.infrastructure.account.cookie_parser import (
+            compute_session_anchor,
+            load_cookies_from_auth_file,
+            probe_aistudio_session,
+        )
+
+        await asyncio.sleep(5.0)
+        while True:
+            try:
+                now_ts = time.time()
+                seen_anchors: set[str] = set()
+                accounts = account_store.list_accounts()
+                async with httpx.AsyncClient(
+                    timeout=15.0, proxy=settings.proxy_url, follow_redirects=False
+                ) as rot_client:
+                    for acc in accounts:
+                        if not acc.enabled:
+                            continue
+                        st = rotator.get_account_stats(acc.id)
+                        if st and st.session_expired:
+                            continue
+                        last_rot = acc.last_rotated_at or 0.0
+                        if last_rot and (now_ts - last_rot < 420.0):
+                            continue
+                        apath = account_store.get_auth_path(acc.id)
+                        if not apath:
+                            continue
+                        cdict = load_cookies_from_auth_file(apath)
+                        if not cdict:
+                            continue
+                        anchor = compute_session_anchor(cdict)
+                        if anchor:
+                            if anchor in seen_anchors:
+                                continue
+                            seen_anchors.add(anchor)
+
+                        before_ts = cdict.get("__Secure-1PSIDTS", "")
+                        rot_res = await account_service.rotate_account_cookies(
+                            acc.id, client.session, client=rot_client
+                        )
+                        status_code = rot_res.get("status", 0)
+                        if status_code == 401:
+                            alive, _ = await probe_aistudio_session(
+                                cdict, client=rot_client
+                            )
+                            if not alive:
+                                rotator.record_session_expired(acc.id)
+                            continue
+                        new_cdict = rot_res.get("cookies")
+                        after_ts = (
+                            new_cdict.get("__Secure-1PSIDTS", "")
+                            if isinstance(new_cdict, dict)
+                            else ""
+                        )
+                        if (
+                            status_code == 200
+                            and before_ts
+                            and after_ts
+                            and before_ts == after_ts
+                        ):
+                            alive, _ = await probe_aistudio_session(
+                                new_cdict if isinstance(new_cdict, dict) else cdict,
+                                client=rot_client,
+                            )
+                            if not alive:
+                                rotator.record_session_expired(acc.id)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug("后台 Cookie 轮换巡检异常: %s", e)
+            await asyncio.sleep(60.0)
+
     tier_task = asyncio.create_task(_auto_refresh_tiers())
+    rotate_task = asyncio.create_task(_cookie_rotation_loop())
 
     yield
-    logger.info("服务正在关闭")
-    if tier_task and not tier_task.done():
-        tier_task.cancel()
+    logger.info("正在关闭服务")
+    for bg_task in (tier_task, rotate_task):
+        if bg_task and not bg_task.done():
+            bg_task.cancel()
     if client:
         try:
             await client.close()
         except Exception as e:
-            logger.debug("关闭客户端失败: %s", e)
+            logger.debug("关闭客户端异常: %s", e)
     stop_signer_daemon()
     runtime_state.client = None
     runtime_state.account_service = None
@@ -182,24 +271,24 @@ async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONR
     code, msg, status_str = classify_gemini_error_payload(exc)
     if code >= 500:
         logger.error(
-            "HTTP 异常: status=%d, message=%s, path=%s",
+            "HTTP %d 异常: path=%s, message=%s",
             code,
-            msg,
             _request.url.path,
+            msg,
         )
     elif code in (401, 403, 429):
         logger.warning(
-            "HTTP 权限/限额异常: status=%d, message=%s, path=%s",
+            "HTTP %d: path=%s, message=%s",
             code,
-            msg,
             _request.url.path,
+            msg,
         )
     else:
         logger.info(
-            "HTTP 业务异常: status=%d, message=%s, path=%s",
+            "HTTP %d: path=%s, message=%s",
             code,
-            msg,
             _request.url.path,
+            msg,
         )
     return JSONResponse(
         status_code=code,

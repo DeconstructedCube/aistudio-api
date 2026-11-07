@@ -91,7 +91,7 @@ async def try_switch_account(
             and rotator.is_account_available(current_id, model=model)
         ):
             logger.info(
-                "并发请求已完成切号，复用当前账号: account=%s, model=%s",
+                "复用并发已切换账号: account=%s, model=%s",
                 current_id,
                 model,
             )
@@ -113,7 +113,7 @@ async def try_switch_account(
             and rotator.is_account_available(current_id, model=model)
         ):
             logger.info(
-                "并发请求已完成切号，复用当前账号: account=%s, model=%s",
+                "复用并发已切换账号: account=%s, model=%s",
                 current_id,
                 model,
             )
@@ -129,12 +129,12 @@ async def try_switch_account(
         if next_account is None:
             if is_session_expired:
                 logger.error(
-                    "账号 %s 登录态失效且无其他可用账号，停止重试",
+                    "账号 %s 登录态失效且无备用账号可用",
                     failed_account_id,
                 )
             else:
                 logger.warning(
-                    "未找到可用备用账号: model=%s, failed_account=%s",
+                    "无可用备用账号: model=%s, failed=%s",
                     model,
                     failed_account_id,
                 )
@@ -149,7 +149,7 @@ async def try_switch_account(
                 rotator.clear_cooldown(next_account.id, model=model)
                 _last_switch_time = time.time()
                 logger.info(
-                    "账号切换成功: %s -> %s, model=%s",
+                    "切换账号: %s -> %s, model=%s",
                     current_id,
                     next_account.id,
                     model,
@@ -159,13 +159,13 @@ async def try_switch_account(
         if is_session_expired and (
             failed_account_id == current_id or next_account.id == failed_account_id
         ):
-            logger.error("账号 %s 登录态已失效，禁止在原账号重试", failed_account_id)
+            logger.error("账号 %s 登录态已失效，跳过原地重试", failed_account_id)
             return False
 
         # 单账号模式或所有其他账号均不可用时（非登录态失效，如偶发 403 鉴权波动），如果指定了 failed_account_id，强制刷新当前会话
         if failed_account_id and failed_account_id == current_id:
             logger.info(
-                "无其他可用备用账号，重置当前账号会话: account=%s",
+                "无其他备用账号，重置当前会话: account=%s",
                 current_id,
             )
             result = await account_service.activate_account(
@@ -215,7 +215,7 @@ async def ensure_active_account(attempt: int, model: str | None = None) -> None:
             cur_tier = (current.tier if current else None) or "Free"
             if not current or cur_tier not in allowed_tiers:
                 logger.info(
-                    "模型 %s 需要 %s 权益，当前账号 %s 为 %s，切换至付费账号",
+                    "模型 %s 要求 %s 订阅，当前账号 %s (%s)，切换至对应等级账号",
                     model,
                     req_tier,
                     current.id if current else "none",
@@ -229,7 +229,7 @@ async def ensure_active_account(attempt: int, model: str | None = None) -> None:
                 )
                 if not switched:
                     logger.warning(
-                        "请求模型 %s 需要 %s 付费权益，但账号池中无就绪的可用账号",
+                        "模型 %s 要求 %s 订阅，当前无可用对应等级账号",
                         model,
                         req_tier,
                     )

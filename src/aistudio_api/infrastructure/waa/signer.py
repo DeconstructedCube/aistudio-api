@@ -150,7 +150,7 @@ class RemoteProofSigner:
                     self.last_headers = {}
                 pool_state = str(data.get("poolState") or "unknown")
                 logger.debug(
-                    "Proof generated successfully: poolState=%s, len=%d, headers=%d, time=%.1fms",
+                    "生成 WAA 签名成功: pool=%s, len=%d, headers=%d, 耗时=%.1fms",
                     pool_state,
                     len(proof),
                     len(self.last_headers),
@@ -161,7 +161,7 @@ class RemoteProofSigner:
             except (httpx.TransportError, httpx.TimeoutException) as e:
                 last_error = e
                 logger.warning(
-                    "Remote proof server connection error on attempt %d/%d: %s",
+                    "连接签名服务失败 (%d/%d): %s",
                     attempt,
                     max_attempts,
                     e,
@@ -175,7 +175,7 @@ class RemoteProofSigner:
             except Exception as e:
                 last_error = e
                 logger.warning(
-                    "Remote proof server unexpected error on attempt %d/%d: %s",
+                    "请求签名服务异常 (%d/%d): %s",
                     attempt,
                     max_attempts,
                     e,
@@ -238,7 +238,7 @@ class WaaSigner:
         prompt, content_hash = extract_content_digest(contents)
         wire_contents = [c.to_wire() for c in contents]
         logger.debug(
-            "Generating WAA snapshot: hash=%s, prompt_len=%d, auth_user=%s",
+            "计算请求摘要: hash=%s, prompt_len=%d, u/%s",
             content_hash[:8],
             len(prompt),
             auth_user,

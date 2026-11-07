@@ -8,8 +8,11 @@ from collections.abc import AsyncGenerator
 
 from aistudio_api.domain.errors import (
     RequestError,
+    SessionExpiredError,
     TransportError,
     classify_error,
+    is_html_payload,
+    is_login_redirect_payload,
 )
 from aistudio_api.infrastructure.gateway.client import PreparedRequest
 from aistudio_api.infrastructure.gateway.session import GatewaySession
@@ -60,13 +63,15 @@ class StreamingGateway:
         if self._session is None:
             raise RuntimeError("gateway session is required for streaming")
         request_body = request.body
-        logger.debug("开始流式处理: model=%s, 请求体长度=%d", model, len(request_body))
+        logger.debug("开始流式解析: model=%s, body_len=%d", model, len(request_body))
         parser = IncrementalJSONStreamParser()
         utf8_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         latest_usage: dict[str, object] | None = None
         latest_finish_reason: int | None = None
         latest_response_id: str | None = None
         raw_parts: list[str] = []
+        head_sample: str = ""
+        emitted_any_chunk = False
         has_received_chunks = False
         status_code = 0
 
@@ -131,10 +136,12 @@ class StreamingGateway:
                     continue
                 if status_code != 200:
                     raw_parts.append(text_payload)
+                elif len(head_sample) < 512:
+                    head_sample += text_payload[: 512 - len(head_sample)]
                 for parsed_chunk in parser.feed(text_payload):
                     for event in emit_parsed_chunk(parsed_chunk):
+                        emitted_any_chunk = True
                         yield event
-
         trailing_text = utf8_decoder.decode(b"", final=True)
         if trailing_text:
             if status_code != 200:
@@ -145,10 +152,9 @@ class StreamingGateway:
 
         for parsed_chunk in parser.finish():
             for event in emit_parsed_chunk(parsed_chunk):
+                emitted_any_chunk = True
                 yield event
-        logger.debug(
-            "流式数据流接收结束: model=%s, 分块到达=%s", model, has_received_chunks
-        )
+        logger.debug("流式读取结束: model=%s, 收到分块=%s", model, has_received_chunks)
         raw_response = "".join(raw_parts)
         if status_code == 0:
             raise TransportError(
@@ -170,6 +176,11 @@ class StreamingGateway:
             raise TransportError(
                 "stream ended before any data arrived (connection truncated)"
             )
+        if not emitted_any_chunk and head_sample:
+            if is_login_redirect_payload(head_sample):
+                raise SessionExpiredError("登录态已失效: 被重定向至 Google 登录页")
+            if is_html_payload(head_sample):
+                raise TransportError("upstream returned HTML error page on HTTP 200")
         if latest_finish_reason is not None:
             yield ("finish_reason", latest_finish_reason)
         else:

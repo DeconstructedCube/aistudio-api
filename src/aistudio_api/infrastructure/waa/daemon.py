@@ -62,12 +62,7 @@ def is_service_healthy(url: str) -> bool:
 
 
 def ensure_signer_ready() -> None:
-    """确保当前配置的签名服务处于就绪状态。
-
-    若配置为本地 8081 且尚未就绪：
-    1. 若存在 waa-signer/bin/waa-signer，自动作为子进程拉起，并强绑定父进程生命周期；
-    2. 若未编译或启动失败，自动平滑切换至远程签名服务 (remote_spinsnow)，确保开箱即用。
-    """
+    """检查本地 WAA 签名服务状态，未运行时自动拉起或切换至远程节点。"""
     global _daemon_proc
     active_waa = get_active_waa_server()
     url = str(active_waa.get("url") or "")
@@ -78,7 +73,7 @@ def ensure_signer_ready() -> None:
 
     # 1. 检查本地 8081 是否已有健康实例在运行
     if is_service_healthy("http://127.0.0.1:8081"):
-        logger.debug("本地 WAA 签名服务已就绪 (端口 8081 正常响应)")
+        logger.debug("本地 WAA 签名服务运行正常 (127.0.0.1:8081)")
         return
 
     # 2. 检查本地编译产物是否存在
@@ -91,9 +86,7 @@ def ensure_signer_ready() -> None:
         if proxy:
             cmd.extend(["-proxy", proxy])
 
-        logger.info(
-            "检测到本地 WAA 签名服务未启动，正在自动拉起 (生命周期强绑定): %s", bin_path
-        )
+        logger.info("启动本地 WAA 签名服务: %s", bin_path)
         try:
             _daemon_proc = subprocess.Popen(
                 cmd,
@@ -106,17 +99,13 @@ def ensure_signer_ready() -> None:
             for _ in range(20):
                 time.sleep(0.1)
                 if is_service_healthy("http://127.0.0.1:8081"):
-                    logger.info(
-                        "本地 WAA 签名服务自动拉起就绪 (PID %d)", _daemon_proc.pid
-                    )
+                    logger.info("本地 WAA 签名服务已就绪 (PID %d)", _daemon_proc.pid)
                     return
         except Exception as e:
-            logger.warning("自动拉起本地 WAA 签名服务失败: %s", e)
+            logger.warning("启动本地 WAA 签名服务失败: %s", e)
 
-    # 3. 若无本地二进制或拉起失败，自动回退到远程签名节点
-    logger.warning(
-        "本地 WAA 签名服务未就绪且未找到可执行文件，自动平滑切换至远程签名节点 (remote_spinsnow)"
-    )
+    # 3. 若无本地二进制或拉起失败，回退到远程签名节点
+    logger.warning("本地 WAA 签名服务不可用，切换至远程签名节点 (remote_spinsnow)")
     switch_active_waa_server("remote_spinsnow")
 
 
@@ -127,7 +116,7 @@ def stop_signer_daemon() -> None:
         proc = _daemon_proc
         _daemon_proc = None
         try:
-            logger.info("正在停止自动拉起的本地 WAA 签名服务 (PID %d)...", proc.pid)
+            logger.info("停止本地 WAA 签名服务 (PID %d)", proc.pid)
             proc.terminate()
             try:
                 proc.wait(timeout=1.0)
@@ -135,7 +124,7 @@ def stop_signer_daemon() -> None:
                 proc.kill()
                 proc.wait(timeout=0.5)
         except Exception as e:
-            logger.debug("回收签名服务子进程异常: %s", e)
+            logger.debug("停止签名服务子进程异常: %s", e)
             with contextlib.suppress(Exception):
                 proc.kill()
 

@@ -226,3 +226,107 @@ async def test_streaming_gateway_raises_transport_error_instead_of_http_0():
             request=prepared, model="models/gemini-4-argon"
         ):
             pass
+
+
+@pytest.mark.asyncio
+async def test_transport_captures_set_cookie_and_updates_store(tmp_path):
+    """Verify HTTPStreamTransport captures Set-Cookie from upstream and persists to AccountStore."""
+    import httpx
+
+    from aistudio_api.infrastructure.account.account_store import AccountStore
+    from aistudio_api.infrastructure.account.cookie_parser import (
+        load_cookies_from_auth_file,
+    )
+    from aistudio_api.infrastructure.gateway.transport import HTTPStreamTransport
+
+    store = AccountStore(accounts_dir=tmp_path / "accounts_transport_cookie")
+    acc = store.save_account(
+        name="Transport Acc",
+        email="t@gmail.com",
+        storage_state={
+            "cookies": [
+                {"name": "SID", "value": "s1"},
+                {"name": "SAPISID", "value": "sap1"},
+                {"name": "__Secure-1PSIDTS", "value": "old_ts"},
+            ]
+        },
+    )
+    auth_path = store.get_auth_path(acc.id)
+    assert auth_path is not None
+    mem_cookies = load_cookies_from_auth_file(auth_path)
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers=[
+                (
+                    "Set-Cookie",
+                    "__Secure-1PSIDTS=fresh_from_rpc; Path=/; Domain=.google.com; Secure; HttpOnly",
+                )
+            ],
+            content=b'["ok"]',
+        )
+
+    transport = HTTPStreamTransport()
+    transport._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        status, _ = await transport.send_request(
+            url="https://alkalimakersuite-pa.clients6.google.com/test",
+            headers={},
+            body="[]",
+            auth_file=str(auth_path),
+            cookies=mem_cookies,
+        )
+        assert status == 200
+        assert mem_cookies["__Secure-1PSIDTS"] == "fresh_from_rpc"
+        disk_cookies = load_cookies_from_auth_file(auth_path)
+        assert disk_cookies["__Secure-1PSIDTS"] == "fresh_from_rpc"
+    finally:
+        await transport.close()
+
+
+@pytest.mark.asyncio
+async def test_html_error_page_and_login_redirect_detection():
+    """Verify HTTP 200 HTML pages raise SessionExpiredError or TransportError instead of silent empty output."""
+    from aistudio_api.domain.errors import SessionExpiredError, TransportError
+    from aistudio_api.infrastructure.gateway.client import PreparedRequest
+    from aistudio_api.infrastructure.gateway.streaming import StreamingGateway
+
+    session = GatewaySession()
+
+    async def fake_login_redirect_stream(**_kwargs):
+        yield ("status", 200)
+        yield (
+            "chunk",
+            b"<!DOCTYPE html><html><body>Redirecting to accounts.google.com/ServiceLogin</body></html>",
+        )
+
+    session.send_streaming_request = fake_login_redirect_stream
+    gateway = StreamingGateway(session=session)
+    prepared = PreparedRequest(
+        url="https://example.com",
+        headers={},
+        body="[]",
+        model="models/gemini-3.8-flash",
+        snapshot="!snap",
+    )
+
+    with pytest.raises(SessionExpiredError):
+        async for _ in gateway.stream_chat(
+            request=prepared, model="models/gemini-3.8-flash"
+        ):
+            pass
+
+    async def fake_html_block_stream(**_kwargs):
+        yield ("status", 200)
+        yield (
+            "chunk",
+            b"<!DOCTYPE html><html><head><title>Error 502</title></head><body>Bad Gateway</body></html>",
+        )
+
+    session.send_streaming_request = fake_html_block_stream
+    with pytest.raises(TransportError, match="HTML error page"):
+        async for _ in gateway.stream_chat(
+            request=prepared, model="models/gemini-3.8-flash"
+        ):
+            pass

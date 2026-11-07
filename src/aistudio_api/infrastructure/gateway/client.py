@@ -6,8 +6,11 @@ from dataclasses import dataclass
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL
 from aistudio_api.domain.errors import (
+    SessionExpiredError,
     TransportError,
     classify_error,
+    is_html_payload,
+    is_login_redirect_payload,
 )
 from aistudio_api.domain.models import ModelOutput
 from aistudio_api.infrastructure.gateway.session import (
@@ -48,13 +51,12 @@ class AIStudioClient:
         return self._session
 
     async def warmup(self) -> None:
-        """预热活动账号会话与签名服务。"""
+        """初始化活跃账号会话。"""
         if self._session is not None:
             await self._session.ensure_ready()
-            logger.info("网关会话预热就绪")
+            logger.info("网关会话已就绪")
 
     async def switch_auth(self, auth_file: str | None) -> None:
-        """切换账号的 auth 文件。"""
         if self._session is not None:
             await self._session.switch_auth(auth_file)
 
@@ -128,8 +130,8 @@ class AIStudioClient:
             snapshot=snapshot,
             ctx=ctx,
         )
-        logger.info(
-            "构建签名请求成功: model=%s, 快照长度=%d, 请求体长度=%d",
+        logger.debug(
+            "请求签名完成: model=%s, proof_len=%d, body_len=%d",
             prepared.model,
             len(prepared.snapshot),
             len(prepared.body),
@@ -190,9 +192,9 @@ class AIStudioClient:
     ) -> ModelOutput:
         if prepared is not None:
             effective_prep = prepared
-            logger.debug("重放已有已签名请求: model=%s", model)
+            logger.debug("重放已签名请求: model=%s", model)
         else:
-            logger.debug("开始构建请求: model=%s", model)
+            logger.debug("构建生成请求: model=%s", model)
             effective_prep = await self.prepare_request(
                 model=model,
                 contents=contents,
@@ -218,6 +220,10 @@ class AIStudioClient:
             raise classify_error(status, raw_text)
         if not raw_text.strip():
             raise TransportError("empty 200 body (connection truncated)")
+        if is_login_redirect_payload(raw_text):
+            raise SessionExpiredError("登录态已失效: 被重定向至 Google 登录页")
+        if is_html_payload(raw_text):
+            raise TransportError("upstream returned HTML error page on HTTP 200")
         output = parse_text_output(raw_text)
         output.model = model
         return output

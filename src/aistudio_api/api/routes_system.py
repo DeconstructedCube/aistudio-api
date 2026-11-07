@@ -239,7 +239,7 @@ async def force_next_account(
     if result is None:
         raise HTTPException(500, detail="切换失败")
 
-    logger.info("强制切换到下一个账号: id=%s, name=%s", result.id, result.name)
+    logger.info("手动切换至下一账号: id=%s, name=%s", result.id, result.name)
     return {
         "ok": True,
         "account": {
@@ -327,7 +327,7 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
                     set_dump_to_file(bool(raw_logging["dump_to_file"]))
                 if "dump_dir" in raw_logging:
                     set_dump_dir(str(raw_logging["dump_dir"]))
-        logger.info("配置文件 config.yaml 已更新并重新加载")
+        logger.info("已更新并重载 config.yaml")
         return {"ok": True, "message": "配置已保存并重载"}
     except Exception as e:
         raise HTTPException(500, detail=f"写入配置文件失败: {e}") from e
@@ -388,7 +388,7 @@ async def switch_signer_server(req: SwitchSignerServerRequest) -> dict[str, obje
 
     active = switch_active_waa_server(req.server_id)
     logger.info(
-        "已手动切换激活 WAA 签名服务: id=%s, url=%s",
+        "切换 WAA 签名服务: id=%s, url=%s",
         active.get("id"),
         active.get("url"),
     )

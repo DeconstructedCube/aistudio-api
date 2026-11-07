@@ -81,6 +81,7 @@ class AccountMeta:
     cookie_id: str | None = None
     tier: str = "Free"
     tier_checked_at: float | None = None
+    last_rotated_at: float | None = None
     enabled: bool = True
     group: str = "default"
     notes: str = ""
@@ -108,6 +109,9 @@ class AccountMeta:
             tier=str(data.get("tier") or "Free"),
             tier_checked_at=float(str(data["tier_checked_at"]))
             if data.get("tier_checked_at") is not None
+            else None,
+            last_rotated_at=float(str(data["last_rotated_at"]))
+            if data.get("last_rotated_at") is not None
             else None,
             enabled=enabled,
             group=raw_group or "default",
@@ -271,6 +275,8 @@ class AccountStore:
                                     reconciled = True
                         except Exception:
                             pass
+                if self._sync_sibling_cookies_locked(self._registry):
+                    reconciled = True
                 if reconciled:
                     _atomic_write_json(self._registry_path, self._registry.to_dict())
             except Exception:
@@ -399,6 +405,7 @@ class AccountStore:
 
         account_dir = _safe_account_dir(self._accounts_dir, account_id)
         safe_id = account_dir.name
+        existing_meta = registry.accounts.get(safe_id)
         meta = AccountMeta(
             id=safe_id,
             name=name,
@@ -406,20 +413,21 @@ class AccountStore:
             created_at=created_at,
             last_used=now,
             auth_user=auth_user,
-            cookie_id=cookie_id,
+            cookie_id=cookie_id or (existing_meta.cookie_id if existing_meta else None),
             tier=resolved_tier,
+            tier_checked_at=existing_meta.tier_checked_at if existing_meta else None,
+            last_rotated_at=existing_meta.last_rotated_at if existing_meta else None,
             enabled=resolved_enabled,
             group=resolved_group,
             notes=resolved_notes,
         )
         account_dir.mkdir(parents=True, exist_ok=True)
-        # 原子写入 auth.json 与 meta.json
         _atomic_write_json(account_dir / "auth.json", storage_state)
         _atomic_write_json(account_dir / "meta.json", meta.to_dict())
-        # 更新注册表
         registry.accounts[safe_id] = meta
         if registry.active_account_id is None:
             registry.active_account_id = safe_id
+        self._sync_sibling_cookies_locked(registry)
         self._save_registry(registry)
         return meta
 
@@ -493,6 +501,179 @@ class AccountStore:
             _atomic_write_json(meta_path, acc.to_dict())
         self._save_registry(registry)
         return changed
+
+    def _sync_sibling_cookies_locked(self, registry: Registry) -> bool:
+        """同步共享同一浏览器会话 (SAPISID / SID) 的多登兄弟账号 (u/0..u/N) 的滚动 Cookie。"""
+        from aistudio_api.infrastructure.account.cookie_parser import (
+            ROTATING_SESSION_COOKIE_NAMES,
+            compute_session_anchor,
+            load_cookies_from_auth_file,
+        )
+
+        groups: dict[str, list[tuple[AccountMeta, Path, dict[str, str]]]] = {}
+        for acc_id, acc in registry.accounts.items():
+            try:
+                auth_path = _safe_account_dir(self._accounts_dir, acc_id) / "auth.json"
+            except ValueError:
+                continue
+            if not auth_path.is_file():
+                continue
+            cdict = load_cookies_from_auth_file(auth_path)
+            if not cdict:
+                continue
+            anchor = compute_session_anchor(cdict)
+            if not anchor:
+                continue
+            groups.setdefault(anchor, []).append((acc, auth_path, cdict))
+
+        meta_changed = False
+        for group in groups.values():
+            if len(group) <= 1:
+                continue
+            # 按是否存在 __Secure-1PSIDTS 以及最近轮换时间排序（最旧在前，最新在后，后者覆盖前者）
+            group.sort(
+                key=lambda item: (
+                    1
+                    if (
+                        item[2].get("__Secure-1PSIDTS")
+                        or item[2].get("__Secure-3PSIDTS")
+                    )
+                    else 0,
+                    item[0].last_rotated_at or 0.0,
+                    item[0].last_used or "",
+                )
+            )
+            best_cookies: dict[str, str] = {}
+            max_rotated = 0.0
+            for acc, _, cdict in group:
+                for k, v in cdict.items():
+                    if v:
+                        best_cookies[k] = v
+                if acc.last_rotated_at and acc.last_rotated_at > max_rotated:
+                    max_rotated = acc.last_rotated_at
+
+            for acc, auth_path, cdict in group:
+                merged = dict(cdict)
+                updated = False
+                for k, v in best_cookies.items():
+                    if (
+                        k not in merged or k in ROTATING_SESSION_COOKIE_NAMES
+                    ) and merged.get(k) != v:
+                        merged[k] = v
+                        updated = True
+                if updated:
+                    payload = {
+                        "cookies": [
+                            {"name": k, "value": v} for k, v in merged.items() if v
+                        ]
+                    }
+                    _atomic_write_json(auth_path, payload)
+                if max_rotated > 0 and acc.last_rotated_at != max_rotated:
+                    acc.last_rotated_at = max_rotated
+                    meta_path = auth_path.parent / "meta.json"
+                    if meta_path.exists():
+                        _atomic_write_json(meta_path, acc.to_dict())
+                    meta_changed = True
+        return meta_changed
+
+    def update_account_cookies(
+        self,
+        account_id: str | None = None,
+        *,
+        auth_file: str | Path | None = None,
+        new_cookies: dict[str, str],
+        rotated_at: float | None = None,
+    ) -> list[str]:
+        """将更新后的 Cookie 写回目标账号及其同源多登兄弟账号 (u/0..u/N) 的 auth.json。"""
+        from aistudio_api.infrastructure.account.cookie_parser import (
+            compute_session_anchor,
+            load_cookies_from_auth_file,
+        )
+
+        if not new_cookies:
+            return []
+
+        registry = self._load_registry()
+        target_id = account_id
+        if not target_id and auth_file:
+            try:
+                p = Path(auth_file).resolve()
+                cand_id = p.parent.name
+                if cand_id in registry.accounts:
+                    target_id = cand_id
+                elif p.is_file():
+                    cur = load_cookies_from_auth_file(p)
+                    merged = {**cur, **{k: v for k, v in new_cookies.items() if v}}
+                    if merged != cur:
+                        _atomic_write_json(
+                            p,
+                            {
+                                "cookies": [
+                                    {"name": k, "value": v}
+                                    for k, v in merged.items()
+                                    if v
+                                ]
+                            },
+                        )
+                    return []
+            except Exception:
+                pass
+
+        target_acc = registry.accounts.get(target_id) if target_id else None
+        target_cid = target_acc.cookie_id if target_acc else None
+        anchor = compute_session_anchor(new_cookies)
+        if not anchor and target_id:
+            t_path = self.get_auth_path_optional(target_id, require_exists=True)
+            if t_path:
+                anchor = compute_session_anchor(load_cookies_from_auth_file(t_path))
+
+        updated_ids: list[str] = []
+        meta_changed = False
+
+        for acc_id, acc in registry.accounts.items():
+            try:
+                apath = _safe_account_dir(self._accounts_dir, acc_id) / "auth.json"
+            except ValueError:
+                continue
+            if not apath.is_file():
+                continue
+            cur_cookies = load_cookies_from_auth_file(apath)
+            cur_anchor = compute_session_anchor(cur_cookies)
+
+            is_target = bool(target_id and acc_id == target_id)
+            is_same_cid = bool(target_cid and acc.cookie_id == target_cid)
+            is_same_anchor = bool(anchor and cur_anchor == anchor)
+            if not (is_target or is_same_cid or is_same_anchor):
+                continue
+
+            merged = dict(cur_cookies)
+            cookie_changed = False
+            for k, v in new_cookies.items():
+                if v and merged.get(k) != v:
+                    merged[k] = v
+                    cookie_changed = True
+
+            if cookie_changed:
+                _atomic_write_json(
+                    apath,
+                    {
+                        "cookies": [
+                            {"name": k, "value": v} for k, v in merged.items() if v
+                        ]
+                    },
+                )
+                updated_ids.append(acc_id)
+
+            if rotated_at is not None and acc.last_rotated_at != rotated_at:
+                acc.last_rotated_at = rotated_at
+                meta_path = apath.parent / "meta.json"
+                if meta_path.exists():
+                    _atomic_write_json(meta_path, acc.to_dict())
+                meta_changed = True
+
+        if meta_changed:
+            self._save_registry(registry)
+        return updated_ids
 
     def get_auth_path(self, account_id: str) -> Path | None:
         """获取指定账号的 auth.json 路径。"""

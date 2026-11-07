@@ -6,12 +6,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import httpx
+
     from aistudio_api.infrastructure.account.account_store import (
         AccountMeta,
         AccountPreset,
         AccountStore,
     )
     from aistudio_api.infrastructure.gateway.session import GatewaySession
+
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("account")
@@ -54,14 +57,13 @@ class AccountService:
 
         auth_path = self._store.get_auth_path_optional(account_id, require_exists=False)
         if auth_path is None:
-            logger.error("账号 %s 的账号目录不存在", account_id)
+            logger.error("账号目录不存在: %s", account_id)
             return None
 
         self._store.set_active_account(account_id)
-        logger.info("已切换活跃账号持久化状态: %s", account_id)
         await session.switch_auth(str(auth_path))
         await session.ensure_ready()
-        logger.info("已切换到账号: %s (%s)", account_id, account.name)
+        logger.info("切换活跃账号: %s (%s)", account_id, account.name)
         return account
 
     def delete_account(self, account_id: str) -> bool:
@@ -79,6 +81,98 @@ class AccountService:
     def update_account_tier(self, account_id: str, tier: str) -> bool:
         """更新账号的订阅权益等级 (Free / Pro / Ultra / Plus)。"""
         return self._store.update_account_tier(account_id, tier)
+
+    def update_account_cookies(
+        self,
+        account_id: str | None = None,
+        *,
+        auth_file: str | Path | None = None,
+        new_cookies: dict[str, str],
+        rotated_at: float | None = None,
+    ) -> list[str]:
+        """更新账号及其同源兄弟账号的 Cookie 凭据。"""
+        return self._store.update_account_cookies(
+            account_id=account_id,
+            auth_file=auth_file,
+            new_cookies=new_cookies,
+            rotated_at=rotated_at,
+        )
+
+    async def rotate_account_cookies(
+        self,
+        account_id: str,
+        session: GatewaySession | None = None,
+        *,
+        client: httpx.AsyncClient | None = None,
+    ) -> dict[str, object]:
+        """调用 Google RotateCookies 刷新指定账号的滚动 Cookie，并同步更新同源子账号与内存会话。"""
+        import time
+
+        from aistudio_api.infrastructure.account.cookie_parser import (
+            compute_session_anchor,
+            load_cookies_from_auth_file,
+            rotate_google_cookies,
+        )
+
+        auth_path = self._store.get_auth_path(account_id)
+        if not auth_path:
+            return {"ok": False, "status": 0, "updated": []}
+
+        cookies = load_cookies_from_auth_file(auth_path)
+        if not cookies:
+            return {"ok": False, "status": 0, "updated": []}
+
+        result = await rotate_google_cookies(cookies, client=client)
+        if not result.get("ok"):
+            # 若当前子账号缺少最新滚动种子，尝试合并同会话兄弟账号的 Cookie 重试
+            anchor = compute_session_anchor(cookies)
+            target_acc = self._store.get_account(account_id)
+            target_cid = target_acc.cookie_id if target_acc else None
+            for sib in self._store.list_accounts():
+                if sib.id == account_id:
+                    continue
+                sib_path = self._store.get_auth_path(sib.id)
+                if not sib_path:
+                    continue
+                sib_cookies = load_cookies_from_auth_file(sib_path)
+                if not sib_cookies:
+                    continue
+                same_anchor = bool(
+                    anchor and compute_session_anchor(sib_cookies) == anchor
+                )
+                same_cid = bool(target_cid and sib.cookie_id == target_cid)
+                if not (same_anchor or same_cid):
+                    continue
+                merged_sib = {**cookies, **sib_cookies}
+                sib_res = await rotate_google_cookies(merged_sib, client=client)
+                if sib_res.get("ok"):
+                    cookies = merged_sib
+                    result = sib_res
+                    break
+
+        if result.get("ok"):
+            now_ts = time.time()
+            updated_ids = self._store.update_account_cookies(
+                account_id=account_id,
+                new_cookies=cookies,
+                rotated_at=now_ts,
+            )
+            if session is not None and session.active_context is not None:
+                active_file = session.active_context.auth_file
+                if active_file and (
+                    str(auth_path) == str(active_file)
+                    or any(uid in str(active_file) for uid in updated_ids)
+                ):
+                    session.active_context.cookies.update(cookies)
+            updated_names = result.get("updated")
+            if isinstance(updated_names, list) and updated_names:
+                logger.debug(
+                    "Cookie 轮换成功: account=%s, 更新项=%s, 同步账号数=%d",
+                    account_id,
+                    updated_names,
+                    len(updated_ids),
+                )
+        return {**result, "cookies": cookies}
 
     def save_account_from_cookies(
         self,

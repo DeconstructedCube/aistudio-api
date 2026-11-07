@@ -75,27 +75,40 @@ class Auth403RetryManager:
         self.count += 1
         record_rotator_event("auth_error", model=model)
 
-        # 1. 前 2 次 403: 重放原有已签名报文 (Replay 1/2, 2/2)
+        # 1. 前 2 次 403: 重放已签名请求
         if self.count <= 2:
             self.current_prepared = client.last_prepared_request
             logger.warning(
-                "遭遇 403 权限异常，执行第 %d/2 次请求重放 (Replay): model=%s",
+                "HTTP 403 重试 (%d/2 重放): model=%s",
                 self.count,
                 model,
             )
             return True
 
-        # 2. 后 2 次 403: 重新向签名服务生成新快照 (Re-sign 1/2, 2/2)
+        # 2. 后 2 次 403: 尝试轮换 Cookie 并重新生成签名
         if self.count <= 4:
             self.current_prepared = None
+            if self.count == 3:
+                account_svc = runtime_state.account_service
+                active_acc = account_svc.get_active_account() if account_svc else None
+                if (
+                    account_svc is not None
+                    and active_acc is not None
+                    and hasattr(account_svc, "rotate_account_cookies")
+                ):
+                    try:
+                        session = getattr(client, "session", None)
+                        await account_svc.rotate_account_cookies(active_acc.id, session)
+                    except Exception:
+                        pass
             logger.warning(
-                "遭遇 403 权限异常，重放未恢复，执行第 %d/2 次重新签名 (Re-sign): model=%s",
+                "HTTP 403 重试 (%d/2 重签): model=%s",
                 self.count - 2,
                 model,
             )
             return True
 
-        # 3. 最后 1 次 403: 切号故障转移 (Failover switch account)
+        # 3. 第 5 次 403: 切换备用账号
         if self.count == 5:
             self.current_prepared = None
             account_svc = runtime_state.account_service
@@ -103,11 +116,11 @@ class Auth403RetryManager:
             failed_id = active_acc.id if active_acc else None
             if await try_switch_account(model=model, failed_account_id=failed_id):
                 logger.warning(
-                    "遭遇 403 权限异常，重放与重签均未恢复，已切换至备用账号: model=%s",
+                    "HTTP 403 切换备用账号重试: model=%s",
                     model,
                 )
                 return True
-            logger.error("遭遇 403 权限异常且无可用备用账号，终止重试")
+            logger.error("HTTP 403 且无可用备用账号，停止重试: model=%s", model)
             raise HTTPException(
                 403, detail={"message": str(exc), "type": "auth_error"}
             ) from exc
@@ -248,13 +261,50 @@ async def handle_attempt_exception(
         ) from exc
 
     if isinstance(exc, SessionExpiredError):
-        logger.warning("账号登录已失效，被重定向到登录页: %s", exc)
+        if not has_yielded_data and account_svc is not None and active_acc is not None:
+            # 遇到 401 时先探活会话并尝试轮换滚动 Cookie，若拿到新 PSIDTS 则原地重试
+            try:
+                from aistudio_api.infrastructure.account.cookie_parser import (
+                    load_cookies_from_auth_file,
+                    probe_aistudio_session,
+                )
+
+                auth_path = account_svc.get_account_auth_path(active_acc.id)
+                cdict = load_cookies_from_auth_file(auth_path) if auth_path else {}
+                before_ts = cdict.get("__Secure-1PSIDTS", "")
+                if cdict:
+                    alive, _ = await probe_aistudio_session(cdict)
+                    if alive and hasattr(account_svc, "rotate_account_cookies"):
+                        session = (
+                            runtime_state.client.session
+                            if runtime_state.client
+                            else None
+                        )
+                        rot_res = await account_svc.rotate_account_cookies(
+                            active_acc.id, session
+                        )
+                        new_cookies = rot_res.get("cookies")
+                        after_ts = (
+                            new_cookies.get("__Secure-1PSIDTS", "")
+                            if isinstance(new_cookies, dict)
+                            else ""
+                        )
+                        if rot_res.get("ok") and after_ts and after_ts != before_ts:
+                            logger.info(
+                                "账号 %s 触发 401 后完成 Cookie 轮换，原地重试",
+                                active_acc.id,
+                            )
+                            return True
+            except Exception as rot_err:
+                logger.debug("401 Cookie 轮换探测异常: %s", rot_err)
+
+        logger.warning("账号登录态已失效: account=%s, %s", failed_id, exc)
         if not has_yielded_data and await try_switch_account(
             model=target_model,
             failed_account_id=failed_id,
             is_session_expired=True,
         ):
-            logger.info("已切换账号重试: 尝试=%d/%d", attempt + 1, MAX_RETRIES)
+            logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
             return True
         raise HTTPException(
             401,
@@ -279,13 +329,13 @@ async def handle_attempt_exception(
             model=target_model, failed_account_id=failed_id
         ):
             logger.warning(
-                "触发 429 配额限制，切换账号重试: 尝试=%d/%d, model=%s",
+                "触发 429 限流，切换账号重试 (%d/%d): model=%s",
                 attempt + 1,
                 MAX_RETRIES,
                 target_model,
             )
             return True
-        logger.warning("所有账号在模型 %s 上均处于冷却状态", target_model)
+        logger.warning("模型 %s 所有账号均在冷却中", target_model)
         raise HTTPException(
             429,
             detail={
@@ -311,7 +361,7 @@ async def handle_attempt_exception(
         and attempt < MAX_RETRIES - 1
     ):
         logger.warning(
-            "上游偶发 404 方法未找到，立即重试: 尝试=%d/%d, 错误=%s",
+            "上游 404 路由抖动，立即重试 (%d/%d): %s",
             attempt + 1,
             MAX_RETRIES,
             clean_upstream_error_message(str(exc)),
@@ -319,7 +369,7 @@ async def handle_attempt_exception(
         return True
     if is_transport_error(exc):
         logger.warning(
-            "网关传输或签名异常，切换账号重试: 尝试=%d/%d, 错误=%s",
+            "传输或签名异常，切换账号重试 (%d/%d): %s",
             attempt + 1,
             MAX_RETRIES,
             exc,
@@ -327,12 +377,12 @@ async def handle_attempt_exception(
         if not has_yielded_data and await try_switch_account(
             model=target_model, failed_account_id=failed_id
         ):
-            logger.info("已切换账号重试: 尝试=%d/%d", attempt + 1, MAX_RETRIES)
+            logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
             return True
         if isinstance(exc, TransportError):
             runtime_state.record(target_model, "errors")
             record_rotator_event("error", model=target_model)
-            logger.warning("上游服务传输中断 (502): %s", exc)
+            logger.warning("上游传输中断 (502): %s", exc)
             raise HTTPException(
                 502, detail={"message": str(exc), "type": "upstream_error"}
             ) from exc
@@ -392,7 +442,7 @@ async def handle_gemini_generate_content(
         try:
             normalized = normalize_gemini_request(req, model_path)
             logger.info(
-                "处理非流式生成请求: model=%s, 对话轮数=%d, 尝试=%d/%d",
+                "非流式请求: model=%s, 轮数=%d, 尝试=%d/%d",
                 normalized.model,
                 len(req.contents),
                 attempt + 1,
@@ -427,7 +477,7 @@ async def handle_gemini_generate_content(
             pt = output.usage.get("prompt_tokens") if output.usage else 0
             ct = output.usage.get("completion_tokens") if output.usage else 0
             logger.info(
-                "非流式请求完成: model=%s, finish_reason=%s, 输入tokens=%s, 输出tokens=%s",
+                "非流式完成: model=%s, finish=%s, in=%s, out=%s",
                 normalized.model,
                 final_fr,
                 pt,
@@ -460,7 +510,7 @@ async def handle_gemini_generate_content(
             )
         except Exception as exc:
             last_error = exc
-            if isinstance(exc, AuthError):
+            if isinstance(exc, AuthError) and not isinstance(exc, SessionExpiredError):
                 target_m = normalized.model if normalized else model_path
                 if await auth_manager.handle_403(exc, model=target_m, client=client):
                     continue
@@ -606,7 +656,7 @@ def _build_gemini_streaming_response(
         stream_start_time = time.perf_counter()
         try:
             logger.info(
-                "处理流式生成请求: model=%s, 对话轮数=%d",
+                "流式请求: model=%s, 轮数=%d",
                 model_path,
                 len(req.contents),
             )
@@ -670,7 +720,7 @@ def _build_gemini_streaming_response(
                                         time.perf_counter() - stream_start_time
                                     ) * 1000
                                     logger.info(
-                                        "流式响应开始推送: model=%s, 首包耗时=%.1fms",
+                                        "流式首包到达: model=%s, ttft=%.1fms",
                                         normalized.model,
                                         ttft_ms,
                                     )
@@ -681,7 +731,11 @@ def _build_gemini_streaming_response(
                     break
                 except Exception as exc:
                     last_stream_error = exc
-                    if isinstance(exc, AuthError) and not has_yielded_data:
+                    if (
+                        isinstance(exc, AuthError)
+                        and not isinstance(exc, SessionExpiredError)
+                        and not has_yielded_data
+                    ):
                         target_m = normalized.model if normalized else model_path
                         if await auth_manager.handle_403(
                             exc,
@@ -716,7 +770,7 @@ def _build_gemini_streaming_response(
             pt = final_usage.get("prompt_tokens") if final_usage else 0
             ct = final_usage.get("completion_tokens") if final_usage else 0
             logger.info(
-                "流式请求完成: model=%s, 耗时=%.1fms, finish_reason=%s, 输入tokens=%s, 输出tokens=%s",
+                "流式完成: model=%s, 耗时=%.1fms, finish=%s, in=%s, out=%s",
                 target_model,
                 elapsed_total_ms,
                 final_finish_reason,

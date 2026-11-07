@@ -14,6 +14,7 @@ import httpx
 from aistudio_api.config import settings
 from aistudio_api.domain.errors import TransportError
 from aistudio_api.infrastructure.account.cookie_parser import (
+    apply_set_cookies,
     calculate_sapisid_hash,
     filter_minimal_cookies,
     get_tier_header_value,
@@ -59,6 +60,35 @@ def _get_active_account_tier() -> str:
     except Exception:
         pass
     return "Free"
+
+
+def _sync_response_cookies(
+    resp: httpx.Response,
+    auth_file: str | None = None,
+    cookies: dict[str, str] | None = None,
+) -> None:
+    """捕获上游响应中的 Set-Cookie 并同步回内存与 AccountStore。"""
+    set_cookies = resp.headers.get_list("set-cookie")
+    if not set_cookies:
+        return
+    target_map = (
+        cookies if cookies is not None else (_get_auth_cookies(auth_file) or {})
+    )
+    if not target_map:
+        return
+    updated = apply_set_cookies(target_map, set_cookies)
+    if not updated:
+        return
+    logger.debug("捕获上游 Set-Cookie 更新: %s", updated)
+    try:
+        from aistudio_api.infrastructure.account.account_store import AccountStore
+
+        AccountStore().update_account_cookies(
+            auth_file=auth_file,
+            new_cookies=target_map,
+        )
+    except Exception as e:
+        logger.debug("持久化 Set-Cookie 失败: %s", e)
 
 
 async def _ensure_authorization_header(
@@ -154,7 +184,7 @@ class HTTPStreamTransport:
             cookies=cookies,
         )
         logger.debug(
-            "Sending HTTP POST: url=%s, body_len=%d, auth_user=%s",
+            "发送请求: url=%s, body_len=%d, u/%s",
             url,
             len(body),
             auth_user,
@@ -165,9 +195,10 @@ class HTTPStreamTransport:
             resp = await client.post(
                 url, headers=clean_headers, content=body.encode("utf-8")
             )
+            _sync_response_cookies(resp, auth_file=auth_file, cookies=cookies)
             elapsed_ms = (time.perf_counter() - t0) * 1000
             logger.debug(
-                "HTTP POST completed: status=%d, time=%.1fms, resp_len=%d",
+                "请求完成: status=%d, 耗时=%.1fms, 响应长度=%d",
                 resp.status_code,
                 elapsed_ms,
                 len(resp.content),
@@ -177,7 +208,7 @@ class HTTPStreamTransport:
             err_detail = (
                 f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
             )
-            logger.error("HTTP request failed: url=%s, err=%s", url, err_detail)
+            logger.error("HTTP 请求失败: url=%s, error=%s", url, err_detail)
             raise TransportError(f"HTTP request failed: {err_detail}") from exc
 
     async def send_streaming_request(
@@ -199,7 +230,7 @@ class HTTPStreamTransport:
             auth_file=auth_file,
             cookies=cookies,
         )
-        logger.debug("Starting streaming HTTP request: url=%s", url)
+        logger.debug("建立流式请求: url=%s, u/%s", url, auth_user)
 
         client = await self._get_client()
 
@@ -209,6 +240,7 @@ class HTTPStreamTransport:
                 "POST", url, headers=clean_headers, content=body.encode("utf-8")
             )
             resp = await client.send(req, stream=True)
+            _sync_response_cookies(resp, auth_file=auth_file, cookies=cookies)
             yield ("status", resp.status_code)
 
             if resp.status_code != 200:
@@ -224,7 +256,7 @@ class HTTPStreamTransport:
             err_detail = (
                 f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
             )
-            logger.warning("Streaming request encountered exception: %s", err_detail)
+            logger.warning("流式传输异常: %s", err_detail)
             yield ("error", err_detail)
         finally:
             if resp is not None:

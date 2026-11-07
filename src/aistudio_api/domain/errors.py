@@ -96,15 +96,40 @@ def parse_upstream_grpc_error(raw_response: str) -> tuple[int | None, str]:
     return None, text
 
 
-def classify_error(status: int, body: str) -> AistudioError:
+def is_html_payload(text: str, content_type: str = "") -> bool:
+    """检测上游响应是否为 HTML 页面（边缘风控拦截页或登录跳转页）。"""
+    ct_lower = content_type.lower()
+    if "text/html" in ct_lower or "application/xhtml" in ct_lower:
+        return True
+    head = text.lstrip()[:120].lower()
+    return head.startswith(("<!doctype html", "<html"))
+
+
+def is_login_redirect_payload(text: str) -> bool:
+    """检测响应文本是否包含 Google 登录页或欢迎页重定向特征。"""
+    lower = text[:2000].lower()
+    return (
+        "servicelogin" in lower
+        or "accounts.google.com/v3/signin" in lower
+        or "aistudio.google.com/welcome" in lower
+    )
+
+
+def classify_error(
+    status: int, body: str, content_type: str = ""
+) -> AistudioError | TransportError:
+    if is_login_redirect_payload(body):
+        return SessionExpiredError("登录态已失效: 被重定向至 Google 登录页")
     grpc_code, msg = parse_upstream_grpc_error(body)
     clean_msg = msg or body[:200]
     if grpc_code == 8 or status == 429:
-        return UsageLimitExceeded(f"配额用完: {clean_msg}")
+        return UsageLimitExceeded(f"配额耗尽: {clean_msg}")
     if grpc_code == 16 or status == 401:
-        return AuthError(f"认证失败: {clean_msg}")
+        return SessionExpiredError(f"认证失效 (HTTP 401): {clean_msg}")
     if grpc_code == 7 or status == 403:
-        return AuthError(f"禁止访问: {clean_msg}")
+        return AuthError(f"权限被拒绝 (HTTP 403): {clean_msg}")
+    if is_html_payload(body, content_type):
+        return TransportError(f"上游返回 HTML 错误页 (HTTP {status})")
     effective_status = GRPC_CODE_TO_HTTP.get(grpc_code, status) if grpc_code else status
     return RequestError(effective_status, clean_msg)
 

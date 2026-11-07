@@ -236,10 +236,10 @@ class ModelDiscoveryService:
                     if models:
                         self._cached_models = models
                         self._last_fetched_at = time.time()
-                        logger.info("通过 HTTP RPC 动态更新了 %d 个模型", len(models))
+                        logger.info("已更新上游模型列表: count=%d", len(models))
                         return models
                 except Exception as e:
-                    logger.debug("通过 HTTP 协议拉取模型列表失败: %s", e)
+                    logger.debug("拉取模型列表失败: %s", e)
             # 3. 保底返回本地默认模型列表
             if not self._cached_models:
                 self._cached_models = [dict(m) for m in _FALLBACK_MODELS]

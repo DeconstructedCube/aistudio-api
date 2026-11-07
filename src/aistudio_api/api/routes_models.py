@@ -81,7 +81,7 @@ async def list_models(
 
     discovered = await model_discovery.get_models(session=session)
     models = [_to_gemini_model(item) for item in discovered]
-    logger.info("获取模型列表完成: 数量=%d", len(models))
+    logger.debug("返回模型列表: count=%d", len(models))
     return GeminiModelListResponse(models=models)
 
 
@@ -95,7 +95,7 @@ async def get_model(
 
     model_info = await model_discovery.get_model_by_id(model_id, session=session)
     if model_info is not None:
-        logger.info("获取模型详情成功: model=%s", model_id)
+        logger.debug("返回模型详情: model=%s", model_id)
         return _to_gemini_model(model_info)
-    logger.warning("请求的模型未找到: model=%s", model_id)
+    logger.warning("模型不存在: model=%s", model_id)
     raise HTTPException(status_code=404, detail="Model not found")

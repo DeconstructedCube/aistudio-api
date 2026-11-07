@@ -10,10 +10,12 @@ from dataclasses import dataclass, field
 
 from aistudio_api.config import settings
 from aistudio_api.infrastructure.account.cookie_parser import (
+    ROTATING_SESSION_COOKIE_NAMES,
     build_makersuite_headers,
     get_auth_user_from_meta,
     get_tier_from_meta,
     load_cookies_from_auth_file,
+    parse_raw_cookies,
 )
 from aistudio_api.infrastructure.gateway.transport import HTTPStreamTransport
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
@@ -137,7 +139,7 @@ class GatewaySession:
         )
         self._active_context = new_context
         log.info(
-            "Session transitioned successfully: auth_file=%s, auth_user=%s, tier=%s",
+            "会话已切换: auth_file=%s, u/%s, tier=%s",
             auth_file,
             target_auth_user,
             target_tier,
@@ -167,19 +169,51 @@ class GatewaySession:
                     await res
             remote.server_url = target_url
 
-        cookies = active_ctx.cookies or load_cookies_from_auth_file(
-            active_ctx.auth_file
-        )
+        if not active_ctx.cookies and active_ctx.auth_file:
+            active_ctx.cookies = load_cookies_from_auth_file(active_ctx.auth_file)
+        cookies = active_ctx.cookies
         auth_user = active_ctx.auth_user or "0"
         tier = active_ctx.tier or "Free"
 
-        return await self._signer.generate_snapshot(
+        proof = await self._signer.generate_snapshot(
             contents=contents,
             cookies=cookies,
             auth_user=auth_user,
             tier=tier,
             model=model,
         )
+        self._sync_signer_cookies(active_ctx)
+        return proof
+
+    def _sync_signer_cookies(self, active_ctx: SessionContext) -> None:
+        """当 WAA 签名服务在内部刷新了滚动 Cookie 时，将其同步回 SessionContext 与 AccountStore。"""
+        dyn_headers = getattr(self._signer, "last_headers", None)
+        if not isinstance(dyn_headers, dict):
+            return
+        raw_cookie = dyn_headers.get("Cookie") or dyn_headers.get("cookie")
+        if not raw_cookie or not isinstance(raw_cookie, str):
+            return
+        parsed = parse_raw_cookies(raw_cookie)
+        if not parsed:
+            return
+        changed = False
+        for k in ROTATING_SESSION_COOKIE_NAMES:
+            val = parsed.get(k)
+            if val and active_ctx.cookies.get(k) != val:
+                active_ctx.cookies[k] = val
+                changed = True
+        if changed and active_ctx.auth_file:
+            try:
+                from aistudio_api.infrastructure.account.account_store import (
+                    AccountStore,
+                )
+
+                AccountStore().update_account_cookies(
+                    auth_file=active_ctx.auth_file,
+                    new_cookies=active_ctx.cookies,
+                )
+            except Exception as e:
+                log.debug("回写签名服务 Cookie 失败: %s", e)
 
     async def generate_snapshot_with_headers(
         self,
@@ -188,20 +222,12 @@ class GatewaySession:
         model: str = "models/gemini-3.7-flash",
     ) -> tuple[str, dict[str, str]]:
         """Generate fresh WAA proof token and dynamic session headers."""
-        active_ctx = ctx or await self.ensure_ready()
-        cookies = active_ctx.cookies or load_cookies_from_auth_file(
-            active_ctx.auth_file
-        )
-        auth_user = active_ctx.auth_user or "0"
-        tier = active_ctx.tier or "Free"
-
-        return await self._signer.generate_snapshot_with_headers(
+        proof = await self.generate_snapshot(
             contents=contents,
-            cookies=cookies,
-            auth_user=auth_user,
-            tier=tier,
+            ctx=ctx,
             model=model,
         )
+        return proof, dict(self.last_signer_headers)
 
     async def send_request(
         self,
