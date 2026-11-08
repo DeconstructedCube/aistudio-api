@@ -1,10 +1,15 @@
 @echo off
-setlocal
+chcp 65001 >nul 2>&1
+setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-echo [waa-signer] 启动 Windows 编译流程...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1" %*
-if errorlevel 1 (
-    echo [waa-signer] 编译失败，请检查上方错误提示。
-    exit /b %errorlevel%
+echo [waa-signer] Starting Windows build...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1" %*
+set "EXIT_CODE=%ERRORLEVEL%"
+
+if %EXIT_CODE% neq 0 (
+    echo.
+    echo [waa-signer] Build finished with exit code %EXIT_CODE%.
+    exit /b %EXIT_CODE%
 )
+exit /b 0

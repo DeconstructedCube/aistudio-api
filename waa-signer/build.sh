@@ -50,14 +50,62 @@ mkdir -p "$DEPS_DIR"
 
 if [ ! -f "$DEPS_DIR/lib/libjs_static.a" ]; then
   TARBALL="spidermonkey-${SM_VERSION}-${SM_ARCH}.tar.gz"
-  DOWNLOAD_URL="https://github.com/Mag1cFall/firefox/releases/download/${SM_VERSION}/${TARBALL}"
-  echo ">>> 正在下载 SpiderMonkey 静态依赖库: ${DOWNLOAD_URL}"
+  OFFICIAL_URL="https://github.com/Mag1cFall/firefox/releases/download/${SM_VERSION}/${TARBALL}"
   PROXY="${AISTUDIO_PROXY:-${HTTPS_PROXY:-${https_proxy:-${HTTP_PROXY:-${http_proxy:-}}}}}"
-  CURL_ARGS=(-fL --retry 2 --connect-timeout 15)
+  CURL_ARGS=(-fL --retry 2 --connect-timeout 10 --max-time 180 -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
   if [ -n "$PROXY" ]; then
     CURL_ARGS+=(-x "$PROXY")
   fi
-  curl "${CURL_ARGS[@]}" "$DOWNLOAD_URL" | tar -xz -C "$DEPS_DIR"
+
+  TEMP_TAR="${SCRIPT_DIR}/.deps/${TARBALL}"
+  mkdir -p "${SCRIPT_DIR}/.deps"
+
+  # 1. 优先检查本地候选路径
+  HAS_LOCAL=0
+  for CANDIDATE in "$TEMP_TAR" "${SCRIPT_DIR}/${TARBALL}" "${HOME}/Downloads/${TARBALL}"; do
+    if [ -f "$CANDIDATE" ] && [ "$(wc -c < "$CANDIDATE")" -gt 10000000 ]; then
+      echo ">>> 检测到本地已存在静态依赖包: ${CANDIDATE}"
+      if [ "$CANDIDATE" != "$TEMP_TAR" ]; then
+        cp "$CANDIDATE" "$TEMP_TAR"
+      fi
+      HAS_LOCAL=1
+      break
+    fi
+  done
+
+  # 2. 多源镜像重试下载
+  if [ "$HAS_LOCAL" -ne 1 ]; then
+    DOWNLOAD_URLS=(
+      "$OFFICIAL_URL"
+      "https://ghproxy.net/${OFFICIAL_URL}"
+      "https://gh-proxy.com/${OFFICIAL_URL}"
+      "https://mirror.ghproxy.com/${OFFICIAL_URL}"
+    )
+    DOWNLOAD_SUCCESS=0
+    for URL in "${DOWNLOAD_URLS[@]}"; do
+      echo ">>> 正在下载 SpiderMonkey 静态依赖库: ${URL}"
+      rm -f "$TEMP_TAR"
+      if curl "${CURL_ARGS[@]}" -o "$TEMP_TAR" "$URL" && [ -f "$TEMP_TAR" ] && [ "$(wc -c < "$TEMP_TAR")" -gt 10000000 ]; then
+        DOWNLOAD_SUCCESS=1
+        break
+      else
+        rm -f "$TEMP_TAR"
+      fi
+    done
+    if [ "$DOWNLOAD_SUCCESS" -ne 1 ]; then
+      echo "" >&2
+      echo "==================================================================" >&2
+      echo "错误: 下载 SpiderMonkey 依赖包失败。您可以直接在浏览器中下载:" >&2
+      echo "  ${OFFICIAL_URL}" >&2
+      echo "并将其放置于 ${SCRIPT_DIR}/.deps/ 目录下后重新运行。" >&2
+      echo "==================================================================" >&2
+      echo "" >&2
+      exit 1
+    fi
+  fi
+
+  tar -xz -f "$TEMP_TAR" -C "$DEPS_DIR"
+  rm -f "$TEMP_TAR"
   echo ">>> SpiderMonkey 解压完成: ${DEPS_DIR}"
 fi
 

@@ -10,8 +10,28 @@ param()
 
 $ErrorActionPreference = "Stop"
 
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ProjectRoot = Split-Path -Parent $ScriptDir
+# 统一控制台编码为 UTF-8，彻底杜绝 CMD 与 Windows Terminal 乱码
+try {
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $OutputEncoding = [System.Text.Encoding]::UTF8
+} catch {}
+
+# 适配 Windows PowerShell 5.1 默认老旧 TLS 协议，启用 TLS 1.2 与 TLS 1.3
+try {
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    if ([System.Enum]::IsDefined([System.Net.SecurityProtocolType], "Tls13")) {
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls13
+    }
+} catch {}
+
+$ScriptDir = ""
+if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+    $ScriptDir = $PSScriptRoot
+} else {
+    $ScriptDir = (Get-Location).Path
+}
+
+$ProjectRoot = [System.IO.Path]::GetFullPath("$ScriptDir\..")
 Set-Location $ProjectRoot
 
 function Write-Step([string]$msg) {
@@ -62,7 +82,7 @@ if (-not (Get-Command "uv" -ErrorAction SilentlyContinue)) {
 }
 
 # 3. 检查本地 WAA 签名服务产物
-$signerExe = Join-Path $ProjectRoot "waa-signer\bin\waa-signer.exe"
+$signerExe = "$ProjectRoot\waa-signer\bin\waa-signer.exe"
 Write-Host ""
 if (Test-Path $signerExe) {
     Write-Success "检测到本地 WAA 签名服务二进制已就绪: $signerExe"
