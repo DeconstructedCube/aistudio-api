@@ -4,7 +4,7 @@ package mozjs
 /*
 #cgo CXXFLAGS: -std=c++20 -fno-rtti -fno-exceptions -DSTATIC_JS_API -DJS_STANDALONE -Wno-invalid-offsetof -Wno-attributes
 #cgo windows,amd64 CXXFLAGS: -DXP_WIN
-#cgo windows,amd64 LDFLAGS: -ljs_static -ljsrust -Wl,-Bstatic -lc++ -lunwind -Wl,-Bdynamic -lws2_32 -lwinmm -lpsapi -ldbghelp -lntdll -luserenv -lbcrypt -ladvapi32 -lshell32 -lole32 -loleaut32 -luuid -lsynchronization
+#cgo windows,amd64 LDFLAGS: -ljs_static -ljsrust -Wl,-Bstatic -lc++ -lunwind -Wl,-Bdynamic -lws2_32 -lwinmm -lpsapi -ldbghelp -lntdll -luserenv -lbcrypt -ladvapi32 -lshell32 -lole32 -loleaut32 -luuid
 #cgo linux,amd64 CXXFLAGS: -DXP_UNIX -DXP_LINUX
 #cgo linux,amd64 LDFLAGS: -ljs_static -ljsrust -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm -ldl -lpthread
 #cgo linux,arm64 CXXFLAGS: -DXP_UNIX -DXP_LINUX
