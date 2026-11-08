@@ -58,20 +58,38 @@ if (-not (Get-Command "go" -ErrorAction SilentlyContinue)) {
 $goVersionStr = (go version)
 Write-Host ">>> 检测到 Go: $goVersionStr" -ForegroundColor Cyan
 
-# 2. 检查 C/C++ 编译器 (Zig 优先推荐, MinGW GCC, Clang)
+# 2. 检查 C/C++ 编译器 (Windows 静态构建必须使用内置 LLVM libc++ 的 Zig 或 Clang)
 $CC = ""
 $CXX = ""
 $ExtLdFlags = ""
 
-if (Get-Command "zig" -ErrorAction SilentlyContinue) {
+# 2.1 探测系统中是否已有 Zig (优先检测 PATH，其次深度扫描 WinGet、Scoop、ProgramFiles 目录)
+$zigCmd = Get-Command "zig" -ErrorAction SilentlyContinue
+if (-not $zigCmd) {
+    $searchPaths = @(
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Packages",
+        "$env:USERPROFILE\scoop\shims",
+        "$env:ProgramFiles\zig",
+        "$ScriptDir\.deps\zig"
+    )
+    foreach ($p in $searchPaths) {
+        if (Test-Path $p) {
+            $foundZig = Get-ChildItem -Path $p -Filter "zig.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($foundZig) {
+                $zigDir = $foundZig.DirectoryName
+                $env:PATH = "$zigDir;$env:PATH"
+                $zigCmd = Get-Command "zig" -ErrorAction SilentlyContinue
+                Write-Host ">>> 从安装目录自动识别并加载 Zig: $($foundZig.FullName)" -ForegroundColor Green
+                break
+            }
+        }
+    }
+}
+
+if ($zigCmd) {
     Write-Host ">>> 检测到 Zig 编译器，启用高性能免配置 CGO 静态交叉编译" -ForegroundColor Green
     $CC = "zig cc -target x86_64-windows-gnu"
     $CXX = "zig c++ -target x86_64-windows-gnu"
-    $ExtLdFlags = "-Wl,--strip-all"
-} elseif (Get-Command "gcc" -ErrorAction SilentlyContinue) {
-    Write-Host ">>> 检测到 GCC (MinGW-w64) 编译器" -ForegroundColor Green
-    $CC = "gcc"
-    $CXX = "g++"
     $ExtLdFlags = "-Wl,--strip-all"
 } elseif (Get-Command "clang" -ErrorAction SilentlyContinue) {
     Write-Host ">>> 检测到 Clang 编译器" -ForegroundColor Green
@@ -79,17 +97,48 @@ if (Get-Command "zig" -ErrorAction SilentlyContinue) {
     $CXX = "clang++"
     $ExtLdFlags = "-Wl,--strip-all"
 } else {
+    $hasGcc = Get-Command "gcc" -ErrorAction SilentlyContinue
     Write-Host ""
     Write-Host "==================================================================" -ForegroundColor Yellow
-    Write-Host "错误: 未找到 C/C++ 编译器 (构建嵌入式 SpiderMonkey 需要 C++20 支持)。" -ForegroundColor Red
-    Write-Host "推荐安装极速免配置的 Zig (推荐方式):" -ForegroundColor Yellow
+    if ($hasGcc) {
+        Write-Host "【重要提示】检测到当前系统仅有 GNU GCC (MinGW-w64)，无法直接编译本服务！" -ForegroundColor Red
+        Write-Host "原因: SpiderMonkey 官方核心引擎基于 LLVM libc++ 构建，" -ForegroundColor Yellow
+        Write-Host "      GNU GCC 缺失 libc++ 与 libunwind 依赖库，会导致 cannot find -lc++ 报错。" -ForegroundColor Yellow
+    } else {
+        Write-Host "【重要提示】未检测到兼容的 C/C++ 编译器！" -ForegroundColor Red
+    }
+    Write-Host ""
+    Write-Host "解决方案: 推荐一键安装免环境配置、仅约 40MB 的 Zig 编译器 (自带完整 LLVM libc++):" -ForegroundColor Green
     Write-Host "    winget install zig.zig" -ForegroundColor White
-    Write-Host "或使用 Scoop:" -ForegroundColor Yellow
-    Write-Host "    scoop install zig" -ForegroundColor White
-    Write-Host "亦可使用已配置好的 MinGW-w64 (gcc/g++) 环境。" -ForegroundColor Gray
     Write-Host "==================================================================" -ForegroundColor Yellow
     Write-Host ""
-    exit 1
+
+    # 若检测到系统中存在 winget，尝试协助用户一键就绪
+    if (Get-Command "winget" -ErrorAction SilentlyContinue) {
+        Write-Host ">>> 检测到系统已内置 winget，是否立即自动执行安装 Zig 编译器？(Y/n): " -NoNewline -ForegroundColor Cyan
+        $choice = Read-Host
+        if ([string]::IsNullOrWhiteSpace($choice) -or $choice.Trim().ToUpper() -eq "Y") {
+            Write-Host ">>> 正在通过 winget 安装 zig.zig..." -ForegroundColor Cyan
+            & winget install -e --id zig.zig --accept-source-agreements --accept-package-agreements
+            # 重新扫描探测刚刚安装的 Zig
+            if (Test-Path "$env:LOCALAPPDATA\Microsoft\WinGet\Packages") {
+                $foundZig = Get-ChildItem -Path "$env:LOCALAPPDATA\Microsoft\WinGet\Packages" -Filter "zig.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($foundZig) {
+                    $zigDir = $foundZig.DirectoryName
+                    $env:PATH = "$zigDir;$env:PATH"
+                    Write-Host ">>> Zig 编译器已就绪: $($foundZig.FullName)" -ForegroundColor Green
+                    $CC = "zig cc -target x86_64-windows-gnu"
+                    $CXX = "zig c++ -target x86_64-windows-gnu"
+                    $ExtLdFlags = "-Wl,--strip-all"
+                }
+            }
+        }
+    }
+
+    if (-not $CC) {
+        Write-Host "提示: 请安装 Zig 后重新运行 .\build.bat 即可。" -ForegroundColor Yellow
+        exit 1
+    }
 }
 
 # 代理智能探测函数
