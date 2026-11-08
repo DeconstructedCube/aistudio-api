@@ -61,3 +61,23 @@ EOF
 else
     log "Standard Linux/Desktop/Docker environment detected. No extra platform configuration needed."
 fi
+
+# WAA Signer status check and guidance
+SIGNER_BIN="${PROJECT_ROOT}/waa-signer/bin/waa-signer"
+if [ ! -f "${SIGNER_BIN}" ]; then
+    log ""
+    log "=================================================================="
+    log "【可选推荐】构建本地高性能 WAA 签名服务 (waa-signer):"
+    log "  若需使用本地原生 SpiderMonkey 152 毫秒级签名并脱离外部依赖:"
+    log "    bash waa-signer/build.sh"
+    if is_termux; then
+        log "  (Termux 环境可通过 'pkg install -y golang zig' 一键就绪编译器)"
+    else
+        log "  (需要 Go 1.22+ 以及 zig 或 clang/gcc 编译器)"
+    fi
+    log "  [提示] 若跳过编译，系统启动时将自动降级至远程签名节点 (spinsnow)。"
+    log "=================================================================="
+    log ""
+else
+    log "已检测到本地 WAA 签名服务产物: ${SIGNER_BIN}"
+fi

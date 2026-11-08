@@ -92,6 +92,11 @@
 
 ## 快速开始
 
+> [!IMPORTANT]
+> **关于 WAA 签名服务（本地原生 vs 远程节点）**：
+> - **本地原生引擎 (强烈推荐)**：基于嵌入式 SpiderMonkey 152 运行时与 Firefox 152 宿主环境，签名仅需 10-30 毫秒，常驻物理内存仅数十 MB，完全在本地独立运行，彻底脱离外部网络依赖。初次启动前推荐执行一次一键构建（各平台步骤见下文）。
+> - **远程签名节点 (自动降级)**：若尚未编译本地服务，系统启动时将**自动无缝降级**至远程签名节点（`https://waa.spinsnow.fun`），零门槛即开即用（受限于远程网络延迟与节点负载）。
+
 ### Android (Termux)
 
 > [!TIP]
@@ -111,7 +116,11 @@ cd aistudio-api
 bash scripts/setup-env.sh
 uv sync
 
-# 步骤 4：启动服务
+# 步骤 4（强烈推荐）：一键构建本地高性能签名服务
+# 前置要求：pkg install -y golang zig
+bash waa-signer/build.sh
+
+# 步骤 5：启动服务
 uv run python main.py server --port 8080
 ```
 
@@ -139,7 +148,10 @@ cd aistudio-api
 # 步骤 3：同步安装项目依赖
 uv sync
 
-# 步骤 4：启动服务
+# 步骤 4（强烈推荐）：一键编译本地高性能签名服务（推荐前置执行 winget install GoLang.Go zig.zig）
+.\waa-signer\build.bat
+
+# 步骤 5：启动服务
 uv run python main.py server --port 8080
 ```
 
@@ -162,7 +174,11 @@ cd aistudio-api
 # 步骤 3：同步安装项目依赖
 uv sync
 
-# 步骤 4：启动服务
+# 步骤 4（强烈推荐）：一键编译本地高性能签名服务
+# 前置要求：已安装 Go 1.22+ 与 zig（或 clang / gcc）
+bash waa-signer/build.sh
+
+# 步骤 5：启动服务
 uv run python3 main.py server --port 8080
 ```
 
@@ -171,6 +187,9 @@ uv run python3 main.py server --port 8080
 ---
 
 ### Docker 部署
+
+> [!NOTE]
+> 本项目 `Dockerfile` 采用多阶段构建，在镜像构建时会**全自动下载依赖并编译** `waa-signer` 二进制服务内置于容器内，容器启动时自动拉起本地原生签名引擎，开箱即用，无需手动构建。
 
 ```bash
 docker run -d \
@@ -185,7 +204,6 @@ docker run -d \
 ```bash
 docker compose up -d
 ```
-
 启动后访问 **`http://localhost:8080`**（或服务器 IP 端口）进入管理控制台。
 
 ---

@@ -1,3 +1,22 @@
+# Stage 1: Build native Go WAA signer daemon
+FROM golang:1.23-bookworm AS signer-builder
+
+WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    clang \
+    build-essential \
+    file \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY waa-signer/ waa-signer/
+WORKDIR /build/waa-signer
+RUN if [ ! -f "bin/waa-signer" ] || ! file bin/waa-signer | grep -q "ELF"; then \
+        chmod +x build.sh && ./build.sh; \
+    fi
+
+# Stage 2: Runtime Python environment
 # Use Debian 12 (bookworm) explicitly so package names stay stable.
 FROM python:3.11-slim-bookworm
 
@@ -23,12 +42,16 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code and default configuration template
+# Copy precompiled native WAA signer service from builder stage
+COPY --from=signer-builder /build/waa-signer/bin/waa-signer /app/waa-signer/bin/waa-signer
+RUN chmod +x /app/waa-signer/bin/waa-signer
+
+# Copy application code and default configuration template
 COPY src/ src/
 COPY main.py .
 COPY config.yaml /app/defaults/config.yaml
 COPY config.yaml /app/config.yaml
 COPY docker-entrypoint.sh /app/docker-entrypoint.sh
-
 # Create necessary directories
 RUN mkdir -p /app/data /tmp
 

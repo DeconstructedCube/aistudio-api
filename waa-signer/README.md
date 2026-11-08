@@ -18,16 +18,32 @@
 ## 跨平台一键编译
 
 ### 前置要求
-- Go 1.22+
-- `zig`（推荐，可自动交叉静态编译）或 `clang` / `gcc`
+- Go 1.22+ (`go version`)
+- C/C++ 编译器：强烈推荐 `zig`（免配置支持静态交叉链接），亦可使用 `clang` 或 `gcc` / `MinGW-w64`
 
 ### 编译命令
-在 `waa-signer/` 目录下直接执行：
+
+#### Linux / macOS / Android (Termux)
+在 `waa-signer/` 目录下执行：
 ```bash
 bash build.sh
 ```
-`build.sh` 会自动检测当前机器架构（x86_64 或 arm64），自动下载解压官方静态 `spidermonkey-v152.0.4` 依赖，并编译出无外部动态库依赖的纯静态单一二进制产物 `bin/waa-signer`。
+脚本会自动识别 CPU 架构与操作系统（Linux x64/arm64、macOS arm64/amd64），自动拉取对应的官方静态 `spidermonkey-v152.0.4` 依赖，并产出单一无外部依赖的二进制文件 `bin/waa-signer`。
 
+#### Windows (CMD / PowerShell)
+在 `waa-signer\` 目录下直接运行：
+```bat
+build.bat
+```
+或在 PowerShell 中执行：
+```powershell
+.\build.ps1
+```
+脚本会自动完成依赖下载与编译，产出 `bin\waa-signer.exe`。
+> **Windows 编译小贴士**：推荐使用轻量免配置的 Zig 编译器（执行 `winget install zig.zig` 即可一键就绪）。
+
+#### Docker
+本项目主 Dockerfile 已内置多阶段自动编译阶段，直接 `docker build -t aistudio-api .` 即可自动构建并内置 `waa-signer`，容器启动时自动拉起，无需手动操作。
 ---
 
 ## 运行与参数说明

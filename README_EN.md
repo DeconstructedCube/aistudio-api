@@ -92,6 +92,11 @@ Technical reference documentation:
 
 ## Quick Start
 
+> [!IMPORTANT]
+> **About WAA Signer Services (Local Native vs Remote Node)**:
+> - **Local Native Engine (Highly Recommended)**: Embedded SpiderMonkey 152 with Firefox 152 host environment. Mints proofs in 10-30 ms, consumes only ~35-50 MB RAM, and runs 100% locally with zero external network dependencies. Run a one-time build command before startup (detailed below per platform).
+> - **Remote Signer Node (Automatic Fallback)**: If the local signer binary has not been built yet, the server **automatically and seamlessly falls back** to the public remote signing node (`https://waa.spinsnow.fun`) for out-of-the-box operation (subject to remote network latency and availability).
+
 ### Android (Termux)
 
 > [!TIP]
@@ -111,7 +116,11 @@ cd aistudio-api
 bash scripts/setup-env.sh
 uv sync
 
-# Step 4: Start server
+# Step 4 (Highly Recommended): Build local native signer service
+# Prerequisite: pkg install -y golang zig
+bash waa-signer/build.sh
+
+# Step 5: Start server
 uv run python main.py server --port 8080
 ```
 
@@ -139,7 +148,10 @@ cd aistudio-api
 # Step 3: Sync dependencies
 uv sync
 
-# Step 4: Start server
+# Step 4 (Highly Recommended): Build local native signer service (Recommended: winget install GoLang.Go zig.zig)
+.\waa-signer\build.bat
+
+# Step 5: Start server
 uv run python main.py server --port 8080
 ```
 
@@ -162,7 +174,11 @@ cd aistudio-api
 # Step 3: Sync dependencies
 uv sync
 
-# Step 4: Start server
+# Step 4 (Highly Recommended): Build local native signer service
+# Prerequisite: Go 1.22+ and zig (or clang / gcc)
+bash waa-signer/build.sh
+
+# Step 5: Start server
 uv run python3 main.py server --port 8080
 ```
 
@@ -171,6 +187,9 @@ Open **`http://localhost:8080`** in your browser to access the Web Console.
 ---
 
 ### Docker Deployment
+
+> [!NOTE]
+> The project's `Dockerfile` uses a multi-stage build that **automatically downloads dependencies and compiles** `waa-signer` inside the image. The container starts with the native local signing daemon enabled out of the box—no manual build steps required.
 
 ```bash
 docker run -d \
@@ -185,7 +204,6 @@ Or run with Docker Compose:
 ```bash
 docker compose up -d
 ```
-
 Open **`http://localhost:8080`** in your browser to access the Web Console.
 
 ---
