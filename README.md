@@ -3,7 +3,7 @@
 <p align="center">
   <a href="https://github.com/DeconstructedCube/aistudio-api"><img src="https://img.shields.io/badge/API-Gemini%20v1beta-4285F4?style=flat-square&logo=google" alt="Gemini API"></a>
   <a href="https://hub.docker.com/r/bedrockblock/aistudio-api"><img src="https://img.shields.io/badge/Docker-bedrockblock%2Faistudio--api-2496ED?style=flat-square&logo=docker" alt="Docker Hub"></a>
-  <a href="https://deepwiki.com/DeconstructedCube/aistudio-api"><img src="https://img.shields.io/badge/DeepWiki-DeconstructedCube%2Faistudio--api-5B68E4?style=flat-square&logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==" alt="DeepWiki"></a>
+  <a href="https://deepwiki.com/DeconstructedCube/aistudio-api"><img src="https://img.shields.io/badge/DeepWiki-Docs-5B68E4?style=flat-square" alt="DeepWiki"></a>
   <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/Framework-FastAPI-009688?style=flat-square&logo=fastapi" alt="FastAPI"></a>
   <a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Frontend-Vue%203%20%2B%20Vite-4FC08D?style=flat-square&logo=vuedotjs" alt="Vue 3"></a>
   <a href="https://docs.astral.sh/uv/"><img src="https://img.shields.io/badge/Python-3.11%2B%20%7C%20uv-261230?style=flat-square&logo=python" alt="Python uv"></a>
@@ -29,6 +29,8 @@
   - [Windows](#windows)
   - [Linux / macOS](#linux--macos)
   - [Docker 部署](#docker-部署)
+- [账号凭据 (Cookie) 获取与导入指引](#账号凭据-cookie-获取与导入指引)
+- [第三方客户端配置指引 (NextChat / Cherry Studio 等)](#第三方客户端配置指引-nextchat--cherry-studio--one-api-等)
 - [配置与环境变量](#配置与环境变量)
 - [API 调用示例](#api-调用示例)
   - [cURL 调用](#curl-调用)
@@ -50,9 +52,9 @@
 | **多账号自动轮换** | 支持多账号管理与故障自动切换，按模型独立记录 429 配额，每日美西午夜自动重置 |
 | **运行状态持久化** | 模型调用量、Token 消耗统计 (`stats.json`) 以及账号 429 限额与冷却状态 (`rotator_state.json`) 自动落盘，容器/服务重启不丢失状态 |
 | **下游参数容错与丢弃** | 支持配置 `drop_unsupported_params` 自动过滤下游传入的非标准安全分类（如 `HARM_CATEGORY_CIVIC_INTEGRITY`）与不兼容工具，避免 400 阻断 |
-| **批量子账号探活** | 导入单个包含多个 Google 身份的 Cookie 后，自动递归探活子账号（`u/0`, `u/1`...）并分别建档 |
+| **批量子账号探活** | 导入单个包含多个 Google 身份的 Cookie 后，自动探测子账号（`u/0`, `u/1`...）并分别建档 |
 | **内置搜索与工具** | 支持 Google Search 联网搜索、Google Maps、代码执行沙箱等官方扩展能力 |
-| **多签名服务与特征绑定** | 脱离重型无头浏览器，支持本地独立的 Go 签名服务 (SpiderMonkey 152) 或远程 NodeVM 签名服务，支持纯手动切换并自动绑定匹配的 User-Agent 与请求头特征 |
+| **双轨签名与特征对齐** | 脱离重型浏览器，支持本地 Go 签名服务 (SpiderMonkey 152) 与远程 NodeVM 签名节点，自动绑定匹配的 User-Agent 与请求头特征 |
 | **Web 管理面板** | 提供 Web 管理控制台，支持账号管理（文本与 JSON 批量导入）、调用量监控、在线编辑与热重载 `config.yaml` |
 > [!NOTE]
 > **内存占用参考**：脱离重型浏览器后，服务常驻物理内存仅约 35 - 50 MB，冷启动毫秒级，即使在入门级 Android 手机（Termux）或轻量服务器上亦可稳定高效常驻。
@@ -92,11 +94,8 @@
 
 ## 快速开始
 
-> [!IMPORTANT]
-> **关于 WAA 签名服务（本地原生 vs 远程节点）**：
-> - **本地原生引擎 (强烈推荐)**：基于嵌入式 SpiderMonkey 152 运行时与 Firefox 152 宿主环境，签名仅需 10-30 毫秒，常驻物理内存仅数十 MB，完全在本地独立运行，彻底脱离外部网络依赖。初次启动前推荐执行一次一键构建（各平台步骤见下文）。
-> - **远程签名节点 (自动降级)**：若尚未编译本地服务，系统启动时将**自动无缝降级**至远程签名节点（`https://waa.spinsnow.fun`），零门槛即开即用（受限于远程网络延迟与节点负载）。
-
+> [!NOTE]
+> **开箱即用提示**：服务默认内置远程 WAA 证明签名节点，无需额外编译，安装依赖后**直接启动即可开箱即用**！若追求极致的毫秒级本地性能与离线化运行，可在运行后随时按需编译本地原生引擎（各平台步骤见下方进阶可选说明）。
 ### Android (Termux)
 
 > [!TIP]
@@ -116,24 +115,30 @@ cd aistudio-api
 bash scripts/setup-env.sh
 uv sync
 
-# 步骤 4（强烈推荐）：一键构建本地高性能签名服务
-# 前置要求：pkg install -y golang zig
-bash waa-signer/build.sh
-
-# 步骤 5：启动服务
+# 步骤 4：直接启动服务（开箱即用）
 uv run python main.py server --port 8080
 ```
 
+<details>
+<summary><b>【进阶可选】编译本地原生高性能签名服务 (waa-signer)</b></summary>
+
+若需脱离外部网络节点、获得 10~30 毫秒本地极速签名体验：
+```bash
+pkg install -y golang zig
+bash waa-signer/build.sh
+```
+编译完成后重启服务，系统将自动识别并切换至本地原生引擎。
+</details>
+
 启动成功后：
 1. 打开手机自带浏览器，访问 **`http://localhost:8080`** 即可进入 Web 管理控制台；
-2. 点击 **“账号管理”** 页面，粘贴你的 Google 账号 Cookie 或导入凭据包即可开始调用；
-3. **后台保活提示**：下拉手机通知栏，点击 Termux 通知项上的 `Acquire Wakelock`，并在手机系统设置中为 Termux 开启“无限制后台运行/电池优化白名单”，防止锁屏休眠被系统误杀。
-
+2. 参考下方 [账号凭据获取指引](#账号凭据-cookie-获取与导入指引) 导入 Google Cookie 即可开始调用；
+3. **后台保活提示**：下拉手机通知栏，点击 Termux 通知项上的 `Acquire Wakelock`，并在手机系统设置中为 Termux 开启“无限制后台运行/电池优化白名单”，防止锁屏休眠被系统杀后台。
 ---
 
 ### Windows
 
-前置要求：电脑已安装 [Python 3.11+](https://www.python.org/downloads/)（安装时勾选 `Add python.exe to PATH`）。
+推荐前置：电脑已安装 [Git](https://git-scm.com/)。Python 环境可由 `uv` 全自动管理。
 
 打开 PowerShell 或终端，依次执行：
 
@@ -145,15 +150,26 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 git clone https://github.com/DeconstructedCube/aistudio-api.git
 cd aistudio-api
 
-# 步骤 3：同步安装项目依赖
+# 步骤 3：同步安装项目依赖（uv 会自动安装所需 Python 环境）
 uv sync
 
-# 步骤 4（强烈推荐）：一键编译本地高性能签名服务（推荐前置执行 winget install GoLang.Go zig.zig）
-.\waa-signer\build.bat
-
-# 步骤 5：启动服务
+# 步骤 4：直接启动服务（开箱即用）
 uv run python main.py server --port 8080
 ```
+
+<details>
+<summary><b>【进阶可选】一键编译本地高性能签名服务 (waa-signer.exe)</b></summary>
+
+若需启用毫秒级本地原生签名引擎：
+```powershell
+# 推荐安装编译器（脚本亦支持自动检测与提示安装）：
+winget install GoLang.Go zig.zig
+
+# 执行一键构建脚本
+.\waa-signer\build.bat
+```
+编译完成后重启服务即可生效。
+</details>
 
 服务启动后，浏览器访问 **`http://localhost:8080`** 进入管理控制台。
 
@@ -174,16 +190,20 @@ cd aistudio-api
 # 步骤 3：同步安装项目依赖
 uv sync
 
-# 步骤 4（强烈推荐）：一键编译本地高性能签名服务
-# 前置要求：已安装 Go 1.22+ 与 zig（或 clang / gcc）
-bash waa-signer/build.sh
-
-# 步骤 5：启动服务
+# 步骤 4：直接启动服务（开箱即用）
 uv run python3 main.py server --port 8080
 ```
 
-服务启动后，浏览器访问 **`http://localhost:8080`** 进入管理控制台。
+<details>
+<summary><b>【进阶可选】编译本地高性能签名服务</b></summary>
 
+前置要求：已安装 Go 1.22+ 与 zig（或 clang / gcc）：
+```bash
+bash waa-signer/build.sh
+```
+</details>
+
+服务启动后，浏览器访问 **`http://localhost:8080`** 进入管理控制台。
 ---
 
 ### Docker 部署
@@ -207,6 +227,40 @@ docker compose up -d
 启动后访问 **`http://localhost:8080`**（或服务器 IP 端口）进入管理控制台。
 
 ---
+
+## 账号凭据 (Cookie) 获取与导入指引
+
+本服务不会保存你的 Google 密码，仅通过 Web 端 Session 凭据进行 API 调用，且内置自动化 Cookie 续期轮换机制。
+
+### 步骤 1：获取 AI Studio Cookie
+
+1. 在电脑或手机浏览器中访问并登录 [Google AI Studio](https://aistudio.google.com/)，确保能够正常进入对话工作台；
+2. 安装浏览器扩展 **Cookie-Editor**（可在 Chrome 应用商店、Edge 扩展中心或 Firefox 附加组件中心免费安装）；
+3. 在 `aistudio.google.com` 标签页下，点击浏览器的 Cookie-Editor 图标；
+4. 点击右下角 **Export** 按钮，选择 **Export as JSON**（亦可选择 Export as Header）；数据将自动复制到剪贴板。
+
+### 步骤 2：导入至管理控制台
+
+1. 访问本服务 Web 控制台（默认 `http://localhost:8080`）；
+2. 点击左侧导航栏的 **「账号管理」**；
+3. 点击右上角 **「+ 导入凭据」** 按钮；
+4. 将剪贴板中的 Cookie 数据直接粘贴到输入框中，点击 **「确认导入」**；
+5. 系统将自动完成连通性校验，并自动递归探测多登子账号（`u/0`, `u/1`...）完成多身份入库！
+
+---
+
+## 第三方客户端配置指引 (NextChat / Cherry Studio / One API 等)
+
+> [!WARNING]
+> **必须选择 Google Gemini 协议**！
+> 本项目是专为 Google Gemini API 规范打造的反向代理网关，**不包含 OpenAI 协议兼容接口**（如 `/v1/chat/completions`）。在任何客户端中配置时，模型提供商类型请务必选择 **Google Gemini**（或 **Gemini**），切勿选择 OpenAI 格式。
+
+| 配置项目 | 填写内容 | 说明 |
+|---|---|---|
+| **模型提供商 (Provider)** | **Google Gemini** | 严禁选择 OpenAI 或自定义 OpenAI 格式 |
+| **API Base URL / 代理地址** | `http://localhost:8080` | 若客户端要求必须带版本号，可填写 `http://localhost:8080/v1beta` |
+| **API Key / 密钥** | 任意字符串 (如 `aistudio-api`) | 若未在服务端 `config.yaml` 中配置 `api_keys`，客户端填写任意非空字符即可；若服务端已配置鉴权 Key 则需匹配 |
+| **支持的模型名称** | `gemini-3.7-flash`<br/>`gemini-3.8-flash`<br/>`gemini-4-argon`<br/>`gemini-3.1-flash-image` | 自动向上游同步所有可用模型，支持官方全部功能 |
 
 ## 配置与环境变量
 

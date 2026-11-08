@@ -3,7 +3,7 @@
 <p align="center">
   <a href="https://github.com/DeconstructedCube/aistudio-api"><img src="https://img.shields.io/badge/API-Gemini%20v1beta-4285F4?style=flat-square&logo=google" alt="Gemini API"></a>
   <a href="https://hub.docker.com/r/bedrockblock/aistudio-api"><img src="https://img.shields.io/badge/Docker-bedrockblock%2Faistudio--api-2496ED?style=flat-square&logo=docker" alt="Docker Hub"></a>
-  <a href="https://deepwiki.com/DeconstructedCube/aistudio-api"><img src="https://img.shields.io/badge/DeepWiki-DeconstructedCube%2Faistudio--api-5B68E4?style=flat-square&logo=data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAyCAYAAAAnWDnqAAAAAXNSR0IArs4c6QAAA05JREFUaEPtmUtyEzEQhtWTQyQLHNak2AB7ZnyXZMEjXMGeK/AIi+QuHrMnbChYY7MIh8g01fJoopFb0uhhEqqcbWTp06/uv1saEDv4O3n3dV60RfP947Mm9/SQc0ICFQgzfc4CYZoTPAswgSJCCUJUnAAoRHOAUOcATwbmVLWdGoH//PB8mnKqScAhsD0kYP3j/Yt5LPQe2KvcXmGvRHcDnpxfL2zOYJ1mFwrryWTz0advv1Ut4CJgf5uhDuDj5eUcAUoahrdY/56ebRWeraTjMt/00Sh3UDtjgHtQNHwcRGOC98BJEAEymycmYcWwOprTgcB6VZ5JK5TAJ+fXGLBm3FDAmn6oPPjR4rKCAoJCal2eAiQp2x0vxTPB3ALO2CRkwmDy5WohzBDwSEFKRwPbknEggCPB/imwrycgxX2NzoMCHhPkDwqYMr9tRcP5qNrMZHkVnOjRMWwLCcr8ohBVb1OMjxLwGCvjTikrsBOiA6fNyCrm8V1rP93iVPpwaE+gO0SsWmPiXB+jikdf6SizrT5qKasx5j8ABbHpFTx+vFXp9EnYQmLx02h1QTTrl6eDqxLnGjporxl3NL3agEvXdT0WmEost648sQOYAeJS9Q7bfUVoMGnjo4AZdUMQku50McDcMWcBPvr0SzbTAFDfvJqwLzgxwATnCgnp4wDl6Aa+Ax283gghmj+vj7feE2KBBRMW3FzOpLOADl0Isb5587h/U4gGvkt5v60Z1VLG8BhYjbzRwyQZemwAd6cCR5/XFWLYZRIMpX39AR0tjaGGiGzLVyhse5C9RKC6ai42ppWPKiBagOvaYk8lO7DajerabOZP46Lby5wKjw1HCRx7p9sVMOWGzb/vA1hwiWc6jm3MvQDTogQkiqIhJV0nBQBTU+3okKCFDy9WwferkHjtxib7t3xIUQtHxnIwtx4mpg26/HfwVNVDb4oI9RHmx5WGelRVlrtiw43zboCLaxv46AZeB3IlTkwouebTr1y2NjSpHz68WNFjHvupy3q8TFn3Hos2IAk4Ju5dCo8B3wP7VPr/FGaKiG+T+v+TQqIrOqMTL1VdWV1DdmcbO8KXBz6esmYWYKPwDL5b5FA1a0hwapHiom0r/cKaoqr+27/XcrS5UwSMbQAAAABJRU5ErkJggg==" alt="DeepWiki"></a>
+  <a href="https://deepwiki.com/DeconstructedCube/aistudio-api"><img src="https://img.shields.io/badge/DeepWiki-Docs-5B68E4?style=flat-square" alt="DeepWiki"></a>
   <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/Framework-FastAPI-009688?style=flat-square&logo=fastapi" alt="FastAPI"></a>
   <a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Frontend-Vue%203%20%2B%20Vite-4FC08D?style=flat-square&logo=vuedotjs" alt="Vue 3"></a>
   <a href="https://docs.astral.sh/uv/"><img src="https://img.shields.io/badge/Python-3.11%2B%20%7C%20uv-261230?style=flat-square&logo=python" alt="Python uv"></a>
@@ -29,6 +29,8 @@
   - [Windows](#windows)
   - [Linux / macOS](#linux--macos)
   - [Docker Deployment](#docker-deployment)
+- [Obtaining & Importing Account Credentials (Cookies)](#obtaining--importing-account-credentials-cookies)
+- [Third-Party Client Setup Guide (NextChat / Cherry Studio)](#third-party-client-setup-guide-nextchat--cherry-studio--one-api)
 - [Configuration & Environment Variables](#configuration--environment-variables)
 - [API Usage Examples](#api-usage-examples)
   - [cURL](#curl)
@@ -52,7 +54,7 @@
 | **Downstream Parameter Fault Tolerance** | `drop_unsupported_params` automatically drops unsupported safety categories (e.g. `HARM_CATEGORY_CIVIC_INTEGRITY`) and tools to prevent 400 errors |
 | **Multi-Account Probing** | Extracts and verifies sub-accounts (`u/0`, `u/1`...) automatically when importing a multi-session Cookie |
 | **Built-in Tools** | Supports official tools such as Google Search, Google Maps, and Code Execution sandbox |
-| **Multi-Signer & Feature Binding** | Browserless architecture supporting standalone Go signer (SpiderMonkey 152) or remote NodeVM signers with manual switching and matched User-Agent/header binding |
+| **Dual-Track Signing & Feature Alignment** | Browserless architecture supporting standalone Go signer (SpiderMonkey 152) or remote NodeVM signers with matched User-Agent/header binding |
 | **Web Management Console** | Built-in web dashboard for account management (supporting text and JSON bundle file imports), live request metrics, and runtime `config.yaml` hot reloading |
 > [!NOTE]
 > **Memory Footprint**: Operating completely browserless, resident memory is only ~35 - 50 MB with sub-second cold start, running smoothly even on lightweight mobile Termux environments or entry-level servers.
@@ -92,11 +94,8 @@ Technical reference documentation:
 
 ## Quick Start
 
-> [!IMPORTANT]
-> **About WAA Signer Services (Local Native vs Remote Node)**:
-> - **Local Native Engine (Highly Recommended)**: Embedded SpiderMonkey 152 with Firefox 152 host environment. Mints proofs in 10-30 ms, consumes only ~35-50 MB RAM, and runs 100% locally with zero external network dependencies. Run a one-time build command before startup (detailed below per platform).
-> - **Remote Signer Node (Automatic Fallback)**: If the local signer binary has not been built yet, the server **automatically and seamlessly falls back** to the public remote signing node (`https://waa.spinsnow.fun`) for out-of-the-box operation (subject to remote network latency and availability).
-
+> [!NOTE]
+> **Out-of-the-Box Operation**: The service comes pre-configured with a remote WAA proof signing node. Once dependencies are installed, **start the server directly without compilation**! For offline operation or ultra-fast 10-30 ms local performance, compile the native engine at any time (see the optional advanced guides below).
 ### Android (Termux)
 
 > [!TIP]
@@ -116,24 +115,30 @@ cd aistudio-api
 bash scripts/setup-env.sh
 uv sync
 
-# Step 4 (Highly Recommended): Build local native signer service
-# Prerequisite: pkg install -y golang zig
-bash waa-signer/build.sh
-
-# Step 5: Start server
+# Step 4: Start server (out-of-the-box)
 uv run python main.py server --port 8080
 ```
 
+<details>
+<summary><b>[Optional Advanced] Build local native signer service (waa-signer)</b></summary>
+
+To operate completely offline with 10-30 ms local proof minting:
+```bash
+pkg install -y golang zig
+bash waa-signer/build.sh
+```
+Restart the service upon build completion; it will automatically detect and switch to the local native engine.
+</details>
+
 Once started:
 1. Open your phone's browser and go to **`http://localhost:8080`** to access the Web Console;
-2. Navigate to **Accounts**, paste your Google account Cookies or import a bundle to start using the API;
+2. Follow the [Cookie Import Guide](#obtaining--importing-account-credentials-cookies) below to import your credentials;
 3. **Background Persistence Tip**: Pull down Android's notification bar, tap `Acquire Wakelock` on Termux's notification, and disable battery optimization for Termux in phone system settings to prevent sleep kills.
-
 ---
 
 ### Windows
 
-Prerequisite: [Python 3.11+](https://www.python.org/downloads/) installed (check `Add python.exe to PATH` during setup).
+Recommended: [Git](https://git-scm.com/) installed. Python environments are automatically managed by `uv`.
 
 Open PowerShell or Windows Terminal:
 
@@ -145,15 +150,26 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 git clone https://github.com/DeconstructedCube/aistudio-api.git
 cd aistudio-api
 
-# Step 3: Sync dependencies
+# Step 3: Sync dependencies (uv downloads required Python automatically)
 uv sync
 
-# Step 4 (Highly Recommended): Build local native signer service (Recommended: winget install GoLang.Go zig.zig)
-.\waa-signer\build.bat
-
-# Step 5: Start server
+# Step 4: Start server (out-of-the-box)
 uv run python main.py server --port 8080
 ```
+
+<details>
+<summary><b>[Optional Advanced] Build local native signer service (waa-signer.exe)</b></summary>
+
+To enable the local native proof engine:
+```powershell
+# Recommended compiler install (the script also guides automatic install):
+winget install GoLang.Go zig.zig
+
+# Run build script
+.\waa-signer\build.bat
+```
+Restart the service upon completion.
+</details>
 
 Open **`http://localhost:8080`** in your browser to access the Web Console.
 
@@ -174,16 +190,20 @@ cd aistudio-api
 # Step 3: Sync dependencies
 uv sync
 
-# Step 4 (Highly Recommended): Build local native signer service
-# Prerequisite: Go 1.22+ and zig (or clang / gcc)
-bash waa-signer/build.sh
-
-# Step 5: Start server
+# Step 4: Start server (out-of-the-box)
 uv run python3 main.py server --port 8080
 ```
 
-Open **`http://localhost:8080`** in your browser to access the Web Console.
+<details>
+<summary><b>[Optional Advanced] Build local native signer service</b></summary>
 
+Prerequisite: Go 1.22+ and zig (or clang / gcc):
+```bash
+bash waa-signer/build.sh
+```
+</details>
+
+Open **`http://localhost:8080`** in your browser to access the Web Console.
 ---
 
 ### Docker Deployment
@@ -207,6 +227,40 @@ docker compose up -d
 Open **`http://localhost:8080`** in your browser to access the Web Console.
 
 ---
+
+## Obtaining & Importing Account Credentials (Cookies)
+
+This service does not store your Google account password. It uses standard web session credentials with automated periodic Cookie rotation.
+
+### Step 1: Obtain Google AI Studio Cookies
+
+1. Visit and log in to [Google AI Studio](https://aistudio.google.com/) in your browser, ensuring you can reach the chat workspace;
+2. Install the free **Cookie-Editor** browser extension (available on Chrome Web Store, Edge Add-ons, or Firefox Add-ons);
+3. On the `aistudio.google.com` tab, click the Cookie-Editor extension icon;
+4. Click **Export** in the bottom-right and select **Export as JSON** (or Export as Header); the data is automatically copied to your clipboard.
+
+### Step 2: Import into Web Console
+
+1. Access the Web Console (default `http://localhost:8080`);
+2. Click **Accounts** in the left sidebar;
+3. Click **"+ Import Credentials"** in the top right;
+4. Paste your clipboard data into the input box and click **Confirm Import**;
+5. The service will automatically test connectivity and probe any multi-login sub-accounts (`u/0`, `u/1`...) to register them for load balancing.
+
+---
+
+## Third-Party Client Setup Guide (NextChat / Cherry Studio / One API)
+
+> [!WARNING]
+> **Strictly Gemini Protocol Required**!
+> This project is a dedicated reverse proxy strictly adhering to the Google Gemini API specification. It **does NOT provide OpenAI-compatible routes** (such as `/v1/chat/completions`). In all third-party clients, you MUST select **Google Gemini** (or **Gemini**) as the model provider type.
+
+| Setting | Value | Description |
+|---|---|---|
+| **Provider / Model Type** | **Google Gemini** | Do NOT select OpenAI or custom OpenAI formats |
+| **API Base URL** | `http://localhost:8080` | If the client mandates a version prefix, enter `http://localhost:8080/v1beta` |
+| **API Key** | Any string (e.g. `aistudio-api`) | If `api_keys` is not set in `config.yaml`, any non-empty string works; otherwise enter your configured key |
+| **Supported Models** | `gemini-3.7-flash`<br/>`gemini-3.8-flash`<br/>`gemini-4-argon`<br/>`gemini-3.1-flash-image` | Supports all active models discovered dynamically from Google AI Studio |
 
 ## Configuration & Environment Variables
 
