@@ -42,6 +42,7 @@ MODEL_CAPABILITY_NAMES: dict[int, str] = {
     54: "image_search",
     58: "google_maps",
     59: "interaction_route",
+    67: "tts_voices",
     85: "speech_metadata",
     91: "output_continuation",
 }
@@ -151,6 +152,21 @@ _FALLBACK_MODELS = [
         "id": "gemini-flash-lite-latest",
         "displayName": "Gemini Flash-Lite Latest",
         "description": "Latest stable Gemini Flash Lite alias",
+    },
+    {
+        "id": "gemini-3.8-flash-tts",
+        "displayName": "Gemini 3.8 Flash TTS",
+        "description": "Text to speech audio generation model",
+    },
+    {
+        "id": "gemini-2.5-flash-preview-tts",
+        "displayName": "Gemini 2.5 Flash Preview TTS",
+        "description": "Gemini 2.5 TTS voice synthesis model",
+    },
+    {
+        "id": "gemini-omni-1.1-flash",
+        "displayName": "Gemini Omni 1.1 Flash",
+        "description": "Omni multimodal text and video generation model",
     },
 ]
 
@@ -513,22 +529,41 @@ class ModelDiscoveryService:
 
             # 过滤支持内容生成的模型
             if not any("generateContent" in str(m) for m in methods) and not any(
-                "image" in model_id or "veo" in model_id or "lyria" in model_id
+                "image" in model_id
+                or "veo" in model_id
+                or "lyria" in model_id
+                or "omni" in model_id
+                or "tts" in model_id
                 for _ in [0]
             ):
                 continue
 
+            voices: list[str] = []
+            if len(item) > 66 and isinstance(item[66], list):
+                for v_row in item[66]:
+                    if (
+                        isinstance(v_row, list)
+                        and v_row
+                        and isinstance(v_row[0], str)
+                        and v_row[0].strip()
+                    ):
+                        voices.append(v_row[0].strip())
+
             is_image = (
                 21 in capability_codes or "image" in model_id or "imagen" in model_id
             )
-            is_video = 20 in capability_codes or "veo" in model_id
+            is_video = (
+                20 in capability_codes
+                or "veo" in model_id
+                or "omni" in model_id
+                or "video" in model_id
+            )
             is_audio = (
                 37 in capability_codes
                 or 53 in capability_codes
                 or "lyria" in model_id
                 or "tts" in model_id
             )
-
             category = "flagship"
             if is_image:
                 category = "image"
@@ -561,6 +596,7 @@ class ModelDiscoveryService:
                     "topP": top_p,
                     "topK": top_k,
                     "aliases": aliases,
+                    "voices": voices,
                     "capabilities": capabilities,
                     "capabilityCodes": capability_codes,
                     "defaultThinkingLevel": default_thinking_level,

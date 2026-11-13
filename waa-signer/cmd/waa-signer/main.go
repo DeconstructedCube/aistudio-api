@@ -30,6 +30,10 @@ const (
 	generateContentURL = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent"
 )
 
+// maxWorkerAge 限定热 Worker 的最长复用时长：常驻数十小时后，官网构建号与 visitId 会老化，
+// 继续复用只会签出必定 403 的旧快照，因此超龄后回收并重新冷启动加载最新页面与 VM。
+const maxWorkerAge = 6 * time.Hour
+
 // poolWorker 只暴露池和请求处理需要的操作，离线测试可使用内存 Worker。
 type poolWorker interface {
 	State() aistudio.WorkerState
@@ -430,19 +434,28 @@ func (p *WorkerPool) AcquireWorker(ctx context.Context, rawCookies string, authU
 	if worker := entry.workerSnapshot(); worker != nil && entry.proxy == effectiveProxy {
 		phase := worker.State().Phase
 		if phase == aistudio.WorkerReady || phase == aistudio.WorkerBusy {
-			reuse := entry.inputFingerprint == inputFingerprint.input
-			if !reuse {
-				if current, stateErr := worker.BrowserStorageState(ctx); stateErr == nil {
-					currentFingerprint, fingerprintErr := effectiveCookieFingerprint(current)
-					reuse = fingerprintErr == nil && cookieUpdatesMatchCurrent(inputFingerprint.cookies, entry.inputCookies, currentFingerprint.cookies, cookieMetadataExplicit(rawCookies))
+			if time.Since(entry.createdAt) >= maxWorkerAge {
+				slog.Info(
+					"热 Worker 已超过最大复用时长，回收后冷启动加载最新页面",
+					"account", key,
+					"age", time.Since(entry.createdAt).Truncate(time.Minute).String(),
+					"max_age", maxWorkerAge.String(),
+				)
+			} else {
+				reuse := entry.inputFingerprint == inputFingerprint.input
+				if !reuse {
+					if current, stateErr := worker.BrowserStorageState(ctx); stateErr == nil {
+						currentFingerprint, fingerprintErr := effectiveCookieFingerprint(current)
+						reuse = fingerprintErr == nil && cookieUpdatesMatchCurrent(inputFingerprint.cookies, entry.inputCookies, currentFingerprint.cookies, cookieMetadataExplicit(rawCookies))
+					}
 				}
-			}
-			if reuse {
-				entry.inputFingerprint = inputFingerprint.input
-				entry.inputCookies = retainUnsentCookieInputs(entry.inputCookies, inputFingerprint.cookies)
-				entry.lastUsed = time.Now()
-				lease.worker, lease.poolState = worker, "hot"
-				return lease, nil
+				if reuse {
+					entry.inputFingerprint = inputFingerprint.input
+					entry.inputCookies = retainUnsentCookieInputs(entry.inputCookies, inputFingerprint.cookies)
+					entry.lastUsed = time.Now()
+					lease.worker, lease.poolState = worker, "hot"
+					return lease, nil
+				}
 			}
 		}
 	}
@@ -456,15 +469,16 @@ func (p *WorkerPool) AcquireWorker(ctx context.Context, rawCookies string, authU
 }
 
 type MintRequest struct {
-	Cookies      string          `json:"cookies"`
-	AuthUser     any             `json:"authUser"`
-	G1Tier       string          `json:"g1Tier"`
-	Model        string          `json:"model"`
-	Prompt       string          `json:"prompt"`
-	PagePrompt   string          `json:"pagePrompt"`
-	Digest       string          `json:"digest"`
-	WireContents json.RawMessage `json:"wireContents"`
-	Proxy        string          `json:"proxy"`
+	Cookies       string          `json:"cookies"`
+	AuthUser      any             `json:"authUser"`
+	G1Tier        string          `json:"g1Tier"`
+	Model         string          `json:"model"`
+	Prompt        string          `json:"prompt"`
+	PagePrompt    string          `json:"pagePrompt"`
+	Digest        string          `json:"digest"`
+	WireContents  json.RawMessage `json:"wireContents"`
+	Proxy         string          `json:"proxy"`
+	ForceRecreate bool            `json:"forceRecreate,omitempty"`
 }
 
 type MintResponse struct {
@@ -722,6 +736,15 @@ func main() {
 		}
 		defer lease.Release()
 		worker, poolState := lease.worker, lease.poolState
+		if req.ForceRecreate && poolState == "hot" {
+			slog.Warn("收到 forceRecreate 请求，强制销毁热 Worker 并冷重建", "auth_user", authUser, "pool_state", poolState)
+			if recreateErr := lease.Recreate(ctx); recreateErr != nil {
+				slog.Warn("强制重建 WAA Worker 失败", "auth_user", authUser, "error", recreateErr)
+				writeJSON(w, http.StatusBadGateway, MintResponse{OK: false, Error: recreateErr.Error()})
+				return
+			}
+			worker, poolState = lease.worker, lease.poolState
+		}
 
 		t0 := time.Now()
 		proof, protoHeaders, err := worker.ProofByDigest(ctx, digest, pagePrompt)

@@ -257,7 +257,8 @@ class IncrementalJSONStreamParser:
             yield repaired
             return
         container = repaired[0] if repaired else None
-        if isinstance(container, list) and container:
+        has_feedback = len(repaired) > 1 and isinstance(repaired[1], list)
+        if (isinstance(container, list) and container) or has_feedback:
             candidate = parse_response_chunk(repaired)
             if (
                 candidate.text
@@ -266,6 +267,9 @@ class IncrementalJSONStreamParser:
                 or candidate.images
                 or candidate.function_calls
                 or candidate.thought_signature
+                or candidate.thinking_signature
+                or candidate.text_signature
+                or candidate.standalone_signature
                 or candidate.finish_reason is not None
                 or candidate.finish_message
                 or candidate.safety_ratings

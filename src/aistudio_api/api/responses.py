@@ -69,10 +69,19 @@ def to_gemini_parts(
     thinking: str = "",
     images: list[GeneratedImage] | None = None,
     reasoning_images: list[GeneratedImage] | None = None,
+    thinking_signature: str = "",
+    text_signature: str = "",
+    standalone_signature: str = "",
 ) -> list[GeminiPartResponse]:
     parts: list[GeminiPartResponse] = []
     if thinking:
-        parts.append(GeminiPartResponse(text=thinking, thought=True))
+        parts.append(
+            GeminiPartResponse(
+                text=thinking,
+                thought=True,
+                thoughtSignature=thinking_signature or None,
+            )
+        )
     for image in reasoning_images or []:
         parts.append(
             GeminiPartResponse(
@@ -84,8 +93,16 @@ def to_gemini_parts(
                 ),
             )
         )
+    effective_text_sig = text_signature or (
+        standalone_signature if (content and not function_calls and not images) else ""
+    )
     if content:
-        parts.append(GeminiPartResponse(text=content))
+        parts.append(
+            GeminiPartResponse(
+                text=content,
+                thoughtSignature=effective_text_sig or None,
+            )
+        )
     for image in images or []:
         parts.append(
             GeminiPartResponse(
@@ -129,6 +146,8 @@ def to_gemini_parts(
         if fr_id:
             resp_payload.id = str(fr_id)
         parts.append(GeminiPartResponse(functionResponse=resp_payload))
+    if standalone_signature and standalone_signature != effective_text_sig:
+        parts.append(GeminiPartResponse(thoughtSignature=standalone_signature))
     if not parts:
         parts.append(GeminiPartResponse(text=""))
     return parts

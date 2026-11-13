@@ -20,6 +20,9 @@ from aistudio_api.infrastructure.account.cookie_parser import (
     load_cookies_from_auth_file,
     parse_raw_cookies,
 )
+from aistudio_api.infrastructure.gateway.headers import (
+    merge_header_case_insensitive,
+)
 from aistudio_api.infrastructure.gateway.transport import HTTPStreamTransport
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
 from aistudio_api.infrastructure.utils.logger import get_logger
@@ -163,6 +166,7 @@ class GatewaySession:
         contents: list[AistudioContent],
         ctx: SessionContext | None = None,
         model: str = "models/gemini-3.7-flash",
+        force_recreate: bool = False,
     ) -> str:
         """同一账号串行签名，防止迟到的旧凭据重建并回滚新 Worker。"""
         active_ctx = ctx or await self.ensure_ready()
@@ -173,7 +177,7 @@ class GatewaySession:
                 raise StaleSessionError("签名快照已被新导入凭据替换")
             try:
                 proof = await self._generate_snapshot_current(
-                    contents, active_ctx, model
+                    contents, active_ctx, model, force_recreate=force_recreate
                 )
             except Exception as exc:
                 if not self.is_context_current(active_ctx):
@@ -188,6 +192,7 @@ class GatewaySession:
         contents: list[AistudioContent],
         active_ctx: SessionContext,
         model: str,
+        force_recreate: bool = False,
     ) -> str:
         """仅供已持有账号签名锁的当前代际调用。"""
         from aistudio_api.infrastructure.gateway.model_defaults import (
@@ -207,25 +212,40 @@ class GatewaySession:
 
         if not self.is_context_current(active_ctx):
             raise StaleSessionError("签名前凭据代际已更新")
-        if not active_ctx.cookies and active_ctx.auth_file:
-            active_ctx.cookies = load_cookies_from_auth_file(active_ctx.auth_file)
+        if active_ctx.auth_file:
+            disk_cookies = load_cookies_from_auth_file(active_ctx.auth_file)
+            if disk_cookies:
+                active_ctx.cookies.update(disk_cookies)
         cookies = active_ctx.cookies
         auth_user = active_ctx.auth_user or "0"
         tier = active_ctx.tier or "Free"
 
-        proof = await self._signer.generate_snapshot(
-            contents=contents,
-            cookies=cookies,
-            auth_user=auth_user,
-            tier=tier,
-            model=model,
-        )
+        if force_recreate:
+            proof = await self._signer.generate_snapshot(
+                contents=contents,
+                cookies=cookies,
+                auth_user=auth_user,
+                tier=tier,
+                model=model,
+                force_recreate=True,
+            )
+        else:
+            proof = await self._signer.generate_snapshot(
+                contents=contents,
+                cookies=cookies,
+                auth_user=auth_user,
+                tier=tier,
+                model=model,
+            )
         self._sync_signer_cookies(active_ctx)
         return proof
 
     def _sync_signer_cookies(self, active_ctx: SessionContext) -> None:
-        """当 WAA 签名服务在内部刷新了滚动 Cookie 时，将其同步回 SessionContext 与 AccountStore。"""
+        """仅当 WAA 签名服务冷启动 (cold) 访问官网产生新 SIDCC 时同步回本地；严禁热复用 (hot) 用旧 PSIDTS 反向覆盖。"""
         if not self.is_context_current(active_ctx):
+            return
+        pool_state = getattr(self._signer, "last_pool_state", None)
+        if pool_state == "hot":
             return
         dyn_headers = getattr(self._signer, "last_headers", None)
         if not isinstance(dyn_headers, dict):
@@ -236,8 +256,13 @@ class GatewaySession:
         parsed = parse_raw_cookies(raw_cookie)
         if not parsed:
             return
+        sync_names = (
+            ("SIDCC", "__Secure-1PSIDCC", "__Secure-3PSIDCC")
+            if pool_state == "cold"
+            else ROTATING_SESSION_COOKIE_NAMES
+        )
         changed = False
-        for k in ROTATING_SESSION_COOKIE_NAMES:
+        for k in sync_names:
             val = parsed.get(k)
             if val and active_ctx.cookies.get(k) != val:
                 active_ctx.cookies[k] = val
@@ -261,14 +286,29 @@ class GatewaySession:
         contents: list[AistudioContent],
         ctx: SessionContext | None = None,
         model: str = "models/gemini-3.7-flash",
+        force_recreate: bool = False,
     ) -> tuple[str, dict[str, str]]:
         """Generate fresh WAA proof token and dynamic session headers."""
         proof = await self.generate_snapshot(
             contents=contents,
             ctx=ctx,
             model=model,
+            force_recreate=force_recreate,
         )
         return proof, dict(self.last_signer_headers)
+
+    @staticmethod
+    def build_request_headers(
+        headers: dict[str, str] | None, auth_user: str
+    ) -> dict[str, str]:
+        """合并默认上游头、鉴权用户与调用方覆盖头，全程大小写不敏感去重。"""
+        merged: dict[str, str] = {}
+        for name, value in DEFAULT_UPSTREAM_HEADERS.items():
+            merge_header_case_insensitive(merged, str(name), str(value))
+        merge_header_case_insensitive(merged, "X-Goog-AuthUser", str(auth_user or "0"))
+        for name, value in (headers or {}).items():
+            merge_header_case_insensitive(merged, str(name), str(value))
+        return merged
 
     async def send_request(
         self,
@@ -282,10 +322,9 @@ class GatewaySession:
             ctx if isinstance(ctx, SessionContext) else await self.ensure_ready()
         )
         target_url = url or GENERATE_CONTENT_URL
-        req_headers = dict(DEFAULT_UPSTREAM_HEADERS)
-        req_headers["X-Goog-AuthUser"] = active_ctx.auth_user
-        if headers:
-            req_headers.update(headers)
+        req_headers = self.build_request_headers(
+            headers, auth_user=active_ctx.auth_user
+        )
         return await self._transport.send_request(
             url=target_url,
             headers=req_headers,
@@ -309,10 +348,9 @@ class GatewaySession:
             ctx if isinstance(ctx, SessionContext) else await self.ensure_ready()
         )
         target_url = url or GENERATE_CONTENT_URL
-        req_headers = dict(DEFAULT_UPSTREAM_HEADERS)
-        req_headers["X-Goog-AuthUser"] = active_ctx.auth_user
-        if headers:
-            req_headers.update(headers)
+        req_headers = self.build_request_headers(
+            headers, auth_user=active_ctx.auth_user
+        )
         async for event in self._transport.send_streaming_request(
             url=target_url,
             headers=req_headers,

@@ -249,19 +249,35 @@ func newGoWAARuntime(ctx context.Context, options camoufoxnative.Options) (*goWA
 	return runtime, nil
 }
 
+// vmRefreshRetryInterval 是 VM 后台刷新失败后的重试间隔，避免瞬时网络抖动导致此后 VM 永久失修
+const vmRefreshRetryInterval = 5 * time.Minute
+
 // scheduleRefresh 在 VM 生命周期到期时按官网流程后台重建 VM
 func (runtime *goWAARuntime) scheduleRefresh() {
 	runtime.vmExpires = time.Now().Add(waaLifetime)
+	runtime.scheduleRefreshAfter(waaLifetime)
+}
+
+// scheduleRefreshAfter 按指定延迟挂载下一次 VM 刷新，失败重试使用更短的间隔
+func (runtime *goWAARuntime) scheduleRefreshAfter(delay time.Duration) {
 	if runtime.refreshTimer != nil {
 		runtime.refreshTimer.Stop()
 	}
-	runtime.refreshTimer = time.AfterFunc(waaLifetime, func() {
+	runtime.refreshTimer = time.AfterFunc(delay, func() {
 		runtime.vmMu.Lock()
 		defer runtime.vmMu.Unlock()
+		if runtime.closed {
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		if _, err := runtime.currentVM(ctx, true); err != nil {
-			slog.Warn("WAA SpiderMonkey VM 刷新失败", "error", err)
+			slog.Warn(
+				"WAA SpiderMonkey VM 刷新失败，稍后重试",
+				"error", err,
+				"retry_after", vmRefreshRetryInterval.String(),
+			)
+			runtime.scheduleRefreshAfter(vmRefreshRetryInterval)
 		}
 	})
 }

@@ -1,4 +1,4 @@
-# Requires -Version 5.1
+﻿# Requires -Version 5.1
 <#
 .SYNOPSIS
     一键编译 WAA Signer (Windows x64)
@@ -308,6 +308,11 @@ if ($ForceDownload -or -not (Test-Path $LibStatic)) {
     if (-not (Test-Path $LibStatic)) {
         Write-Host "错误: 解压后未找到关键静态库: $LibStatic" -ForegroundColor Red
         exit 1
+    }
+    $LibJsRust = "$DepsDir\lib\libjsrust.a"
+    if ($zigCmd -and (Test-Path $LibJsRust)) {
+        Write-Host ">>> 清理 libjsrust.a 中与 Zig compiler_rt 冲突的 ___chkstk_ms 重复符号..." -ForegroundColor Cyan
+        & zig ar d $LibJsRust compiler_builtins-37a08fb9d355cb46.compiler_builtins.7e37c3da72dd266-cgu.150.rcgu.o 2>$null
     }
     Write-Host ">>> SpiderMonkey 静态库解压就绪!" -ForegroundColor Green
 }

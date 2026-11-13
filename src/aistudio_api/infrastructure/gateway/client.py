@@ -13,6 +13,9 @@ from aistudio_api.domain.errors import (
     is_login_redirect_payload,
 )
 from aistudio_api.domain.models import ModelOutput
+from aistudio_api.infrastructure.gateway.headers import (
+    merge_header_case_insensitive,
+)
 from aistudio_api.infrastructure.gateway.session import (
     DEFAULT_UPSTREAM_HEADERS,
     GENERATE_CONTENT_URL,
@@ -81,14 +84,20 @@ class AIStudioClient:
         top_k: int | None = None,
         max_tokens: int | None = None,
         generation_config_overrides: dict | None = None,
+        force_recreate_signer: bool = False,
     ) -> PreparedRequest:
         ctx = await self._session.ensure_ready()
         effective_contents = contents or [
             AistudioContent.from_user_prompt(prompt=prompt, images=images)
         ]
-        snapshot = await self._session.generate_snapshot(
-            effective_contents, ctx=ctx, model=model
-        )
+        if force_recreate_signer:
+            snapshot = await self._session.generate_snapshot(
+                effective_contents, ctx=ctx, model=model, force_recreate=True
+            )
+        else:
+            snapshot = await self._session.generate_snapshot(
+                effective_contents, ctx=ctx, model=model
+            )
         body = encode_request_body(
             model=model,
             prompt=prompt,
@@ -113,15 +122,19 @@ class AIStudioClient:
         active_waa = get_active_waa_server()
         headers = dict(DEFAULT_UPSTREAM_HEADERS)
         if active_waa.get("user_agent"):
-            headers["User-Agent"] = str(active_waa["user_agent"])
+            merge_header_case_insensitive(
+                headers, "User-Agent", str(active_waa["user_agent"])
+            )
         server_hdrs = active_waa.get("headers")
         if isinstance(server_hdrs, dict):
             for k, v in server_hdrs.items():
-                headers[str(k)] = str(v)
+                merge_header_case_insensitive(headers, str(k), str(v))
         dyn_headers = getattr(self._session, "last_signer_headers", None)
-        if dyn_headers:
-            headers.update(dyn_headers)
-        headers["X-Goog-AuthUser"] = ctx.auth_user
+        if isinstance(dyn_headers, dict):
+            for k, v in dyn_headers.items():
+                if k.lower() not in ("cookie", "authorization"):
+                    merge_header_case_insensitive(headers, str(k), str(v))
+        merge_header_case_insensitive(headers, "X-Goog-AuthUser", ctx.auth_user)
         prepared = PreparedRequest(
             url=GENERATE_CONTENT_URL,
             headers=headers,
@@ -153,6 +166,7 @@ class AIStudioClient:
         top_k: int | None = None,
         max_tokens: int | None = None,
         generation_config_overrides: dict | None = None,
+        force_recreate_signer: bool = False,
         prepared: PreparedRequest | None = None,
     ):
         effective_prep = prepared or await self.prepare_request(
@@ -167,6 +181,7 @@ class AIStudioClient:
             top_k=top_k,
             max_tokens=max_tokens,
             generation_config_overrides=generation_config_overrides,
+            force_recreate_signer=force_recreate_signer,
         )
         async for event in self._streaming_gateway.stream_chat(
             request=effective_prep,
@@ -188,6 +203,7 @@ class AIStudioClient:
         top_k: int | None = None,
         max_tokens: int | None = None,
         generation_config_overrides: dict | None = None,
+        force_recreate_signer: bool = False,
         prepared: PreparedRequest | None = None,
     ) -> ModelOutput:
         if prepared is not None:
@@ -207,8 +223,8 @@ class AIStudioClient:
                 top_k=top_k,
                 max_tokens=max_tokens,
                 generation_config_overrides=generation_config_overrides,
+                force_recreate_signer=force_recreate_signer,
             )
-
         status, raw = await self._session.send_request(
             body=effective_prep.body,
             url=effective_prep.url,

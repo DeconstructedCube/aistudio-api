@@ -303,7 +303,7 @@ def encode_function_declaration_to_wire(declaration: dict[str, object]) -> list[
 
 def _normalize_gemini_modalities(
     value: object, *, drop_unsupported: bool = True
-) -> AistudioImageOutputMode | None:
+) -> AistudioImageOutputMode | list[int] | None:
     if value is None:
         return None
     if not isinstance(value, list):
@@ -314,20 +314,128 @@ def _normalize_gemini_modalities(
     modalities = {str(item).strip().upper() for item in value if str(item).strip()}
     if not modalities:
         return None
-    unknown = modalities - {"TEXT", "IMAGE"}
+    unknown = modalities - {"TEXT", "IMAGE", "AUDIO", "VIDEO"}
     if unknown:
         if not drop_unsupported:
             raise ValueError(
                 f"Unsupported response modalities: {', '.join(sorted(unknown))}"
             )
-        modalities = modalities & {"TEXT", "IMAGE"}
+        modalities = modalities & {"TEXT", "IMAGE", "AUDIO", "VIDEO"}
         if not modalities:
             return None
+    if "AUDIO" in modalities:
+        return [3]
+    if "VIDEO" in modalities:
+        if "TEXT" in modalities:
+            return [4, 1]
+        return [4]
     if "IMAGE" not in modalities:
         return None
     if "TEXT" in modalities:
         return AistudioImageOutputMode.text_and_image()
     return AistudioImageOutputMode.image_only()
+
+
+def encode_speech_config_to_wire(speech_config: object) -> list[object] | None:
+    if speech_config is None:
+        return None
+    if isinstance(speech_config, list):
+        return speech_config
+    model_dump_fn = getattr(speech_config, "model_dump", None)
+    if callable(model_dump_fn):
+        speech_config = model_dump_fn(mode="json", exclude_none=True)
+    if not isinstance(speech_config, dict):
+        return None
+
+    voice_name = ""
+    voice_cfg = speech_config.get("voiceConfig") or speech_config.get("voice_config")
+    if isinstance(voice_cfg, dict):
+        pb = voice_cfg.get("prebuiltVoiceConfig") or voice_cfg.get(
+            "prebuilt_voice_config"
+        )
+        if isinstance(pb, dict):
+            voice_name = str(pb.get("voiceName") or pb.get("voice_name") or "").strip()
+        if not voice_name and voice_cfg.get("voice"):
+            voice_name = str(voice_cfg.get("voice")).strip()
+
+    lang_code = str(
+        speech_config.get("languageCode") or speech_config.get("language_code") or ""
+    ).strip()
+
+    multi = speech_config.get("multiSpeakerVoiceConfig") or speech_config.get(
+        "multi_speaker_voice_config"
+    )
+    multi_speakers: list[list[object]] = []
+    mode_val: int | None = None
+    if isinstance(multi, dict):
+        mode_str = str(multi.get("mode") or "").strip().upper()
+        if mode_str == "VERBATIM":
+            mode_val = 1
+        elif mode_str == "CONVERSATIONAL":
+            mode_val = 2
+        spk_list = (
+            multi.get("speakerVoiceConfigs") or multi.get("speaker_voice_configs") or []
+        )
+        if isinstance(spk_list, list):
+            for spk_item in spk_list:
+                if not isinstance(spk_item, dict):
+                    continue
+                s_name = str(spk_item.get("speaker") or "").strip()
+                s_vc = spk_item.get("voiceConfig") or spk_item.get("voice_config") or {}
+                s_vname = ""
+                if isinstance(s_vc, dict):
+                    s_pb = (
+                        s_vc.get("prebuiltVoiceConfig")
+                        or s_vc.get("prebuilt_voice_config")
+                        or {}
+                    )
+                    if isinstance(s_pb, dict):
+                        s_vname = str(
+                            s_pb.get("voiceName") or s_pb.get("voice_name") or ""
+                        ).strip()
+                    if not s_vname and s_vc.get("voice"):
+                        s_vname = str(s_vc.get("voice")).strip()
+                if s_name and s_vname:
+                    multi_speakers.append([s_name, [[s_vname]]])
+
+    wire = JspbArray()
+    if voice_name:
+        wire[0] = [[voice_name]]
+    elif not multi_speakers:
+        wire[0] = [["Zephyr"]]
+
+    if lang_code:
+        wire[1] = lang_code
+
+    if multi_speakers:
+        multi_wire: list[object] = [None, multi_speakers]
+        if mode_val is not None:
+            multi_wire.append(mode_val)
+        wire[2] = multi_wire
+
+    return wire.compact()
+
+
+def _normalize_gemini_video_config(
+    value: object, *, drop_unsupported: bool = True
+) -> dict[str, object]:
+    if value is None:
+        return {}
+    model_dump_fn = getattr(value, "model_dump", None)
+    if callable(model_dump_fn):
+        value = model_dump_fn(mode="json", exclude_none=True)
+    if not isinstance(value, dict):
+        if drop_unsupported:
+            return {}
+        raise ValueError("generationConfig.videoConfig must be an object")
+
+    aspect_ratio = value.get("aspectRatio") or value.get("aspect_ratio")
+    duration = value.get("duration")
+    resolution = value.get("resolution")
+    normalized: dict[str, object] = {}
+    if aspect_ratio or duration or resolution:
+        normalized["video_config"] = [aspect_ratio, duration, resolution]
+    return normalized
 
 
 _REASONING_EFFORT_TO_LEVEL: dict[str, ThinkingLevel] = {
@@ -608,9 +716,21 @@ def normalize_gemini_request(
     contents: list[AistudioContent] = []
 
     for content in req.contents:
-        role = content.role or "user"
+        raw_role = (content.role or "user").strip().lower()
+        role = (
+            "user" if raw_role in ("", "tool", "function") else (content.role or "user")
+        )
         parts: list[AistudioPart] = []
         for part in content.parts:
+            sm_dict: dict[str, object] | None = None
+            if getattr(part, "speechMetadata", None) is not None:
+                sm = part.speechMetadata
+                sm_dict = {
+                    "speaker": getattr(sm, "speaker", None)
+                    or (sm.get("speaker") if isinstance(sm, dict) else None),
+                    "style": getattr(sm, "style", None)
+                    or (sm.get("style") if isinstance(sm, dict) else None),
+                }
             if part.text is not None:
                 is_thought = bool(part.thought)
                 parts.append(
@@ -618,15 +738,28 @@ def normalize_gemini_request(
                         text=part.text,
                         thought=is_thought,
                         thought_signature=part.thoughtSignature,
+                        speech_metadata=sm_dict,
                     )
                 )
                 continue
+            vm_dict: dict[str, object] | None = None
+            if getattr(part, "videoMetadata", None) is not None:
+                vm = part.videoMetadata
+                vm_dict = {
+                    "start_offset": getattr(vm, "startOffset", None)
+                    or (vm.get("startOffset") if isinstance(vm, dict) else None),
+                    "end_offset": getattr(vm, "endOffset", None)
+                    or (vm.get("endOffset") if isinstance(vm, dict) else None),
+                    "fps": getattr(vm, "fps", None)
+                    or (vm.get("fps") if isinstance(vm, dict) else None),
+                }
             if part.inlineData is not None:
                 img_data = (part.inlineData.mimeType, part.inlineData.data)
                 parts.append(
                     AistudioPart(
                         inline_data=img_data,
                         thought_signature=part.thoughtSignature,
+                        video_metadata=vm_dict,
                     )
                 )
                 continue
@@ -682,6 +815,14 @@ def normalize_gemini_request(
                 parts.append(
                     AistudioPart(
                         code_execution_result=(cer.outcome, cer.output),
+                        thought_signature=part.thoughtSignature,
+                    )
+                )
+                continue
+            if vm_dict is not None:
+                parts.append(
+                    AistudioPart(
+                        video_metadata=vm_dict,
                         thought_signature=part.thoughtSignature,
                     )
                 )
@@ -857,12 +998,30 @@ def normalize_gemini_request(
             elif "thinking_config" in generation_config_overrides:
                 generation_config_overrides["thinking_config"] = None
         if generation_config.responseModalities is not None:
-            image_output_mode = _normalize_gemini_modalities(
+            norm_modalities = _normalize_gemini_modalities(
                 generation_config.responseModalities,
                 drop_unsupported=model_defaults.drop_unsupported_params,
             )
-            if image_output_mode is not None:
-                generation_config_overrides["image_output_mode"] = image_output_mode
+            if norm_modalities is not None:
+                if isinstance(norm_modalities, AistudioImageOutputMode):
+                    generation_config_overrides["image_output_mode"] = norm_modalities
+                else:
+                    generation_config_overrides["response_modalities"] = norm_modalities
+        if getattr(generation_config, "speechConfig", None) is not None:
+            encoded_speech = encode_speech_config_to_wire(
+                generation_config.speechConfig
+            )
+            if encoded_speech is not None:
+                generation_config_overrides["speech_config"] = encoded_speech
+                if "response_modalities" not in generation_config_overrides:
+                    generation_config_overrides["response_modalities"] = [3]
+        if getattr(generation_config, "videoConfig", None) is not None:
+            generation_config_overrides.update(
+                _normalize_gemini_video_config(
+                    generation_config.videoConfig,
+                    drop_unsupported=model_defaults.drop_unsupported_params,
+                )
+            )
         if generation_config.imageConfig is not None:
             generation_config_overrides.update(
                 _normalize_gemini_image_config(
@@ -870,6 +1029,16 @@ def normalize_gemini_request(
                     drop_unsupported=model_defaults.drop_unsupported_params,
                 )
             )
+
+    # 对 TTS 语音合成模型的默认参数补全与冲突参数清理
+    is_tts_model = "tts" in model.lower()
+    if is_tts_model:
+        if generation_config_overrides is None:
+            generation_config_overrides = {}
+        if "response_modalities" not in generation_config_overrides:
+            generation_config_overrides["response_modalities"] = [3]
+        if "speech_config" not in generation_config_overrides:
+            generation_config_overrides["speech_config"] = [[["Zephyr"]]]
 
     effective_effort = (
         generation_config.reasoningEffort if generation_config else None
@@ -889,7 +1058,12 @@ def normalize_gemini_request(
             and "thinking_config" in generation_config_overrides
         ):
             generation_config_overrides["thinking_config"] = None
-
+    if generation_config_overrides is not None and generation_config_overrides.get(
+        "response_modalities"
+    ) == [3]:
+        # 纯语音生成时，上游 AI Studio 严格禁止携带 thinking_config 与通用 max_output_tokens
+        generation_config_overrides["thinking_config"] = None
+        generation_config_overrides["max_tokens"] = None
     return NormalizedGeminiRequest(
         model=model,
         contents=contents,

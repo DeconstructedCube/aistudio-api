@@ -21,9 +21,23 @@ from aistudio_api.infrastructure.account.cookie_parser import (
     get_tier_header_value,
     load_cookies_from_auth_file,
 )
+from aistudio_api.infrastructure.gateway.headers import (
+    merge_header_case_insensitive,
+)
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("transport")
+
+# 这些头由本层重新计算或由 httpx 自行填充，必须整条剔除后再重建。
+_DROPPED_HEADER_NAMES = frozenset(
+    {
+        "host",
+        "content-length",
+        "authorization",
+        "x-goog-authuser",
+        "x-aistudio-g1-tier",
+    }
+)
 
 
 def _get_auth_cookies(auth_file: str | None = None) -> dict[str, str] | None:
@@ -108,37 +122,37 @@ async def _ensure_authorization_header(
             incoming_auth = str(v)
             break
 
-    clean_headers = {
-        k: v
-        for k, v in headers.items()
-        if k.lower()
-        not in (
-            "host",
-            "content-length",
-            "authorization",
-            "x-goog-authuser",
-            "x-aistudio-g1-tier",
-        )
-    }
-    clean_headers["X-Goog-AuthUser"] = str(auth_user or "0")
+    # 大小写不敏感累积：HTTP/2 会把同名头压成同一个名字，若字典里残留仅大小写不同的
+    # 两个键（如 -bin 与 -Bin），httpx 会把两条都发出去并触发上游 403。
+    clean_headers: dict[str, str] = {}
+    for k, v in headers.items():
+        if k.lower() in _DROPPED_HEADER_NAMES:
+            continue
+        merge_header_case_insensitive(clean_headers, str(k), str(v))
+    merge_header_case_insensitive(
+        clean_headers, "X-Goog-AuthUser", str(auth_user or "0")
+    )
     effective_tier = tier if tier is not None else _get_active_account_tier()
     tier_header = get_tier_header_value(effective_tier)
     if tier_header:
-        clean_headers["X-AIStudio-G1-Tier"] = tier_header
+        merge_header_case_insensitive(clean_headers, "X-AIStudio-G1-Tier", tier_header)
 
     raw_cookie_dict = cookies or _get_auth_cookies(auth_file)
     cookie_dict = filter_minimal_cookies(raw_cookie_dict) if raw_cookie_dict else None
 
-    if incoming_auth:
-        clean_headers["Authorization"] = incoming_auth
-    elif cookie_dict:
+    if cookie_dict:
         fresh_auth = calculate_sapisid_hash(cookie_dict)
         if fresh_auth:
-            clean_headers["Authorization"] = fresh_auth
-    if "Cookie" not in clean_headers and cookie_dict:
-        clean_headers["Cookie"] = "; ".join(
-            f"{k}={v}" for k, v in cookie_dict.items() if v
+            merge_header_case_insensitive(clean_headers, "Authorization", fresh_auth)
+        elif incoming_auth:
+            merge_header_case_insensitive(clean_headers, "Authorization", incoming_auth)
+        merge_header_case_insensitive(
+            clean_headers,
+            "Cookie",
+            "; ".join(f"{k}={v}" for k, v in cookie_dict.items() if v),
         )
+    elif incoming_auth:
+        merge_header_case_insensitive(clean_headers, "Authorization", incoming_auth)
 
     return clean_headers
 
@@ -146,7 +160,7 @@ async def _ensure_authorization_header(
 class HTTPStreamTransport:
     """Direct HTTP streaming and non-streaming transport layer."""
 
-    def __init__(self, proxy_url: str | None = None, timeout: float = 120.0) -> None:
+    def __init__(self, proxy_url: str | None = None, timeout: float = 900.0) -> None:
         self.proxy_url = proxy_url or settings.proxy_url
         self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
@@ -159,7 +173,13 @@ class HTTPStreamTransport:
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(self.timeout, connect=15.0),
+                timeout=httpx.Timeout(
+                    timeout=None,
+                    connect=20.0,
+                    read=self.timeout,
+                    write=60.0,
+                    pool=20.0,
+                ),
                 proxy=self.proxy_url,
                 http2=True,
                 limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),

@@ -1254,3 +1254,10 @@ extern "C" bool mz_install_window_natives(mz_context* mz, uint32_t global) {
   }
   return true;
 }
+
+#ifdef _WIN32
+#include <sys/stat.h>
+extern "C" int fstat64i32(int fd, struct _stat64i32* statbuf) {
+  return _fstat64i32(fd, statbuf);
+}
+#endif

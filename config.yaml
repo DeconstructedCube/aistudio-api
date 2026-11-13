@@ -44,6 +44,7 @@ paid_model_rules:
     contains:
     - veo
     - ultra
+    - omni
     required_tiers:
     - Ultra
     - Ultra_20X
@@ -73,6 +74,8 @@ model_defaults:
       - veo-
       contains:
       - veo
+      - omni
+      - video
     disable_safety_settings: true
   - name: gemma_models
     match:

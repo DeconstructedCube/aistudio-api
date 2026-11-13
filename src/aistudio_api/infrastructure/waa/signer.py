@@ -65,6 +65,7 @@ class RemoteProofSigner:
         self.proxy_url = proxy_url
         self.timeout = timeout
         self.last_headers: dict[str, str] = {}
+        self.last_pool_state: str = ""
         self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -98,6 +99,7 @@ class RemoteProofSigner:
         model: str = "models/gemini-3.7-flash",
         prompt: str = "",
         wire_contents: list[Any] | None = None,
+        force_recreate: bool = False,
     ) -> str:
         """Request proof from remote proof server with automatic retry on transient failure."""
         min_cookies = filter_minimal_cookies(cookies)
@@ -117,7 +119,8 @@ class RemoteProofSigner:
         }
         if wire_contents is not None:
             payload["wireContents"] = wire_contents
-
+        if force_recreate:
+            payload["forceRecreate"] = True
         max_attempts = 2
         last_error: Exception | None = None
 
@@ -149,6 +152,7 @@ class RemoteProofSigner:
                 else:
                     self.last_headers = {}
                 pool_state = str(data.get("poolState") or "unknown")
+                self.last_pool_state = pool_state
                 logger.debug(
                     "生成 WAA 签名成功: pool=%s, len=%d, headers=%d, 耗时=%.1fms",
                     pool_state,
@@ -208,6 +212,11 @@ class WaaSigner:
         """Get dynamic protocol headers returned by the last successful proof minting."""
         return self._remote_signer.last_headers
 
+    @property
+    def last_pool_state(self) -> str:
+        """Get worker pool state ('cold' or 'hot') from the last proof minting."""
+        return self._remote_signer.last_pool_state
+
     async def generate_snapshot_with_headers(
         self,
         contents: list[AistudioContent],
@@ -215,6 +224,7 @@ class WaaSigner:
         auth_user: str = "0",
         tier: str = "Free",
         model: str = "models/gemini-3.7-flash",
+        force_recreate: bool = False,
     ) -> tuple[str, dict[str, str]]:
         """Generate fresh WAA proof token along with dynamic session headers."""
         proof = await self.generate_snapshot(
@@ -223,6 +233,7 @@ class WaaSigner:
             auth_user=auth_user,
             tier=tier,
             model=model,
+            force_recreate=force_recreate,
         )
         return proof, dict(self._remote_signer.last_headers)
 
@@ -233,6 +244,7 @@ class WaaSigner:
         auth_user: str = "0",
         tier: str = "Free",
         model: str = "models/gemini-3.7-flash",
+        force_recreate: bool = False,
     ) -> str:
         """Compute content hash and generate fresh WAA proof token."""
         prompt, content_hash = extract_content_digest(contents)
@@ -251,4 +263,5 @@ class WaaSigner:
             model=model,
             prompt=prompt,
             wire_contents=wire_contents,
+            force_recreate=force_recreate,
         )

@@ -21,8 +21,11 @@ from aistudio_api.infrastructure.gateway.stream_parser import (
 )
 from aistudio_api.infrastructure.gateway.wire_parser import (
     WIRE_RESPONSE_ID_INDEX,
+    may_start_inline_thought,
     parse_chunk_usage,
     parse_response_chunk,
+    split_closed_inline_thought,
+    split_inline_thought_tag,
 )
 from aistudio_api.infrastructure.gateway.wire_spec import (
     WIRE_FINISH_REASON_CONTINUING,
@@ -74,6 +77,50 @@ class StreamingGateway:
         emitted_any_chunk = False
         has_received_chunks = False
         status_code = 0
+        body_started = False
+        inline_thought_buf = ""
+        pending_text_sig: str | None = None
+
+        def _flush_inline_thought_prefix(
+            chunk_text: str, text_sig: str = ""
+        ) -> list[tuple[str, object | None]]:
+            nonlocal body_started, inline_thought_buf, pending_text_sig
+            out: list[tuple[str, object | None]] = []
+            if body_started:
+                if text_sig:
+                    out.append(("thought_signature", text_sig))
+                out.append(("body", chunk_text))
+                return out
+
+            if text_sig:
+                pending_text_sig = text_sig
+            inline_thought_buf += chunk_text
+            closed = split_closed_inline_thought(inline_thought_buf)
+            if closed is not None:
+                thought_body, remainder = closed
+                inline_thought_buf = ""
+                body_started = True
+                if thought_body:
+                    out.append(("thinking", thought_body))
+                if pending_text_sig:
+                    out.append(("thought_signature", pending_text_sig))
+                    pending_text_sig = None
+                if remainder:
+                    out.append(("body", remainder))
+                return out
+
+            if may_start_inline_thought(inline_thought_buf):
+                return out
+
+            flushed = inline_thought_buf
+            inline_thought_buf = ""
+            body_started = True
+            if pending_text_sig:
+                out.append(("thought_signature", pending_text_sig))
+                pending_text_sig = None
+            if flushed:
+                out.append(("body", flushed))
+            return out
 
         def emit_parsed_chunk(
             parsed_chunk: list[object],
@@ -98,6 +145,8 @@ class StreamingGateway:
             ):
                 latest_finish_reason = candidate.finish_reason
             if candidate.thinking:
+                if candidate.thinking_signature:
+                    events.append(("thought_signature", candidate.thinking_signature))
                 events.append(("thinking", candidate.thinking))
             if candidate.reasoning_images:
                 events.append(("reasoning_images", candidate.reasoning_images))
@@ -106,9 +155,15 @@ class StreamingGateway:
             if candidate.images:
                 events.append(("images", candidate.images))
             if candidate.text:
-                events.append(("body", candidate.text))
-            if candidate.thought_signature:
-                events.append(("thought_signature", candidate.thought_signature))
+                events.extend(
+                    _flush_inline_thought_prefix(
+                        candidate.text, text_sig=candidate.text_signature
+                    )
+                )
+            elif candidate.text_signature:
+                events.append(("thought_signature", candidate.text_signature))
+            if candidate.standalone_signature:
+                events.append(("thought_signature", candidate.standalone_signature))
             return events
 
         async for event_type, payload in self._session.send_streaming_request(
@@ -154,6 +209,20 @@ class StreamingGateway:
             for event in emit_parsed_chunk(parsed_chunk):
                 emitted_any_chunk = True
                 yield event
+        if inline_thought_buf or pending_text_sig:
+            thought_body, remainder = split_inline_thought_tag(inline_thought_buf)
+            inline_thought_buf = ""
+            body_started = True
+            if thought_body:
+                emitted_any_chunk = True
+                yield ("thinking", thought_body)
+            if pending_text_sig:
+                emitted_any_chunk = True
+                yield ("thought_signature", pending_text_sig)
+                pending_text_sig = None
+            if remainder:
+                emitted_any_chunk = True
+                yield ("body", remainder)
         logger.debug("流式读取结束: model=%s, 收到分块=%s", model, has_received_chunks)
         raw_response = "".join(raw_parts)
         if status_code == 0:

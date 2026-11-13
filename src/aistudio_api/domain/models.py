@@ -22,6 +22,9 @@ class Candidate:
     function_calls: list[dict[str, object]] = field(default_factory=list)
     function_responses: list[dict[str, object]] = field(default_factory=list)
     thought_signature: str = ""
+    thinking_signature: str = ""
+    text_signature: str = ""
+    standalone_signature: str = ""
     sources: list[dict[str, object]] = field(default_factory=list)
     code_output: str = ""
     finish_reason: int | None = None

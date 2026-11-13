@@ -46,7 +46,7 @@ rotator:
 
 paid_model_rules:
   ultra_required:
-    contains: ["veo", "ultra"]
+    contains: ["veo", "ultra", "omni"]
     required_tiers: ["Ultra", "Ultra_20X"]
   pro_required:
     contains: ["argon", "gemini-4", "image", "imagen"]
@@ -68,6 +68,8 @@ model_defaults:
           - veo-
         contains:
           - veo
+          - omni
+          - video
       disable_safety_settings: true
     - name: gemma_models
       match:

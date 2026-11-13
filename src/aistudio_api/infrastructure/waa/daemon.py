@@ -31,6 +31,38 @@ _daemon_proc: subprocess.Popen[bytes] | None = None
 _PR_SET_PDEATHSIG = 1
 
 
+def _repo_root() -> Path:
+    """仓库根目录（本文件位于 src/aistudio_api/infrastructure/waa/daemon.py）。"""
+    return Path(__file__).resolve().parents[4]
+
+
+def signer_pid_file(root_dir: Path | None = None) -> Path:
+    """记录自动拉起的本地签名器 PID，供停止脚本与守护进程精准回收。"""
+    return (root_dir or _repo_root()) / "waa-signer.pid"
+
+
+def _write_signer_pid_file(root_dir: Path, pid: int) -> None:
+    """登记本次拉起的签名器 PID；只记录自己拉起的进程，绝不覆盖他人记录。"""
+    try:
+        signer_pid_file(root_dir).write_text(str(pid), encoding="utf-8")
+    except Exception as e:
+        logger.debug("写入 waa-signer.pid 失败: %s", e)
+
+
+def _remove_signer_pid_file(root_dir: Path, pid: int) -> None:
+    """删除 PID 文件，但仅当文件里记录的正是本进程拉起的那个 PID。"""
+    path = signer_pid_file(root_dir)
+    try:
+        if not path.is_file():
+            return
+        recorded = path.read_text(encoding="utf-8").strip()
+        if recorded and recorded != str(pid):
+            return
+        path.unlink()
+    except Exception as e:
+        logger.debug("删除 waa-signer.pid 失败: %s", e)
+
+
 def _set_parent_death_signal() -> None:
     """Linux kernel-level hook: child process is terminated if parent dies."""
     if sys.platform != "linux":
@@ -41,6 +73,7 @@ def _set_parent_death_signal() -> None:
         libc.prctl(_PR_SET_PDEATHSIG, signal.SIGTERM)
     except Exception:
         pass
+
 
 def is_port_open(host: str, port: int) -> bool:
     """Check whether a TCP port is open and accepting connections."""
@@ -56,8 +89,9 @@ def is_service_healthy(url: str) -> bool:
     import urllib.request
 
     try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         req = urllib.request.Request(f"{url.rstrip('/')}/health")
-        with urllib.request.urlopen(req, timeout=0.5) as resp:
+        with opener.open(req, timeout=0.5) as resp:
             return resp.status == 200
     except Exception:
         return False
@@ -69,7 +103,7 @@ def ensure_signer_ready() -> None:
     active_waa = get_active_waa_server()
     url = str(active_waa.get("url") or "")
 
-    root_dir = Path(__file__).resolve().parents[4]
+    root_dir = _repo_root()
     bin_name = "waa-signer.exe" if sys.platform == "win32" else "waa-signer"
     bin_path = root_dir / "waa-signer" / "bin" / bin_name
 
@@ -89,12 +123,22 @@ def ensure_signer_ready() -> None:
         return
 
     # 2. 检查本地编译产物是否存在
-    is_executable = bin_path.is_file() and (sys.platform == "win32" or os.access(bin_path, os.X_OK))
+    is_executable = bin_path.is_file() and (
+        sys.platform == "win32" or os.access(bin_path, os.X_OK)
+    )
     if is_executable:
         proxy = os.getenv("AISTUDIO_PROXY") or os.getenv("HTTPS_PROXY") or ""
-        cmd = [str(bin_path), "-listen", "127.0.0.1:8081"]
+        state_dir = root_dir / "data" / "waa_workers"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        cmd = [str(bin_path), "-listen", "127.0.0.1:8081", "-state-dir", str(state_dir)]
         if proxy:
             cmd.extend(["-proxy", proxy])
+        timezone = os.getenv("AISTUDIO_TIMEZONE", "").strip()
+        if timezone:
+            cmd.extend(["-timezone", timezone])
+        locale = (os.getenv("AISTUDIO_LOCALE") or os.getenv("WAA_LOCALE") or "").strip()
+        if locale:
+            cmd.extend(["-locale", locale])
 
         logger.info("启动本地 WAA 签名服务: %s", bin_path)
         try:
@@ -104,12 +148,15 @@ def ensure_signer_ready() -> None:
                 "cwd": str(bin_path.parent.parent),
             }
             if sys.platform == "win32":
-                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+                popen_kwargs["creationflags"] = (
+                    subprocess.CREATE_NEW_PROCESS_GROUP
+                    | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+                )
             else:
                 popen_kwargs["preexec_fn"] = _set_parent_death_signal
 
             _daemon_proc = subprocess.Popen(cmd, **popen_kwargs)  # type: ignore[call-overload]
-            # 等待检查就绪（最多 2 秒）
+            _write_signer_pid_file(root_dir, _daemon_proc.pid)
             for _ in range(20):
                 time.sleep(0.1)
                 if is_service_healthy("http://127.0.0.1:8081"):
@@ -133,6 +180,8 @@ def ensure_signer_ready() -> None:
         build_cmd,
     )
     switch_active_waa_server("remote_spinsnow")
+
+
 def stop_signer_daemon() -> None:
     """终止自动拉起的本地签名服务子进程，杜绝孤儿进程与僵尸进程。"""
     global _daemon_proc
@@ -151,6 +200,7 @@ def stop_signer_daemon() -> None:
             logger.debug("停止签名服务子进程异常: %s", e)
             with contextlib.suppress(Exception):
                 proc.kill()
+        _remove_signer_pid_file(_repo_root(), proc.pid)
 
 
 # 注册 Python 解释器退出钩子，双重保险杜绝孤儿进程

@@ -6,9 +6,15 @@ docs/WIRE_SPECIFICATION.md
 
 from __future__ import annotations
 
+import base64
 import json
+import re
+import struct
 
 from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
+from aistudio_api.infrastructure.gateway.wire_spec import (
+    WIRE_FINISH_REASON_CONTINUING,
+)
 from aistudio_api.infrastructure.utils.common import (
     decode_base64_images,
     extract_outer_json,
@@ -22,6 +28,9 @@ _ROLE_NAMES = frozenset({"model", "user", "system", "assistant"})
 # Top-level chunk indexes (WIRE_SPECIFICATION.md §7.1)
 WIRE_CHUNK_CANDIDATES_INDEX = 0  # Field 1 candidates container [[candidate, ...]]
 WIRE_CHUNK_USAGE_INDEX = 2  # Field 3 usage metadata array
+WIRE_CHUNK_PROMPT_FEEDBACK_INDEX = (
+    1  # Field 2 PromptFeedback [blockReason, safetyRatings, blockReasonMessage]
+)
 WIRE_RESPONSE_ID_INDEX = 7  # Field 8 response unique ID string
 
 # Candidate Part indexes inside content[0] ([parts, role]) (WIRE_SPECIFICATION.md §3.2)
@@ -57,9 +66,208 @@ WIRE_CANDIDATE_FINISH_REASON = 1  # Field 2 finish reason enum code
 WIRE_CANDIDATE_FINISH_MESSAGE = 3  # Field 4 finish message string
 WIRE_CANDIDATE_SAFETY_RATINGS = 4  # Field 5 safety ratings array
 
+# BlockReason -> FinishReason mapping from AI Studio frontend (dOb):
+# 0: UNSPECIFIED -> 0, 1: SAFETY -> 3, 2: OTHER -> 5, 3: BLOCKLIST -> 7, 4: PROHIBITED_CONTENT -> 8, 5: IMAGE_SAFETY -> 11
+_PROMPT_BLOCK_TO_FINISH_REASON: dict[int, int] = {
+    0: 0,
+    1: 3,
+    2: 5,
+    3: 7,
+    4: 8,
+    5: 11,
+}
+
+_STRING_FINISH_REASON_TO_CODE: dict[str, int] = {
+    "FINISH_REASON_UNSPECIFIED": 0,
+    "STOP": 1,
+    "MAX_TOKENS": 2,
+    "SAFETY": 3,
+    "RECITATION": 4,
+    "OTHER": 5,
+    "LANGUAGE": 6,
+    "BLOCKLIST": 7,
+    "PROHIBITED_CONTENT": 8,
+    "SPII": 9,
+    "MALFORMED_FUNCTION_CALL": 10,
+    "IMAGE_SAFETY": 11,
+    "UNEXPECTED_TOOL_CALL": 12,
+    "TOO_MANY_TOOL_CALLS": 13,
+    "IMAGE_PROHIBITED_CONTENT": 14,
+    "IMAGE_OTHER": 15,
+    "NO_IMAGE": 16,
+    "IMAGE_RECITATION": 17,
+    "MISSING_THOUGHT_SIGNATURE": 18,
+}
+
+_INLINE_THOUGHT_PAIRS: tuple[tuple[str, str], ...] = (
+    ("[:thought", ":]"),
+    ("[_thought", "]_"),
+    ("⌊thought", "⌋"),
+    ("<thought>", "</thought>"),
+    ("【_thought", "_】"),
+    ("【thought", "】"),
+)
+_INLINE_THOUGHT_OPEN_RE = re.compile(
+    r"^\s*(?:\[:thought\b|\[_thought\b|⌊thought\b|<thought>|【_?thought\b)",
+    re.IGNORECASE,
+)
+
+
+def may_start_inline_thought(text: str) -> bool:
+    """Return True if leading text is or could become an inline thought opening tag."""
+    if not text:
+        return False
+    stripped = text.lstrip()
+    if not stripped:
+        return True
+    lowered = stripped.lower()
+    for open_tag, _ in _INLINE_THOUGHT_PAIRS:
+        if lowered.startswith(open_tag) or open_tag.startswith(lowered):
+            return True
+    return False
+
+
+def is_inline_thought_leak(text: str) -> bool:
+    """Return True if text begins with a recognized inline thought leak tag."""
+    return bool(text and _INLINE_THOUGHT_OPEN_RE.match(text))
+
+
+def split_closed_inline_thought(text: str) -> tuple[str, str] | None:
+    """Split a strictly closed inline thought block at the start of text.
+
+    Returns (thought_body, remaining_text) if both open and close markers are present,
+    or None if no closed inline thought block is found.
+    """
+    if not text:
+        return None
+    stripped = text.lstrip()
+    if not stripped:
+        return None
+    lowered = stripped.lower()
+    for open_tag, close_tag in _INLINE_THOUGHT_PAIRS:
+        if not lowered.startswith(open_tag):
+            continue
+        body_start = len(open_tag)
+        # Avoid splitting mid-word if open tag has no trailing delimiter (e.g. [:thoughts)
+        if open_tag != "<thought>" and body_start < len(stripped):
+            next_ch = stripped[body_start]
+            if next_ch.isalnum():
+                continue
+        close_idx = stripped.find(close_tag, body_start)
+        if close_idx == -1:
+            return None
+        thought_body = stripped[body_start:close_idx].strip()
+        remainder = stripped[close_idx + len(close_tag) :].lstrip("\r\n ")
+        return thought_body, remainder
+    return None
+
+
+def split_inline_thought_tag(text: str) -> tuple[str, str]:
+    """Split inline thought tag from text (handles unclosed tags at EOF as fallback)."""
+    if not is_inline_thought_leak(text):
+        return "", text
+    closed = split_closed_inline_thought(text)
+    if closed is not None:
+        return closed
+    stripped = text.lstrip()
+    lowered = stripped.lower()
+    for open_tag, _ in _INLINE_THOUGHT_PAIRS:
+        if lowered.startswith(open_tag):
+            return stripped[len(open_tag) :].strip(), ""
+    return "", text
+
+
+def _parse_finish_reason_value(raw_val: object) -> int | None:
+    coerced = _coerce_int(raw_val)
+    if coerced is not None:
+        return coerced
+    if isinstance(raw_val, str):
+        key = raw_val.strip().upper()
+        if key in _STRING_FINISH_REASON_TO_CODE:
+            return _STRING_FINISH_REASON_TO_CODE[key]
+    return None
+
+
+def pcm_to_wav(
+    pcm_data: bytes,
+    sample_rate: int = 24000,
+    channels: int = 1,
+    bit_depth: int = 16,
+) -> bytes:
+    byte_rate = sample_rate * channels * (bit_depth // 8)
+    block_align = channels * (bit_depth // 8)
+    data_size = len(pcm_data)
+    total_size = 36 + data_size
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF",
+        total_size,
+        b"WAVE",
+        b"fmt ",
+        16,
+        1,
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bit_depth,
+        b"data",
+        data_size,
+    )
+    return header + pcm_data
+
+
+def _is_pcm_or_wav_audio(mime: str) -> bool:
+    lowered = mime.lower()
+    return lowered in ("audio/wav", "audio/x-wav", "audio/l16", "audio/pcm") or (
+        lowered.startswith("audio/") and "rate=24000" in lowered
+    )
+
+
+def merge_audio_images(images: list[GeneratedImage]) -> list[GeneratedImage]:
+    if not images:
+        return []
+    result: list[GeneratedImage] = []
+    current_audio_pcm: list[bytes] = []
+    last_thought_sig = ""
+    for item in images:
+        if _is_pcm_or_wav_audio(item.mime):
+            pcm = item.data[44:] if item.data.startswith(b"RIFF") else item.data
+            current_audio_pcm.append(pcm)
+            if item.thought_signature:
+                last_thought_sig = item.thought_signature
+        else:
+            if current_audio_pcm:
+                merged_wav = pcm_to_wav(b"".join(current_audio_pcm), sample_rate=24000)
+                result.append(
+                    GeneratedImage(
+                        mime="audio/wav",
+                        data=merged_wav,
+                        size=len(merged_wav),
+                        thought_signature=last_thought_sig,
+                    )
+                )
+                current_audio_pcm = []
+                last_thought_sig = ""
+            result.append(item)
+    if current_audio_pcm:
+        merged_wav = pcm_to_wav(b"".join(current_audio_pcm), sample_rate=24000)
+        result.append(
+            GeneratedImage(
+                mime="audio/wav",
+                data=merged_wav,
+                size=len(merged_wav),
+                thought_signature=last_thought_sig,
+            )
+        )
+    return result
+
 
 def _looks_like_response_chunk(value: object) -> bool:
-    return isinstance(value, list) and len(value) > 0 and isinstance(value[0], list)
+    return isinstance(value, list) and (
+        (len(value) > 0 and isinstance(value[0], list))
+        or (len(value) > 1 and isinstance(value[1], list))
+    )
 
 
 def _iter_response_chunks(outer: object) -> list[list[object]]:
@@ -432,108 +640,201 @@ def parse_chunk_usage(chunk: object) -> dict[str, object]:
 
 def parse_response_chunk(chunk: list[object]) -> Candidate:
     candidate = Candidate()
-    if (
-        not isinstance(chunk, list)
-        or not chunk
-        or len(chunk) <= WIRE_CHUNK_CANDIDATES_INDEX
-    ):
+    if not isinstance(chunk, list) or not chunk:
         return candidate
 
-    candidates_container = chunk[WIRE_CHUNK_CANDIDATES_INDEX]
-    if not isinstance(candidates_container, list) or not candidates_container:
-        return candidate
-
-    raw_candidate = candidates_container[0]
-    if not isinstance(raw_candidate, list):
-        return candidate
-
-    raw_content = (
-        raw_candidate[WIRE_CANDIDATE_CONTENT]
-        if len(raw_candidate) > WIRE_CANDIDATE_CONTENT
+    candidates_container = (
+        chunk[WIRE_CHUNK_CANDIDATES_INDEX]
+        if len(chunk) > WIRE_CHUNK_CANDIDATES_INDEX
         else None
     )
-    raw_parts = (
-        raw_content[0] if isinstance(raw_content, list) and len(raw_content) > 0 else []
-    )
+    raw_candidate: list[object] | None = None
+    if isinstance(candidates_container, list) and candidates_container:
+        first_cand = candidates_container[0]
+        if isinstance(first_cand, list):
+            raw_candidate = first_cand
 
-    text_parts: list[str] = []
-    thinking_parts: list[str] = []
-    images: list[GeneratedImage] = []
-    reasoning_images: list[GeneratedImage] = []
-    function_calls: list[dict[str, object]] = []
-    function_responses: list[dict[str, object]] = []
-    thought_signature = ""
-    code_outputs: list[str] = []
+    if raw_candidate is not None:
+        raw_content = (
+            raw_candidate[WIRE_CANDIDATE_CONTENT]
+            if len(raw_candidate) > WIRE_CANDIDATE_CONTENT
+            else None
+        )
+        raw_parts = (
+            raw_content[0]
+            if isinstance(raw_content, list) and len(raw_content) > 0
+            else []
+        )
 
-    for raw_part in raw_parts if isinstance(raw_parts, list) else []:
-        part = parse_response_part(raw_part)
-        if part.inline_data:
-            decoded = decode_base64_images(
-                [{"mime": part.inline_data[0], "data": part.inline_data[1]}]
-            )
-            decoded_images: list[GeneratedImage] = []
-            for img in decoded:
-                raw_bytes = img.get("bytes")
-                b_data = (
-                    bytes(raw_bytes)
-                    if isinstance(raw_bytes, (bytes, bytearray))
-                    else b""
-                )
-                decoded_images.append(
-                    GeneratedImage(
-                        mime=str(img.get("mime", "image/jpeg")),
-                        data=b_data,
-                        size=int(str(img.get("size", 0))),
+        text_parts: list[str] = []
+        thinking_parts: list[str] = []
+        images: list[GeneratedImage] = []
+        reasoning_images: list[GeneratedImage] = []
+        function_calls: list[dict[str, object]] = []
+        function_responses: list[dict[str, object]] = []
+        thought_signature = ""
+        thinking_signature = ""
+        text_signature = ""
+        standalone_signature = ""
+        code_outputs: list[str] = []
+
+        for raw_part in raw_parts if isinstance(raw_parts, list) else []:
+            part = parse_response_part(raw_part)
+            part_emitted_standalone_target = False
+            if part.inline_data:
+                mime = part.inline_data[0]
+                raw_b64 = part.inline_data[1]
+                try:
+                    raw_bytes = base64.b64decode(raw_b64)
+                except Exception:
+                    raw_bytes = b""
+                mime_lower = mime.lower()
+                if mime_lower.startswith("audio/"):
+                    if (
+                        mime_lower in ("audio/l16", "audio/pcm")
+                        or "rate=24000" in mime_lower
+                    ):
+                        wav_bytes = pcm_to_wav(raw_bytes, sample_rate=24000)
+                        media = GeneratedImage(
+                            mime="audio/wav",
+                            data=wav_bytes,
+                            size=len(wav_bytes),
+                            thought_signature=part.thought_signature or "",
+                        )
+                    else:
+                        media = GeneratedImage(
+                            mime=mime,
+                            data=raw_bytes,
+                            size=len(raw_bytes),
+                            thought_signature=part.thought_signature or "",
+                        )
+                    if part.thought:
+                        reasoning_images.append(media)
+                    else:
+                        images.append(media)
+                elif mime.startswith("video/"):
+                    media = GeneratedImage(
+                        mime=mime,
+                        data=raw_bytes,
+                        size=len(raw_bytes),
                         thought_signature=part.thought_signature or "",
                     )
-                )
-            if part.thought:
-                reasoning_images.extend(decoded_images)
-            else:
-                images.extend(decoded_images)
-        for code in (part.executable_code, part.code_execution_result):
-            if isinstance(code, list) and len(code) > 1 and isinstance(code[1], str):
-                code_outputs.append(code[1])
-            elif isinstance(code, str) and code:
-                code_outputs.append(code)
-        if part.function_call:
-            function_calls.append(part.function_call)
-        if part.function_response:
-            function_responses.append(part.function_response)
-        if part.thought_signature:
-            thought_signature = part.thought_signature
-        if part.text:
-            if part.thought:
-                thinking_parts.append(part.text)
-            else:
-                text_parts.append(part.text)
+                    if part.thought:
+                        reasoning_images.append(media)
+                    else:
+                        images.append(media)
+                else:
+                    decoded = decode_base64_images([{"mime": mime, "data": raw_b64}])
+                    decoded_images: list[GeneratedImage] = []
+                    for img in decoded:
+                        raw_b = img.get("bytes")
+                        b_data = (
+                            bytes(raw_b)
+                            if isinstance(raw_b, (bytes, bytearray))
+                            else b""
+                        )
+                        decoded_images.append(
+                            GeneratedImage(
+                                mime=str(img.get("mime", "image/jpeg")),
+                                data=b_data,
+                                size=int(str(img.get("size", 0))),
+                                thought_signature=part.thought_signature or "",
+                            )
+                        )
+                    if part.thought:
+                        reasoning_images.extend(decoded_images)
+                    else:
+                        images.extend(decoded_images)
+                part_emitted_standalone_target = True
+            for code in (part.executable_code, part.code_execution_result):
+                if (
+                    isinstance(code, list)
+                    and len(code) > 1
+                    and isinstance(code[1], str)
+                ):
+                    code_outputs.append(code[1])
+                    part_emitted_standalone_target = True
+                elif isinstance(code, str) and code:
+                    code_outputs.append(code)
+                    part_emitted_standalone_target = True
+            if part.function_call:
+                function_calls.append(part.function_call)
+                part_emitted_standalone_target = True
+            if part.function_response:
+                function_responses.append(part.function_response)
+                part_emitted_standalone_target = True
+            if part.text:
+                if part.thought:
+                    thinking_parts.append(part.text)
+                    if part.thought_signature:
+                        thinking_signature = part.thought_signature
+                else:
+                    text_parts.append(part.text)
+                    if part.thought_signature:
+                        text_signature = part.thought_signature
+                part_emitted_standalone_target = True
+            if part.thought_signature:
+                thought_signature = part.thought_signature
+                if not part_emitted_standalone_target:
+                    standalone_signature = part.thought_signature
 
-    candidate.text = "".join(text_parts)
-    candidate.thinking = "".join(thinking_parts)
-    candidate.images = images
-    candidate.reasoning_images = reasoning_images
-    candidate.function_calls = function_calls
-    candidate.function_responses = function_responses
-    candidate.thought_signature = thought_signature
-    candidate.code_output = "\n".join(code_outputs)
-    candidate.finish_reason = (
-        raw_candidate[WIRE_CANDIDATE_FINISH_REASON]
-        if len(raw_candidate) > WIRE_CANDIDATE_FINISH_REASON
-        and isinstance(raw_candidate[WIRE_CANDIDATE_FINISH_REASON], int)
-        else None
-    )
-    candidate.finish_message = (
-        str(raw_candidate[WIRE_CANDIDATE_FINISH_MESSAGE])
-        if len(raw_candidate) > WIRE_CANDIDATE_FINISH_MESSAGE
-        and isinstance(raw_candidate[WIRE_CANDIDATE_FINISH_MESSAGE], str)
-        else ""
-    )
-    raw_ratings = (
-        raw_candidate[WIRE_CANDIDATE_SAFETY_RATINGS]
-        if len(raw_candidate) > WIRE_CANDIDATE_SAFETY_RATINGS
-        else None
-    )
-    candidate.safety_ratings = raw_ratings if isinstance(raw_ratings, list) else []
+        candidate.text = "".join(text_parts)
+        candidate.thinking = "".join(thinking_parts)
+        closed_inline = split_closed_inline_thought(candidate.text)
+        if closed_inline is not None:
+            inline_thinking, cleaned_text = closed_inline
+            if inline_thinking:
+                candidate.thinking = (
+                    f"{candidate.thinking}\n{inline_thinking}".strip()
+                    if candidate.thinking
+                    else inline_thinking
+                )
+            candidate.text = cleaned_text
+        candidate.images = images
+        candidate.reasoning_images = reasoning_images
+        candidate.function_calls = function_calls
+        candidate.function_responses = function_responses
+        candidate.thought_signature = thought_signature
+        candidate.thinking_signature = thinking_signature
+        candidate.text_signature = text_signature
+        candidate.standalone_signature = standalone_signature
+        candidate.code_output = "\n".join(code_outputs)
+        candidate.finish_reason = (
+            _parse_finish_reason_value(raw_candidate[WIRE_CANDIDATE_FINISH_REASON])
+            if len(raw_candidate) > WIRE_CANDIDATE_FINISH_REASON
+            else None
+        )
+        candidate.finish_message = (
+            str(raw_candidate[WIRE_CANDIDATE_FINISH_MESSAGE])
+            if len(raw_candidate) > WIRE_CANDIDATE_FINISH_MESSAGE
+            and isinstance(raw_candidate[WIRE_CANDIDATE_FINISH_MESSAGE], str)
+            else ""
+        )
+        raw_ratings = (
+            raw_candidate[WIRE_CANDIDATE_SAFETY_RATINGS]
+            if len(raw_candidate) > WIRE_CANDIDATE_SAFETY_RATINGS
+            else None
+        )
+        candidate.safety_ratings = raw_ratings if isinstance(raw_ratings, list) else []
+
+    # Parse PromptFeedback (chunk[1]: [blockReason, safetyRatings, blockReasonMessage])
+    if len(chunk) > WIRE_CHUNK_PROMPT_FEEDBACK_INDEX:
+        fb = chunk[WIRE_CHUNK_PROMPT_FEEDBACK_INDEX]
+        if isinstance(fb, list):
+            block_code = _coerce_int(fb[0]) if len(fb) > 0 else None
+            if block_code is not None and candidate.finish_reason in (None, 0):
+                candidate.finish_reason = _PROMPT_BLOCK_TO_FINISH_REASON.get(
+                    block_code, block_code
+                )
+            if len(fb) > 1 and isinstance(fb[1], list) and not candidate.safety_ratings:
+                candidate.safety_ratings = fb[1]
+            if (
+                len(fb) > 2
+                and isinstance(fb[2], str)
+                and fb[2]
+                and not candidate.finish_message
+            ):
+                candidate.finish_message = fb[2]
     return candidate
 
 
@@ -571,19 +872,38 @@ def parse_text_output(raw: str) -> ModelOutput:
             merged.function_calls.extend(parsed.function_calls)
         if parsed.function_responses:
             merged.function_responses.extend(parsed.function_responses)
+        if parsed.thinking_signature:
+            merged.thinking_signature = parsed.thinking_signature
+        if parsed.text_signature:
+            merged.text_signature = parsed.text_signature
+        if parsed.standalone_signature:
+            merged.standalone_signature = parsed.standalone_signature
         if parsed.thought_signature:
             merged.thought_signature = parsed.thought_signature
         if parsed.code_output:
             merged.code_output = "\n".join(
                 filter(None, [merged.code_output, parsed.code_output])
             )
-        if parsed.finish_reason is not None:
+        if parsed.finish_reason is not None and parsed.finish_reason not in (
+            0,
+            WIRE_FINISH_REASON_CONTINUING,
+        ):
             merged.finish_reason = parsed.finish_reason
         if parsed.finish_message:
             merged.finish_message = parsed.finish_message
         if parsed.safety_ratings:
             merged.safety_ratings = parsed.safety_ratings
-
+    if merged.text:
+        inline_thinking, cleaned_text = split_inline_thought_tag(merged.text)
+        if inline_thinking:
+            merged.thinking = (
+                f"{merged.thinking}\n{inline_thinking}".strip()
+                if merged.thinking
+                else inline_thinking
+            )
+            merged.text = cleaned_text
+    merged.images = merge_audio_images(merged.images)
+    merged.reasoning_images = merge_audio_images(merged.reasoning_images)
     output.candidates = [merged]
     return output
 
@@ -594,6 +914,7 @@ __all__ = [
     "WIRE_CANDIDATE_FINISH_REASON",
     "WIRE_CANDIDATE_SAFETY_RATINGS",
     "WIRE_CHUNK_CANDIDATES_INDEX",
+    "WIRE_CHUNK_PROMPT_FEEDBACK_INDEX",
     "WIRE_CHUNK_USAGE_INDEX",
     "WIRE_PART_CODE_EXECUTION_RESULT_INDEX",
     "WIRE_PART_EXECUTABLE_CODE_INDEX",
@@ -616,9 +937,13 @@ __all__ = [
     "WIRE_USAGE_TOTAL_TOKENS",
     "WIRE_USAGE_VISIBLE_COMPLETION",
     "ResponsePart",
+    "is_inline_thought_leak",
+    "may_start_inline_thought",
     "parse_chunk_usage",
     "parse_response_chunk",
     "parse_response_part",
     "parse_text_output",
     "parse_usage_metadata",
+    "split_closed_inline_thought",
+    "split_inline_thought_tag",
 ]

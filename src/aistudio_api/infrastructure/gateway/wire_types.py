@@ -2,10 +2,30 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass, field
 from enum import IntEnum
 
 from .wire_spec import GenerationConfigIndex, JspbArray, PartIndex
+
+
+def _normalize_standard_base64(value: str, *, pad_standard: bool = False) -> str:
+    """Normalize URL-safe (and optionally unpadded standard) Base64 strings for JSPB wire."""
+    cleaned = "".join(value.split())
+    if len(cleaned) < 16:
+        return value
+    has_urlsafe = "-" in cleaned or "_" in cleaned
+    if not has_urlsafe and (not pad_standard or len(cleaned) % 4 == 0):
+        return cleaned
+    standard = cleaned.replace("-", "+").replace("_", "/")
+    pad_len = (-len(standard)) % 4
+    if pad_len:
+        standard += "=" * pad_len
+    try:
+        base64.b64decode(standard, validate=True)
+        return standard
+    except Exception:
+        return value
 
 
 class ThinkingLevel(IntEnum):
@@ -174,6 +194,35 @@ class AistudioGenerationConfig:
         self._set_slot(GenerationConfigIndex.IMAGE_OUTPUT_MODE, value)
 
     @property
+    def response_modalities(self):
+        idx = GenerationConfigIndex.RESPONSE_MODALITIES
+        return self.values[idx] if len(self.values) > idx else None
+
+    @response_modalities.setter
+    def response_modalities(self, value):
+        if isinstance(value, AistudioImageOutputMode):
+            value = value.to_wire()
+        self._set_slot(GenerationConfigIndex.RESPONSE_MODALITIES, value)
+
+    @property
+    def speech_config(self):
+        idx = GenerationConfigIndex.SPEECH_CONFIG
+        return self.values[idx] if len(self.values) > idx else None
+
+    @speech_config.setter
+    def speech_config(self, value):
+        self._set_slot(GenerationConfigIndex.SPEECH_CONFIG, value)
+
+    @property
+    def video_config(self):
+        idx = GenerationConfigIndex.VIDEO_CONFIG
+        return self.values[idx] if len(self.values) > idx else None
+
+    @video_config.setter
+    def video_config(self, value):
+        self._set_slot(GenerationConfigIndex.VIDEO_CONFIG, value)
+
+    @property
     def thinking_config(self):
         idx = GenerationConfigIndex.THINKING_CONFIG
         return self.values[idx] if len(self.values) > idx else None
@@ -237,19 +286,28 @@ class AistudioPart:
     code_execution_result: tuple[str, str] | None = None
     thought_signature: str | None = None
     thought: bool = False
+    video_metadata: dict[str, object] | None = None
+    speech_metadata: dict[str, object] | None = None
 
     def to_wire(self) -> list[object]:
         wire = JspbArray()
         if self.thought:
             wire[PartIndex.THOUGHT_ALT_FLAG] = 1
         if self.thought_signature:
-            wire[PartIndex.THOUGHT_SIGNATURE] = self.thought_signature
+            wire[PartIndex.THOUGHT_SIGNATURE] = _normalize_standard_base64(
+                self.thought_signature, pad_standard=True
+            )
         if self.file_id:
             wire[PartIndex.FILE_DATA] = [self.file_id]
             return wire.compact()
         if self.inline_data:
             mime, b64 = self.inline_data
-            wire[PartIndex.INLINE_DATA] = [mime, b64]
+            wire[PartIndex.INLINE_DATA] = [mime, _normalize_standard_base64(b64)]
+            if self.video_metadata:
+                wire[40] = self.video_metadata
+            return wire.compact()
+        if self.video_metadata:
+            wire[40] = self.video_metadata
             return wire.compact()
         if self.function_call:
             name, args = self.function_call[0], self.function_call[1]
@@ -289,6 +347,10 @@ class AistudioPart:
             wire[PartIndex.CODE_RESULT] = [outcome_code, output]
             return wire.compact()
         wire[PartIndex.TEXT] = self.text
+        if self.speech_metadata:
+            spk = self.speech_metadata.get("speaker")
+            sty = self.speech_metadata.get("style")
+            wire[40] = [spk, sty] if sty else [spk]
         return wire.compact()
 
 

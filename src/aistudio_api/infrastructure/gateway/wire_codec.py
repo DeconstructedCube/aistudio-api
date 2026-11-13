@@ -11,7 +11,7 @@ from .wire_parser import (
     WIRE_PART_FILE_DATA_INDEX,
     parse_response_part,
 )
-from .wire_spec import TopLevelIndex
+from .wire_spec import GenerationConfigIndex, TopLevelIndex
 from .wire_types import (
     AistudioContent,
     AistudioGenerationConfig,
@@ -206,6 +206,17 @@ class AistudioWireCodec:
         body[self.CONTENTS_INDEX] = [content.to_wire() for content in request.contents]
         body[self.SAFETY_INDEX] = request.safety_settings
         body[self.GENERATION_CONFIG_INDEX] = request.generation_config.values
+        if "argon" not in model.lower() and isinstance(
+            body[self.GENERATION_CONFIG_INDEX], list
+        ):
+            gc_vals = body[self.GENERATION_CONFIG_INDEX]
+            idx_45 = GenerationConfigIndex.ARGON_CAPABILITY_FLAG
+            if len(gc_vals) > idx_45 and gc_vals[idx_45] is not None:
+                gc_vals = list(gc_vals)
+                gc_vals[idx_45] = None
+                while gc_vals and gc_vals[-1] is None:
+                    gc_vals.pop()
+                body[self.GENERATION_CONFIG_INDEX] = gc_vals
         body[self.SNAPSHOT_INDEX] = request.snapshot
 
         if request.system_instruction:
@@ -302,6 +313,8 @@ class AistudioWireCodec:
             if not hasattr(gc, attr):
                 continue
             setattr(gc, attr, value)
+        if "argon" not in model.lower():
+            gc._set_slot(GenerationConfigIndex.ARGON_CAPABILITY_FLAG, None)
         effective_tools: list[list] | None = tools if tools else None
         if tool_config is not None:
             is_none_mode = False
