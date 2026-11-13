@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-SM_VERSION="v152.0.4-aistudio2api.1"
+SM_VERSION="v158.0.1-aistudio2api.1"
 ARCH="$(uname -m)"
 HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
@@ -111,10 +111,14 @@ fi
 
 # 检查编译器
 if command -v zig >/dev/null 2>&1; then
+  case "$GO_ARCH" in
+    amd64) ZIG_ARCH="x86_64" ;;
+    arm64) ZIG_ARCH="aarch64" ;;
+  esac
   case "$TARGET_GOOS" in
-    linux)   ZIG_TARGET="${GO_ARCH}-linux-musl" ;;
-    darwin)  ZIG_TARGET="${GO_ARCH}-macos-none" ;;
-    windows) ZIG_TARGET="${GO_ARCH}-windows-gnu" ;;
+    linux)   ZIG_TARGET="${ZIG_ARCH}-linux-musl" ;;
+    darwin)  ZIG_TARGET="${ZIG_ARCH}-macos-none" ;;
+    windows) ZIG_TARGET="${ZIG_ARCH}-windows-gnu" ;;
   esac
   CC_CMD="zig cc -target ${ZIG_TARGET}"
   CXX_CMD="zig c++ -target ${ZIG_TARGET}"
