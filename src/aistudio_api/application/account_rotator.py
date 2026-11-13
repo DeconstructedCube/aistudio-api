@@ -525,9 +525,8 @@ class AccountRotator:
     def get_all_stats(self) -> dict[str, dict[str, object]]:
         """获取所有账号的运行透视与配额状态。"""
         from aistudio_api.infrastructure.gateway.model_defaults import (
-            resolve_tier_quota,
+            resolve_tier_quota_limits,
         )
-
         result: dict[str, dict[str, object]] = {}
         current_la = get_pacific_date_key()
 
@@ -544,7 +543,16 @@ class AccountRotator:
             for m_key, m_stats in stats.daily_models.items():
                 today_total_requests += m_stats.requests
                 today_total_tokens += m_stats.total_tokens
-                quota = resolve_tier_quota(tier_str, m_key)
+                limits = resolve_tier_quota_limits(tier_str, m_key)
+                quota = limits.daily_limit
+                token_quota = limits.daily_token_limit
+                req_pct = round((m_stats.requests / max(1, quota)) * 100, 1)
+                tok_pct = (
+                    round((m_stats.total_tokens / token_quota) * 100, 1)
+                    if token_quota and token_quota > 0
+                    else 0.0
+                )
+                used_pct = max(req_pct, tok_pct)
                 rem_cd = (
                     max(0, int(m_stats.cooldown_until - time.time()))
                     if m_stats.cooldown_until > time.time()
@@ -564,14 +572,13 @@ class AccountRotator:
                     "cached_tokens": m_stats.cached_tokens,
                     "total_tokens": m_stats.total_tokens,
                     "configured_quota": quota,
-                    "quota_used_percent": round(
-                        (m_stats.requests / max(1, quota)) * 100, 1
-                    ),
+                    "configured_token_quota": token_quota,
+                    "quota_used_percent": used_pct,
+                    "token_quota_used_percent": tok_pct,
                     "cooldown_remaining": rem_cd,
                     "drip_mode": m_stats.drip_mode,
                     "is_available": rem_cd == 0,
                 }
-
             result[account.id] = {
                 "name": account.name,
                 "email": account.email,
@@ -675,16 +682,21 @@ class AccountRotator:
     ) -> float:
         """评估候选账号权重，综合考虑配额使用率、订阅层级、错误历史与空闲时间，选择成本最低的可用账号。"""
         from aistudio_api.infrastructure.gateway.model_defaults import (
-            resolve_tier_quota,
+            resolve_tier_quota_limits,
         )
 
-        quota = resolve_tier_quota(account.tier, model)
+        limits = resolve_tier_quota_limits(account.tier, model)
         m_stats = stats.get_model_daily(model)
         req_today = m_stats.requests
 
-        # 1. 配额消耗比 (0.0 ~ 1.0+，超额不禁用，仅增加成本分)
-        exhaustion_rate = req_today / max(1, quota)
-
+        # 1. 配额消耗比 (请求次数与 Token 数取最大消耗比，超额不禁用，仅增加成本分)
+        req_exhaustion = req_today / max(1, limits.daily_limit)
+        tok_exhaustion = (
+            (m_stats.total_tokens / limits.daily_token_limit)
+            if limits.daily_token_limit and limits.daily_token_limit > 0
+            else 0.0
+        )
+        exhaustion_rate = max(req_exhaustion, tok_exhaustion)
         # 2. 调度配置与加权读取 (严格由 config.yaml 驱动，禁止硬编码与 fallback)
         from aistudio_api.infrastructure.gateway.model_defaults import (
             get_configured_rotator_settings,

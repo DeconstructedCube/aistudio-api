@@ -9,7 +9,9 @@ export interface ModelDailyDetail {
   cached_tokens: number
   total_tokens: number
   configured_quota: number
+  configured_token_quota?: number | null
   quota_used_percent: number
+  token_quota_used_percent?: number
   cooldown_remaining: number
   drip_mode: boolean
   is_available: boolean

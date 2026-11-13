@@ -2,7 +2,7 @@
 import { ref, computed } from 'vue'
 import type { ModelStatItem } from '@/types/stats.ts'
 import Badge from '@/components/ui/Badge.vue'
-import { formatDate } from '@/utils/format.ts'
+import { formatDate, formatTokenCount } from '@/utils/format.ts'
 import {
   Layers,
   ChevronDown,
@@ -257,10 +257,17 @@ const statList = computed(() => {
                             </span>
                           </td>
                           <td class="py-2 px-2 text-center">
-                            <div class="w-24 mx-auto space-y-0.5">
+                            <div class="w-28 mx-auto space-y-0.5">
                               <div class="flex justify-between text-[10px] text-gray-500">
-                                <span>{{ acc.today_requests }}/{{ acc.configured_quota }}</span>
+                                <span>{{ acc.today_requests }}/{{ acc.configured_quota }}次</span>
                                 <span>{{ Math.round(acc.quota_used_percent) }}%</span>
+                              </div>
+                              <div
+                                v-if="acc.configured_token_quota"
+                                class="flex justify-between text-[9px] text-gray-400"
+                              >
+                                <span>{{ formatTokenCount(acc.today_tokens) }}/{{ formatTokenCount(acc.configured_token_quota) }}</span>
+                                <span>{{ Math.round(acc.token_quota_used_percent || 0) }}%</span>
                               </div>
                               <div class="w-full bg-gray-100 rounded-full h-1 overflow-hidden">
                                 <div

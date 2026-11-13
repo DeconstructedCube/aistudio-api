@@ -14,7 +14,7 @@ export interface FieldOption {
 export interface FieldDefinition {
   key: string
   title: string
-  category: 'profiles' | 'match' | 'tools' | 'generation' | 'safety' | 'overrides' | 'system'
+  category: 'profiles' | 'match' | 'tools' | 'generation' | 'safety' | 'overrides' | 'system' | 'quotas' | 'paid' | 'rotator'
   type: 'string' | 'number' | 'boolean' | 'select' | 'tags' | 'safety_matrix' | 'indexes'
   description: string
   explanation: string
@@ -266,9 +266,108 @@ export const CONFIG_SCHEMA: Record<string, FieldDefinition> = {
     defaultValue: {},
     tags: ['精确覆盖'],
   },
+  'quota.daily_limit': {
+    key: 'quota.daily_limit',
+    title: '每日请求次数软额度',
+    category: 'quotas',
+    type: 'number',
+    description: '单账号在该模型类别下每日参考请求次数上限，用于轮询权重打分与进度条计算。',
+    explanation: '当账号在该模型上的今日调用次数接近或达到此额度时，调度器会自动将流量优先分流到更空闲的账号；超额绝不会强制禁用账号。',
+    defaultValue: 50,
+    tags: ['订阅额度', '请求数'],
+  },
+  'quota.daily_token_limit': {
+    key: 'quota.daily_token_limit',
+    title: '每日 Token 软额度',
+    category: 'quotas',
+    type: 'number',
+    description: '单账号在该模型类别下每日参考 Token 消耗上限（如 10000000 代表 1000 万），留空表示不限制 Token。',
+    explanation: '遵循 AI Studio Playground 规则：次数与 Token 任一达到上限即视为耗尽。调度器会取请求消耗比与 Token 消耗比的最大值进行负载均衡。',
+    defaultValue: null,
+    tags: ['订阅额度', 'Tokens'],
+  },
+  'quota.default_limit': {
+    key: 'quota.default_limit',
+    title: '层级兜底默认额度',
+    category: 'quotas',
+    type: 'number',
+    description: '当模型未命中该订阅层级下任何具体规则时使用的默认每日请求次数上限。',
+    explanation: '确保新增或未知模型同样拥有可预期的配额分流保护。',
+    defaultValue: 20,
+    tags: ['订阅额度', '兜底规则'],
+  },
+  'quota.overrides': {
+    key: 'quota.overrides',
+    title: '精确模型额度覆盖',
+    category: 'quotas',
+    type: 'string',
+    description: '按具体模型名称跨层级覆盖每日请求次数与 Token 上限，优先级高于各层级通用规则。',
+    explanation: '适用于某款特定模型（如 gemini-3.1-pro-preview）存在独立限额时快速覆盖。',
+    defaultValue: {},
+    tags: ['订阅额度', '精确覆盖'],
+  },
+  'paid.required_tiers': {
+    key: 'paid.required_tiers',
+    title: '付费模型准入订阅等级',
+    category: 'paid',
+    type: 'tags',
+    description: '指定命中该规则的模型所允许调度的订阅等级集合（如 Pro、Ultra、Ultra_20X）。',
+    explanation: '当低等级账号处于激活状态而收到高阶模型请求时，编排器会依据此规则自动抢切至符合等级的付费账号，避免无谓报错。',
+    defaultValue: ['Pro', 'Ultra', 'Ultra_20X'],
+    tags: ['付费准入', '抢切调度'],
+  },
+  'rotator.strategy': {
+    key: 'rotator.strategy',
+    title: '多账号调度策略',
+    category: 'rotator',
+    type: 'select',
+    description: '控制多账号之间的流量分配偏好。',
+    explanation: 'sticky（黏性优先）会优先复用当前活跃账号直至达到黏性阈值，最大化提示词缓存命中率；非 sticky 模式则每次按最低成本分均衡轮询。',
+    defaultValue: 'sticky',
+    recommendedValue: 'sticky',
+    options: [
+      { value: 'sticky', label: '黏性优先 (sticky)', description: '推荐：提升缓存命中与连接复用', recommended: true },
+      { value: 'round_robin', label: '均衡轮询 (round_robin)', description: '按配额消耗比例均衡分散请求' },
+    ],
+    tags: ['调度策略'],
+  },
+  'rotator.stickiness_threshold': {
+    key: 'rotator.stickiness_threshold',
+    title: '黏性切换配额阈值',
+    category: 'rotator',
+    type: 'number',
+    description: '取值 0.0 ~ 1.0。当前账号在该模型上的配额消耗比超过此阈值后，不再享受黏性减分奖励。',
+    explanation: '例如 0.8 表示单个账号额度消耗达 80% 时，调度器会平滑切换至其他空闲账号。',
+    defaultValue: 0.8,
+    recommendedValue: 0.8,
+    tags: ['调度策略', '负载均衡'],
+  },
+  'rotator.tier_weights': {
+    key: 'rotator.tier_weights',
+    title: '订阅等级保护权重',
+    category: 'rotator',
+    type: 'string',
+    description: '各订阅等级在打分时的基础成本权重，数值越高越倾向于延后消耗（优先消耗免费号）。',
+    explanation: '在都能调用的通用模型上，权重低的 Free/Plus 账号会优先承担流量，保护高阶 Pro/Ultra 账号额度留给专属付费模型。',
+    defaultValue: { Free: 0.0, Plus: 0.5, Pro: 1.0, Ultra: 2.0, Ultra_20X: 3.0 },
+    tags: ['调度策略', '等级保护'],
+  },
+  'rotator.cooldowns': {
+    key: 'rotator.cooldowns',
+    title: '429 限流冷却时间',
+    category: 'rotator',
+    type: 'number',
+    description: '触发上游 429 限流后的分阶段冷却秒数（短冷却 / 滴灌冷却 / 延长滴灌）。',
+    explanation: '初次触发 429 进入短冷却（如 60s），连续触发则转入滴灌模式延长冷却时间，避免高频重试冲击上游。',
+    defaultValue: { rate_limited_short: 60, rate_limited_drip: 300, rate_limited_drip_extended: 600 },
+    tags: ['调度策略', '429 冷却'],
+  },
 }
 
 export const SCHEMA_CATEGORIES = [
+  { key: 'quotas', label: '订阅每日额度' },
+  { key: 'paid', label: '付费准入规则' },
+  { key: 'rotator', label: '调度与冷却策略' },
   { key: 'profiles', label: '模型分组规则' },
   { key: 'match', label: '模型名称匹配' },
   { key: 'tools', label: '内置工具配置' },

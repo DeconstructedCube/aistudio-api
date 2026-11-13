@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { AccountWithStats } from '@/types/accounts.ts'
 import type { ModelDailyDetail } from '@/types/rotation.ts'
-import { formatDate } from '@/utils/format.ts'
+import { formatDate, formatTokenCount } from '@/utils/format.ts'
 import { Flame, RotateCcw, Brain, Database } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -85,8 +85,22 @@ function getModelDetail(modelKey: string): ModelDailyDetail | null {
             class="mt-2 space-y-1 font-mono text-[10px]"
           >
             <div class="flex justify-between text-gray-500">
-              <span>今日调用: <strong>{{ reqCount }}</strong> / {{ getModelDetail(String(modelKey))!.configured_quota }}</span>
+              <span>今日调用: <strong>{{ reqCount }}</strong> / {{ getModelDetail(String(modelKey))!.configured_quota }} 次</span>
               <span>{{ Math.round(getModelDetail(String(modelKey))!.quota_used_percent) }}%</span>
+            </div>
+            <div
+              v-if="getModelDetail(String(modelKey))!.configured_token_quota"
+              class="flex justify-between text-gray-500"
+            >
+              <span>今日 Token: <strong>{{ formatTokenCount(getModelDetail(String(modelKey))!.total_tokens) }}</strong> / {{ formatTokenCount(getModelDetail(String(modelKey))!.configured_token_quota) }}</span>
+              <span>{{ Math.round(getModelDetail(String(modelKey))!.token_quota_used_percent || 0) }}%</span>
+            </div>
+            <div
+              v-else-if="getModelDetail(String(modelKey))!.total_tokens > 0"
+              class="flex justify-between text-gray-400"
+            >
+              <span>今日 Token: {{ formatTokenCount(getModelDetail(String(modelKey))!.total_tokens) }}</span>
+              <span>不限</span>
             </div>
             <div class="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
               <div

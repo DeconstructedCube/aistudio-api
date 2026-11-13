@@ -29,6 +29,11 @@ _SAFETY_CATEGORY_ORDER = (
 
 
 @dataclass(frozen=True)
+class TierQuotaLimits:
+    daily_limit: int = 20
+    daily_token_limit: int | None = None
+
+@dataclass(frozen=True)
 class ModelDefaults:
     is_image_model: bool = False
     default_tools: tuple[str, ...] = ()
@@ -390,65 +395,113 @@ def _default_config() -> dict[str, object]:
         },
         "paid_model_rules": {
             "ultra_required": {
-                "contains": ["veo", "ultra", "omni"],
+                "contains": ["veo", "ultra", "omni", "carbon"],
                 "required_tiers": ["Ultra", "Ultra_20X"],
             },
             "pro_required": {
-                "contains": ["argon", "gemini-4", "image", "imagen"],
+                "contains": ["argon", "image", "imagen", "gemini-3.1-pro"],
                 "required_tiers": ["Pro", "Ultra", "Ultra_20X"],
             },
         },
         "tier_quotas": {
             "Free": {
-                "flash_models": {"match": {"contains": ["flash"]}, "daily_limit": 100},
+                "hydrogen_models": {
+                    "match": {"contains": ["hydrogen"]},
+                    "daily_limit": 50,
+                    "daily_token_limit": 10_000_000,
+                },
+                "flash_models": {
+                    "match": {"contains": ["flash"]},
+                    "daily_limit": 50,
+                    "daily_token_limit": 5_000_000,
+                },
                 "pro_models": {"match": {"contains": ["pro"]}, "daily_limit": 10},
                 "default_limit": 20,
             },
             "Plus": {
-                "flash_models": {"match": {"contains": ["flash"]}, "daily_limit": 300},
+                "hydrogen_models": {
+                    "match": {"contains": ["hydrogen"]},
+                    "daily_limit": 50,
+                    "daily_token_limit": 10_000_000,
+                },
+                "flash_models": {
+                    "match": {"contains": ["flash"]},
+                    "daily_limit": 100,
+                    "daily_token_limit": 10_000_000,
+                },
                 "pro_models": {"match": {"contains": ["pro"]}, "daily_limit": 30},
                 "default_limit": 50,
             },
             "Pro": {
-                "argon_models": {
-                    "match": {"contains": ["argon", "gemini-4"]},
-                    "daily_limit": 50,
+                "hydrogen_models": {
+                    "match": {"contains": ["hydrogen"]},
+                    "daily_limit": 100,
+                    "daily_token_limit": 25_000_000,
                 },
-                "flash_models": {"match": {"contains": ["flash"]}, "daily_limit": 150},
-                "pro_models": {"match": {"contains": ["pro"]}, "daily_limit": 50},
+                "argon_models": {
+                    "match": {"contains": ["argon"]},
+                    "daily_limit": 50,
+                    "daily_token_limit": 15_000_000,
+                },
                 "image_models": {
                     "match": {"contains": ["image", "imagen"]},
                     "daily_limit": 50,
+                },
+                "flash_models": {
+                    "match": {"contains": ["flash"]},
+                    "daily_limit": 150,
+                    "daily_token_limit": 25_000_000,
+                },
+                "pro_models": {
+                    "match": {"contains": ["pro"]},
+                    "daily_limit": 50,
+                    "daily_token_limit": 13_000_000,
                 },
                 "default_limit": 50,
             },
             "Ultra": {
-                "argon_models": {
-                    "match": {"contains": ["argon", "gemini-4"]},
-                    "daily_limit": 250,
+                "hydrogen_models": {
+                    "match": {"contains": ["hydrogen"]},
+                    "daily_limit": 200,
                 },
-                "flash_models": {"match": {"contains": ["flash"]}, "daily_limit": 1500},
-                "pro_models": {"match": {"contains": ["pro"]}, "daily_limit": 250},
+                "argon_models": {
+                    "match": {"contains": ["argon"]},
+                    "daily_limit": 200,
+                },
+                "carbon_models": {
+                    "match": {"contains": ["carbon"]},
+                    "daily_limit": 200,
+                },
                 "image_models": {
                     "match": {"contains": ["image", "imagen"]},
-                    "daily_limit": 250,
+                    "daily_limit": 200,
                 },
                 "video_models": {"match": {"contains": ["veo"]}, "daily_limit": 50},
-                "default_limit": 250,
+                "flash_models": {"match": {"contains": ["flash"]}, "daily_limit": 200},
+                "pro_models": {"match": {"contains": ["pro"]}, "daily_limit": 100},
+                "default_limit": 200,
             },
             "Ultra_20X": {
-                "argon_models": {
-                    "match": {"contains": ["argon", "gemini-4"]},
-                    "daily_limit": 1000,
+                "hydrogen_models": {
+                    "match": {"contains": ["hydrogen"]},
+                    "daily_limit": 200,
                 },
-                "flash_models": {"match": {"contains": ["flash"]}, "daily_limit": 5000},
-                "pro_models": {"match": {"contains": ["pro"]}, "daily_limit": 1000},
+                "argon_models": {
+                    "match": {"contains": ["argon"]},
+                    "daily_limit": 200,
+                },
+                "carbon_models": {
+                    "match": {"contains": ["carbon"]},
+                    "daily_limit": 200,
+                },
                 "image_models": {
                     "match": {"contains": ["image", "imagen"]},
-                    "daily_limit": 1000,
+                    "daily_limit": 200,
                 },
-                "video_models": {"match": {"contains": ["veo"]}, "daily_limit": 200},
-                "default_limit": 1000,
+                "video_models": {"match": {"contains": ["veo"]}, "daily_limit": 50},
+                "flash_models": {"match": {"contains": ["flash"]}, "daily_limit": 200},
+                "pro_models": {"match": {"contains": ["pro"]}, "daily_limit": 100},
+                "default_limit": 200,
             },
             "overrides": {},
         },
@@ -734,31 +787,43 @@ def get_configured_tier_quotas(
     return {}
 
 
-def resolve_tier_quota(
+def _parse_positive_int(raw: object, fallback: int) -> int:
+    if isinstance(raw, bool):
+        return fallback
+    try:
+        val = int(str(raw))
+        return val if val > 0 else fallback
+    except (ValueError, TypeError):
+        return fallback
+
+
+def _parse_optional_positive_int(
+    raw: object, fallback: int | None = None
+) -> int | None:
+    if raw is None or isinstance(raw, bool):
+        return fallback
+    try:
+        val = int(str(raw))
+        return val if val > 0 else fallback
+    except (ValueError, TypeError):
+        return fallback
+
+
+def resolve_tier_quota_limits(
     tier: str | None,
     model: str | None,
     config_path: str | os.PathLike[str] | None = None,
-) -> int:
-    """计算指定账号层级在目标模型上的每日软额度限制（仅用于轮询打分权重，超额绝不禁用账号）。"""
+) -> TierQuotaLimits:
+    """计算指定账号层级在目标模型上的每日请求次数与 Token 软额度限制。"""
     normalized_model = _normalize_model_name(model) if model else ""
     quotas = get_configured_tier_quotas(config_path)
 
-    # 1. 精确模型覆盖 overrides (优先级最高)
-    raw_overrides = quotas.get("overrides")
-    if isinstance(raw_overrides, dict):
-        for m_key, val in raw_overrides.items():
-            if _normalize_model_name(str(m_key)) == normalized_model:
-                try:
-                    return int(str(val))
-                except (ValueError, TypeError):
-                    pass
-
-    # 2. 匹配对应层级规则
+    # 1. 解析层级基础规则
     clean_tier = (tier or "Free").strip()
-    if clean_tier not in quotas:
+    if clean_tier not in quotas or clean_tier == "overrides":
         matched_key = None
         for k in quotas:
-            if k.lower() == clean_tier.lower():
+            if k != "overrides" and k.lower() == clean_tier.lower():
                 matched_key = k
                 break
         if matched_key:
@@ -766,45 +831,241 @@ def resolve_tier_quota(
         elif "Free" in quotas:
             clean_tier = "Free"
         else:
-            clean_tier = next(iter(quotas), "Free")
+            clean_tier = next((k for k in quotas if k != "overrides"), "Free")
 
     tier_rules = quotas.get(clean_tier)
-    if not isinstance(tier_rules, dict):
-        return 20
+    base_limits = TierQuotaLimits(daily_limit=20, daily_token_limit=None)
+    if isinstance(tier_rules, dict):
+        default_limit = _parse_positive_int(tier_rules.get("default_limit"), 20)
+        default_token_limit = _parse_optional_positive_int(
+            tier_rules.get("default_token_limit")
+        )
+        base_limits = TierQuotaLimits(
+            daily_limit=default_limit,
+            daily_token_limit=default_token_limit,
+        )
+        if normalized_model:
+            for rule_key, rule_data in tier_rules.items():
+                if rule_key in ("default_limit", "default_token_limit") or not isinstance(
+                    rule_data, dict
+                ):
+                    continue
+                raw_match = rule_data.get("match")
+                if isinstance(raw_match, dict):
+                    contains = [
+                        str(c).lower()
+                        for c in (raw_match.get("contains") or [])
+                        if isinstance(c, str)
+                    ]
+                    prefixes = [
+                        str(p).lower()
+                        for p in (raw_match.get("prefixes") or [])
+                        if isinstance(p, str)
+                    ]
+                    exact = [
+                        _normalize_model_name(str(e))
+                        for e in (raw_match.get("exact") or [])
+                        if isinstance(e, str)
+                    ]
+                    if (
+                        (exact and normalized_model in exact)
+                        or any(normalized_model.startswith(p) for p in prefixes)
+                        or any(c in normalized_model for c in contains)
+                    ):
+                        rule_daily = _parse_positive_int(
+                            rule_data.get("daily_limit"), default_limit
+                        )
+                        rule_token = (
+                            _parse_optional_positive_int(
+                                rule_data.get("daily_token_limit")
+                            )
+                            if "daily_token_limit" in rule_data
+                            else default_token_limit
+                        )
+                        base_limits = TierQuotaLimits(
+                            daily_limit=rule_daily,
+                            daily_token_limit=rule_token,
+                        )
+                        break
 
-    default_limit = int(str(tier_rules.get("default_limit", 20)))
-    if not normalized_model:
-        return default_limit
+    # 2. 精确模型覆盖 overrides (优先级最高，支持单数字或 {daily_limit, daily_token_limit})
+    raw_overrides = quotas.get("overrides")
+    if normalized_model and isinstance(raw_overrides, dict):
+        for m_key, val in raw_overrides.items():
+            if _normalize_model_name(str(m_key)) == normalized_model:
+                if isinstance(val, dict):
+                    ov_daily = (
+                        _parse_positive_int(
+                            val.get("daily_limit"), base_limits.daily_limit
+                        )
+                        if "daily_limit" in val
+                        else base_limits.daily_limit
+                    )
+                    ov_token = (
+                        _parse_optional_positive_int(val.get("daily_token_limit"))
+                        if "daily_token_limit" in val
+                        else base_limits.daily_token_limit
+                    )
+                    return TierQuotaLimits(
+                        daily_limit=ov_daily,
+                        daily_token_limit=ov_token,
+                    )
+                ov_scalar = _parse_optional_positive_int(val)
+                if ov_scalar is not None:
+                    return TierQuotaLimits(
+                        daily_limit=ov_scalar,
+                        daily_token_limit=base_limits.daily_token_limit,
+                    )
 
-    for rule_key, rule_data in tier_rules.items():
-        if rule_key == "default_limit" or not isinstance(rule_data, dict):
-            continue
-        raw_match = rule_data.get("match")
-        if isinstance(raw_match, dict):
-            contains = [
-                str(c).lower()
-                for c in (raw_match.get("contains") or [])
-                if isinstance(c, str)
-            ]
-            prefixes = [
-                str(p).lower()
-                for p in (raw_match.get("prefixes") or [])
-                if isinstance(p, str)
-            ]
-            exact = [
-                _normalize_model_name(str(e))
-                for e in (raw_match.get("exact") or [])
-                if isinstance(e, str)
-            ]
+    return base_limits
+
+
+def resolve_tier_quota(
+    tier: str | None,
+    model: str | None,
+    config_path: str | os.PathLike[str] | None = None,
+) -> int:
+    """计算指定账号层级在目标模型上的每日软额度限制（仅用于轮询打分权重，超额绝不禁用账号）。"""
+    return resolve_tier_quota_limits(tier, model, config_path=config_path).daily_limit
+
+
+def get_default_config_sections() -> dict[str, object]:
+    """返回内置默认配置的核心可配置区块，供前端重置与表单初始化使用。"""
+    defaults = _default_config()
+    return {
+        "model_defaults": defaults.get("model_defaults", {}),
+        "tier_quotas": defaults.get("tier_quotas", {}),
+        "paid_model_rules": defaults.get("paid_model_rules", {}),
+        "rotator": defaults.get("rotator", {}),
+    }
+
+
+def validate_config_sections(parsed: dict[str, object]) -> None:
+    """校验关键配置段结构合法性，防止非法数值或类型写入 config.yaml。"""
+
+    def _is_pos_int(v: object) -> bool:
+        return isinstance(v, int) and not isinstance(v, bool) and v > 0
+
+    def _is_nonneg_num(v: object) -> bool:
+        return isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
+
+    if "tier_quotas" in parsed and parsed["tier_quotas"] is not None:
+        tq = parsed["tier_quotas"]
+        if not isinstance(tq, dict):
+            raise ValueError("tier_quotas 必须是字典结构")
+        for tier_key, tier_val in tq.items():
+            if tier_key == "overrides":
+                if tier_val is None:
+                    continue
+                if not isinstance(tier_val, dict):
+                    raise ValueError("tier_quotas.overrides 必须是字典结构")
+                for ov_k, ov_v in tier_val.items():
+                    if isinstance(ov_v, dict):
+                        if (
+                            "daily_limit" in ov_v
+                            and ov_v["daily_limit"] is not None
+                            and not _is_pos_int(ov_v["daily_limit"])
+                        ):
+                            raise ValueError(
+                                f"tier_quotas.overrides.{ov_k}.daily_limit 必须是正整数"
+                            )
+                        if (
+                            "daily_token_limit" in ov_v
+                            and ov_v["daily_token_limit"] is not None
+                            and not _is_pos_int(ov_v["daily_token_limit"])
+                        ):
+                            raise ValueError(
+                                f"tier_quotas.overrides.{ov_k}.daily_token_limit 必须是正整数或 null"
+                            )
+                    elif not _is_pos_int(ov_v):
+                        raise ValueError(
+                            f"tier_quotas.overrides.{ov_k} 必须是正整数或包含 daily_limit 的对象"
+                        )
+                continue
+            if not isinstance(tier_val, dict):
+                raise ValueError(f"tier_quotas.{tier_key} 必须是字典结构")
             if (
-                (exact and normalized_model in exact)
-                or any(normalized_model.startswith(p) for p in prefixes)
-                or any(c in normalized_model for c in contains)
+                "default_limit" in tier_val
+                and tier_val["default_limit"] is not None
+                and not _is_pos_int(tier_val["default_limit"])
             ):
-                return int(str(rule_data.get("daily_limit", default_limit)))
+                raise ValueError(
+                    f"tier_quotas.{tier_key}.default_limit 必须是正整数"
+                )
+            if (
+                "default_token_limit" in tier_val
+                and tier_val["default_token_limit"] is not None
+                and not _is_pos_int(tier_val["default_token_limit"])
+            ):
+                raise ValueError(
+                    f"tier_quotas.{tier_key}.default_token_limit 必须是正整数或 null"
+                )
+            for rule_key, rule_val in tier_val.items():
+                if rule_key in ("default_limit", "default_token_limit"):
+                    continue
+                if not isinstance(rule_val, dict):
+                    raise ValueError(
+                        f"tier_quotas.{tier_key}.{rule_key} 必须是规则对象"
+                    )
+                if "daily_limit" in rule_val and not _is_pos_int(
+                    rule_val["daily_limit"]
+                ):
+                    raise ValueError(
+                        f"tier_quotas.{tier_key}.{rule_key}.daily_limit 必须是正整数"
+                    )
+                if (
+                    "daily_token_limit" in rule_val
+                    and rule_val["daily_token_limit"] is not None
+                    and not _is_pos_int(rule_val["daily_token_limit"])
+                ):
+                    raise ValueError(
+                        f"tier_quotas.{tier_key}.{rule_key}.daily_token_limit 必须是正整数或 null"
+                    )
 
-    return default_limit
+    if "paid_model_rules" in parsed and parsed["paid_model_rules"] is not None:
+        pmr = parsed["paid_model_rules"]
+        if not isinstance(pmr, dict):
+            raise ValueError("paid_model_rules 必须是字典结构")
+        for r_key, r_val in pmr.items():
+            if not isinstance(r_val, dict):
+                raise ValueError(f"paid_model_rules.{r_key} 必须是字典结构")
+            req_tiers = r_val.get("required_tiers")
+            if not isinstance(req_tiers, list) or not all(
+                isinstance(t, str) and t.strip() for t in req_tiers
+            ):
+                raise ValueError(
+                    f"paid_model_rules.{r_key}.required_tiers 必须是非空字符串列表"
+                )
 
+    if "rotator" in parsed and parsed["rotator"] is not None:
+        rot = parsed["rotator"]
+        if not isinstance(rot, dict):
+            raise ValueError("rotator 必须是字典结构")
+        for num_field in (
+            "max_retries",
+            "stickiness_bonus",
+            "stickiness_threshold",
+            "drip_penalty",
+        ):
+            if num_field in rot and not _is_nonneg_num(rot[num_field]):
+                raise ValueError(f"rotator.{num_field} 必须是非负数字")
+        if "stickiness_threshold" in rot:
+            thresh = float(str(rot["stickiness_threshold"]))
+            if thresh > 1.0:
+                raise ValueError("rotator.stickiness_threshold 必须在 0.0 ~ 1.0 之间")
+        if "tier_weights" in rot:
+            tw = rot["tier_weights"]
+            if not isinstance(tw, dict) or not all(
+                isinstance(v, (int, float)) and not isinstance(v, bool)
+                for v in tw.values()
+            ):
+                raise ValueError("rotator.tier_weights 必须是数字映射字典")
+        if "cooldowns" in rot:
+            cds = rot["cooldowns"]
+            if not isinstance(cds, dict) or not all(
+                _is_nonneg_num(v) for v in cds.values()
+            ):
+                raise ValueError("rotator.cooldowns 必须是非负数字映射字典")
 
 def get_configured_presets(
     config_path: str | os.PathLike[str] | None = None,

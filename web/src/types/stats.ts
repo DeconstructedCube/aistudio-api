@@ -12,7 +12,9 @@ export interface AccountBreakdownItem {
   today_tokens: number
   today_reasoning_tokens: number
   configured_quota: number
+  configured_token_quota?: number | null
   quota_used_percent: number
+  token_quota_used_percent?: number
   is_available: boolean
   cooldown_remaining: number
 }

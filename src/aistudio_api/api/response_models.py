@@ -77,7 +77,9 @@ class AccountBreakdownItem(BaseModel):
     today_tokens: int = 0
     today_reasoning_tokens: int = 0
     configured_quota: int = 100
+    configured_token_quota: int | None = None
     quota_used_percent: float = 0.0
+    token_quota_used_percent: float = 0.0
     is_available: bool = True
     cooldown_remaining: int = 0
 

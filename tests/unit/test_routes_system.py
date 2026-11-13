@@ -98,3 +98,90 @@ async def test_rotation_status_and_clear_cooldown():
         )
         assert resp_clear.status_code == 200
         mock_rotator.clear_cooldown.assert_called_once_with("acc_1", model=None)
+
+
+@pytest.mark.asyncio
+async def test_get_config_defaults_and_yaml_section_validation():
+    async with _client() as client:
+        resp = await client.get("/config/defaults")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "tier_quotas" in data
+        assert "paid_model_rules" in data
+        assert "rotator" in data
+        assert "model_defaults" in data
+        assert data["tier_quotas"]["Free"]["hydrogen_models"]["daily_limit"] == 50
+        assert data["tier_quotas"]["Free"]["hydrogen_models"]["daily_token_limit"] == 10_000_000
+
+        bad_quota_resp = await client.put(
+            "/config/yaml",
+            json={"yaml_content": "tier_quotas:\n  Free:\n    flash_models:\n      daily_limit: -5\n"},
+        )
+        assert bad_quota_resp.status_code == 400
+
+
+def test_rotator_scores_token_exhaustion_alongside_request_count(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock
+
+    from aistudio_api.application.account_rotator import AccountRotator, AccountStats
+    from aistudio_api.infrastructure.account.account_store import (
+        AccountMeta,
+        AccountStore,
+    )
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        invalidate_config_cache,
+    )
+
+    cfg = tmp_path / "quota_cfg.yaml"
+    cfg.write_text(
+        """
+rotator:
+  strategy: sticky
+  stickiness_bonus: 400.0
+  stickiness_threshold: 0.8
+  drip_penalty: 500.0
+  tier_weights:
+    Free: 0.0
+  cooldowns:
+    rate_limited_short: 60
+    rate_limited_drip: 300
+    rate_limited_drip_extended: 600
+tier_quotas:
+  Free:
+    hydrogen_models:
+      match:
+        contains: [hydrogen]
+      daily_limit: 50
+      daily_token_limit: 10000000
+    default_limit: 20
+"""
+    )
+    monkeypatch.setenv("AISTUDIO_CONFIG_FILE", str(cfg))
+    invalidate_config_cache()
+
+    store = MagicMock(spec=AccountStore)
+    acc_busy_tok = AccountMeta(
+        id="acc_1",
+        name="BusyToken",
+        email="busy@example.com",
+        tier="Free",
+        created_at="2026-01-01",
+    )
+    acc_fresh = AccountMeta(
+        id="acc_2",
+        name="Fresh",
+        email="fresh@example.com",
+        tier="Free",
+        created_at="2026-01-01",
+    )
+    store.list_accounts.return_value = [acc_busy_tok, acc_fresh]
+
+    rotator = AccountRotator(store)
+    st1 = AccountStats(account_id="acc_1")
+    # Only 5 requests, but 9M / 10M tokens (90% > stickiness_threshold 0.8)
+    st1.record_success(model="gemini-4-hydrogen", usage={"prompt_tokens": 9_000_000, "completion_tokens": 0, "total_tokens": 9_000_000})
+    st2 = AccountStats(account_id="acc_2")
+
+    score1 = rotator._score_candidate(acc_busy_tok, st1, "gemini-4-hydrogen", current_account_id="acc_1")
+    score2 = rotator._score_candidate(acc_fresh, st2, "gemini-4-hydrogen", current_account_id="acc_1")
+    assert score2 < score1

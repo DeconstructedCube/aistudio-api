@@ -2,9 +2,19 @@
 import { ref, watch, computed } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import YAML from 'yaml'
-import type { ParsedConfigYaml, ModelProfileItem, ModelOverrideMap } from './types.ts'
+import type {
+  ParsedConfigYaml,
+  ModelProfileItem,
+  ModelOverrideMap,
+  TierQuotasConfig,
+  PaidModelRulesConfig,
+  RotatorConfig,
+} from './types.ts'
 import ProfileCard from './ProfileCard.vue'
 import ModelOverrideCard from './ModelOverrideCard.vue'
+import TierQuotasEditor from './TierQuotasEditor.vue'
+import PaidModelRulesEditor from './PaidModelRulesEditor.vue'
+import RotatorConfigEditor from './RotatorConfigEditor.vue'
 import SchemaDictionaryModal from './SchemaDictionaryModal.vue'
 import ConfigSwitch from './ConfigSwitch.vue'
 import FieldHelpTip from './FieldHelpTip.vue'
@@ -21,6 +31,9 @@ import {
   AlertCircle,
   BookOpen,
   Search,
+  Gauge,
+  ShieldCheck,
+  Repeat,
 } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -33,14 +46,16 @@ const emit = defineEmits<{
 
 const toast = useToastStore()
 
-const activeTab = ref<'visual' | 'yaml'>('visual')
+type EditorTab = 'quotas' | 'paid' | 'rotator' | 'models' | 'yaml'
+
+const activeTab = ref<EditorTab>('quotas')
 const rawYaml = ref(props.initialYaml || '')
 const parsedConfig = ref<ParsedConfigYaml>({})
 const yamlParseError = ref<string | null>(null)
 const saving = ref(false)
+const resetting = ref(false)
 const dictModalOpen = ref(false)
 const filterKeyword = ref('')
-
 const filteredProfilesWithIndex = computed(() => {
   const list = parsedConfig.value.model_defaults?.profiles || []
   const kw = filterKeyword.value.trim().toLowerCase()
@@ -109,10 +124,10 @@ watch(
   { immediate: true }
 )
 
-function switchTab(tab: 'visual' | 'yaml') {
+function switchTab(tab: EditorTab) {
   if (tab === 'yaml') {
     syncStateToYaml()
-  } else {
+  } else if (activeTab.value === 'yaml') {
     const ok = parseYamlToState(rawYaml.value)
     if (!ok) {
       toast.error('当前 YAML 语法有误，无法切换至可视化视图: ' + yamlParseError.value)
@@ -194,72 +209,79 @@ function updateGlobalDropUnsupported(val: boolean) {
     model_defaults: nextModelDefaults,
   }
 }
+function updateTierQuotas(val: TierQuotasConfig) {
+  parsedConfig.value = {
+    ...parsedConfig.value,
+    tier_quotas: val,
+  }
+}
 
-function handleResetDefaults() {
-  if (confirm('确定要将所有模型规则重置为官方推荐默认预设吗？')) {
-    const nextDoc: ParsedConfigYaml = {
-      ...parsedConfig.value,
-      model_defaults: {
-        drop_unsupported_params: false,
-        profiles: [
-          {
-            name: 'image_models',
-            match: {
-              contains: ['image', 'imagen'],
-            },
-            is_image_model: true,
-            disable_safety_settings: true,
-          },
-          {
-            name: 'video_models',
-            match: {
-              prefixes: ['veo-'],
-              contains: ['veo'],
-            },
-            disable_safety_settings: true,
-          },
-          {
-            name: 'gemma_models',
-            match: {
-              prefixes: ['gemma-'],
-            },
-            safety_settings: {
-              Harassment: 5,
-              Hate: 5,
-              'Sexually Explicit': 5,
-              'Dangerous Content': 5,
-            },
-          },
-          {
-            name: 'gemini_models',
-            match: {
-              prefixes: ['gemini-'],
-            },
-            safety_settings: {
-              Harassment: 5,
-              Hate: 5,
-              'Sexually Explicit': 5,
-              'Dangerous Content': 5,
-            },
-            drop_unsupported_params: true,
-          },
-        ],
-        models: {},
-      },
+function updatePaidModelRules(val: PaidModelRulesConfig) {
+  parsedConfig.value = {
+    ...parsedConfig.value,
+    paid_model_rules: val,
+  }
+}
+
+function updateRotator(val: RotatorConfig) {
+  parsedConfig.value = {
+    ...parsedConfig.value,
+    rotator: val,
+  }
+}
+
+const availableQuotaTiers = computed(() => {
+  const keys = Object.keys(parsedConfig.value.tier_quotas || {}).filter((k) => k !== 'overrides')
+  return keys.length ? keys : ['Free', 'Plus', 'Pro', 'Ultra', 'Ultra_20X']
+})
+
+async function handleResetDefaults() {
+  const sectionLabelMap: Record<EditorTab, string> = {
+    quotas: '订阅每日额度 (tier_quotas)',
+    paid: '付费准入规则 (paid_model_rules)',
+    rotator: '调度策略 (rotator)',
+    models: '模型默认规则 (model_defaults)',
+    yaml: '全部核心配置（保留 API Keys 与 WAA 节点）',
+  }
+  if (!confirm(`确定要将「${sectionLabelMap[activeTab.value]}」恢复为系统默认推荐配置吗？`)) {
+    return
+  }
+
+  resetting.value = true
+  try {
+    const defaults = await systemApi.getConfigDefaults()
+    const nextDoc: ParsedConfigYaml = { ...parsedConfig.value }
+    if (activeTab.value === 'quotas' && defaults.tier_quotas) {
+      nextDoc.tier_quotas = defaults.tier_quotas
+    } else if (activeTab.value === 'paid' && defaults.paid_model_rules) {
+      nextDoc.paid_model_rules = defaults.paid_model_rules
+    } else if (activeTab.value === 'rotator' && defaults.rotator) {
+      nextDoc.rotator = defaults.rotator
+    } else if (activeTab.value === 'models' && defaults.model_defaults) {
+      nextDoc.model_defaults = defaults.model_defaults
+    } else {
+      if (defaults.tier_quotas) nextDoc.tier_quotas = defaults.tier_quotas
+      if (defaults.paid_model_rules) nextDoc.paid_model_rules = defaults.paid_model_rules
+      if (defaults.rotator) nextDoc.rotator = defaults.rotator
+      if (defaults.model_defaults) nextDoc.model_defaults = defaults.model_defaults
     }
     parsedConfig.value = nextDoc
     syncStateToYaml()
-    toast.info('已载入默认模型规则（保留现有 API Key、调度器与配额配置），请点击右上角保存并生效')
+    toast.info(`已载入「${sectionLabelMap[activeTab.value]}」默认配置，请点击右上角「保存并热重载」使其生效`)
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : '获取系统默认配置失败'
+    toast.error(msg)
+  } finally {
+    resetting.value = false
   }
 }
 
 async function handleSave() {
   saving.value = true
   let contentToSave = rawYaml.value
-  if (activeTab.value === 'visual') {
+  if (activeTab.value !== 'yaml') {
     contentToSave = syncStateToYaml()
   } else {
-    // Check YAML validity
     const ok = parseYamlToState(rawYaml.value)
     if (!ok) {
       toast.error('YAML 格式错误: ' + yamlParseError.value)
@@ -270,7 +292,7 @@ async function handleSave() {
 
   try {
     await systemApi.updateConfigYaml(contentToSave)
-    toast.success('模型规则配置已成功保存并完成热重载！')
+    toast.success('配置已成功保存并完成热重载！')
     emit('saved')
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : '保存配置失败'
@@ -294,7 +316,7 @@ function handleYamlKeydown(e: KeyboardEvent) {
 }
 
 const hasUnsavedChanges = computed(() => {
-  const current = activeTab.value === 'visual' ? syncStateToYaml() : rawYaml.value
+  const current = activeTab.value !== 'yaml' ? syncStateToYaml() : rawYaml.value
   return Boolean(props.initialYaml && current.trim() !== props.initialYaml.trim())
 })
 
@@ -319,7 +341,7 @@ onBeforeRouteLeave((_to, _from, next) => {
         <div class="flex items-center gap-2">
           <SlidersHorizontal class="w-4 h-4 text-brand-600" />
           <h3 class="font-bold text-gray-900 text-sm">
-            模型规则与安全策略 (config.yaml)
+            调度、额度与模型规则配置 (config.yaml)
           </h3>
         </div>
       </div>
@@ -337,19 +359,46 @@ onBeforeRouteLeave((_to, _from, next) => {
         </Button>
 
         <!-- Tab Pill Toggle -->
-        <div class="flex items-center bg-gray-100 p-1 rounded-xl text-xs font-medium">
+        <div class="flex items-center bg-gray-100 p-1 rounded-xl text-xs font-medium flex-wrap gap-0.5">
           <button
             type="button"
-            class="px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
-            :class="activeTab === 'visual' ? 'bg-white text-brand-700 shadow-2xs font-semibold' : 'text-gray-600 hover:text-gray-900'"
-            @click="switchTab('visual')"
+            class="px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+            :class="activeTab === 'quotas' ? 'bg-white text-brand-700 shadow-2xs font-semibold' : 'text-gray-600 hover:text-gray-900'"
+            @click="switchTab('quotas')"
           >
-            <SlidersHorizontal class="w-3.5 h-3.5" />
-            <span>可视化模式</span>
+            <Gauge class="w-3.5 h-3.5" />
+            <span>订阅额度</span>
           </button>
           <button
             type="button"
-            class="px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+            class="px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+            :class="activeTab === 'paid' ? 'bg-white text-brand-700 shadow-2xs font-semibold' : 'text-gray-600 hover:text-gray-900'"
+            @click="switchTab('paid')"
+          >
+            <ShieldCheck class="w-3.5 h-3.5" />
+            <span>付费准入</span>
+          </button>
+          <button
+            type="button"
+            class="px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+            :class="activeTab === 'rotator' ? 'bg-white text-brand-700 shadow-2xs font-semibold' : 'text-gray-600 hover:text-gray-900'"
+            @click="switchTab('rotator')"
+          >
+            <Repeat class="w-3.5 h-3.5" />
+            <span>调度策略</span>
+          </button>
+          <button
+            type="button"
+            class="px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+            :class="activeTab === 'models' ? 'bg-white text-brand-700 shadow-2xs font-semibold' : 'text-gray-600 hover:text-gray-900'"
+            @click="switchTab('models')"
+          >
+            <SlidersHorizontal class="w-3.5 h-3.5" />
+            <span>模型规则</span>
+          </button>
+          <button
+            type="button"
+            class="px-2.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
             :class="activeTab === 'yaml' ? 'bg-white text-brand-700 shadow-2xs font-semibold' : 'text-gray-600 hover:text-gray-900'"
             @click="switchTab('yaml')"
           >
@@ -361,11 +410,12 @@ onBeforeRouteLeave((_to, _from, next) => {
         <Button
           variant="ghost"
           size="sm"
-          title="重置为官方推荐规则"
+          :loading="resetting"
+          title="恢复当前标签页为官方推荐配置"
           @click="handleResetDefaults"
         >
           <RotateCcw class="w-3.5 h-3.5" />
-          <span class="hidden md:inline">重置默认</span>
+          <span class="hidden md:inline">恢复默认</span>
         </Button>
 
         <Button
@@ -380,16 +430,16 @@ onBeforeRouteLeave((_to, _from, next) => {
       </div>
     </div>
 
-    <!-- Search Filter Bar in Visual Mode -->
+    <!-- Search Filter Bar in Quotas / Models Mode -->
     <div
-      v-if="activeTab === 'visual'"
+      v-if="activeTab === 'models' || activeTab === 'quotas'"
       class="relative"
     >
       <Search class="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
       <input
         v-model="filterKeyword"
         type="text"
-        placeholder="在下方快速筛选规则组或模型名称（如：image、gemini、gemma）..."
+        :placeholder="activeTab === 'quotas' ? '筛选额度规则或模型覆盖（如：hydrogen、argon、flash）...' : '在下方快速筛选规则组或模型名称（如：image、gemini、gemma）...'"
         class="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs outline-none focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 font-mono transition-all"
       >
     </div>
@@ -410,9 +460,32 @@ onBeforeRouteLeave((_to, _from, next) => {
       </div>
     </div>
 
-    <!-- Mode 1: Visual Form Editor -->
+    <!-- Mode 1: Tier Quotas Editor -->
+    <TierQuotasEditor
+      v-if="activeTab === 'quotas'"
+      :tier-quotas="parsedConfig.tier_quotas || {}"
+      :filter-keyword="filterKeyword"
+      @update:tier-quotas="updateTierQuotas"
+    />
+
+    <!-- Mode 2: Paid Model Access Rules Editor -->
+    <PaidModelRulesEditor
+      v-else-if="activeTab === 'paid'"
+      :rules="parsedConfig.paid_model_rules || {}"
+      :available-tiers="availableQuotaTiers"
+      @update:rules="updatePaidModelRules"
+    />
+
+    <!-- Mode 3: Rotator Strategy Editor -->
+    <RotatorConfigEditor
+      v-else-if="activeTab === 'rotator'"
+      :rotator="parsedConfig.rotator || {}"
+      @update:rotator="updateRotator"
+    />
+
+    <!-- Mode 4: Model Defaults Visual Form Editor -->
     <div
-      v-if="activeTab === 'visual'"
+      v-else-if="activeTab === 'models'"
       class="space-y-6"
     >
       <!-- Global Drop Unsupported Params Switch -->

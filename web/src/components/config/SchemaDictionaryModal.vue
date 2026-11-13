@@ -49,7 +49,7 @@ const filteredFields = computed(() => {
           <input
             v-model="searchQuery"
             type="text"
-            placeholder="搜索配置项名称、键名、关键词（如：生图、思考、安全、工具）..."
+            placeholder="搜索配置项名称、键名、关键词（如：额度、Token、调度、生图、安全）..."
             class="w-full pl-10 pr-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs outline-none focus:bg-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 transition-all font-mono"
           >
         </div>

@@ -39,8 +39,9 @@ def health_response() -> HealthResponse:
 def stats_response() -> StatsResponse:
     from aistudio_api.api.response_models import AccountBreakdownItem
     from aistudio_api.api.state import runtime_state
-    from aistudio_api.infrastructure.gateway.model_defaults import resolve_tier_quota
-
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        resolve_tier_quota_limits,
+    )
     stats = dict(runtime_state.model_stats)
     rotator = runtime_state.rotator
     account_svc = runtime_state.account_service
@@ -73,8 +74,16 @@ def stats_response() -> StatsResponse:
                     st._check_date_reset(current_la)
                     if clean_m in st.daily_models:
                         m_daily = st.daily_models[clean_m]
-                        quota = resolve_tier_quota(acc.tier, clean_m)
-                        used_pct = round((m_daily.requests / max(1, quota)) * 100, 1)
+                        limits = resolve_tier_quota_limits(acc.tier, clean_m)
+                        quota = limits.daily_limit
+                        token_quota = limits.daily_token_limit
+                        req_pct = round((m_daily.requests / max(1, quota)) * 100, 1)
+                        tok_pct = (
+                            round((m_daily.total_tokens / token_quota) * 100, 1)
+                            if token_quota and token_quota > 0
+                            else 0.0
+                        )
+                        used_pct = max(req_pct, tok_pct)
                         cd_rem = (
                             max(0, int(m_daily.cooldown_until - time.time()))
                             if m_daily.cooldown_until > time.time()
@@ -95,7 +104,9 @@ def stats_response() -> StatsResponse:
                                 today_tokens=m_daily.total_tokens,
                                 today_reasoning_tokens=m_daily.reasoning_tokens,
                                 configured_quota=quota,
+                                configured_token_quota=token_quota,
                                 quota_used_percent=used_pct,
+                                token_quota_used_percent=tok_pct,
                                 is_available=acc.enabled
                                 and cd_rem == 0
                                 and not st.session_expired,
@@ -294,6 +305,16 @@ async def get_system_config() -> dict[str, object]:
     }
 
 
+@protected_router.get("/config/defaults")
+async def get_system_config_defaults() -> dict[str, object]:
+    """获取系统内置推荐默认配置（订阅额度、付费准入规则、调度策略、模型规则）。"""
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        get_default_config_sections,
+    )
+
+    return get_default_config_sections()
+
+
 @protected_router.put("/config/yaml")
 async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
     """更新 config.yaml 文件内容并热重载默认配置。"""
@@ -304,6 +325,15 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
             raise HTTPException(400, detail="YAML 顶层必须为字典结构")
     except yaml.YAMLError as e:
         raise HTTPException(400, detail=f"YAML 语法格式错误: {e}") from e
+    if isinstance(parsed, dict):
+        from aistudio_api.infrastructure.gateway.model_defaults import (
+            validate_config_sections,
+        )
+
+        try:
+            validate_config_sections(parsed)
+        except ValueError as e:
+            raise HTTPException(400, detail=f"配置校验失败: {e}") from e
     config_yaml_path = _resolve_config_path(None)
     try:
         config_yaml_path.write_text(req.yaml_content, encoding="utf-8")

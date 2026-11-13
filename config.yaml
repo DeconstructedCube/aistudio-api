@@ -45,15 +45,16 @@ paid_model_rules:
     - veo
     - ultra
     - omni
+    - carbon
     required_tiers:
     - Ultra
     - Ultra_20X
   pro_required:
     contains:
     - argon
-    - gemini-4
     - image
     - imagen
+    - gemini-3.1-pro
     required_tiers:
     - Pro
     - Ultra
@@ -99,11 +100,18 @@ model_defaults:
   models: {}
 tier_quotas:
   Free:
+    hydrogen_models:
+      match:
+        contains:
+        - hydrogen
+      daily_limit: 50
+      daily_token_limit: 10000000
     flash_models:
       match:
         contains:
         - flash
-      daily_limit: 100
+      daily_limit: 50
+      daily_token_limit: 5000000
     pro_models:
       match:
         contains:
@@ -111,11 +119,18 @@ tier_quotas:
       daily_limit: 10
     default_limit: 20
   Plus:
+    hydrogen_models:
+      match:
+        contains:
+        - hydrogen
+      daily_limit: 50
+      daily_token_limit: 10000000
     flash_models:
       match:
         contains:
         - flash
-      daily_limit: 300
+      daily_limit: 100
+      daily_token_limit: 10000000
     pro_models:
       match:
         contains:
@@ -123,87 +138,113 @@ tier_quotas:
       daily_limit: 30
     default_limit: 50
   Pro:
+    hydrogen_models:
+      match:
+        contains:
+        - hydrogen
+      daily_limit: 100
+      daily_token_limit: 25000000
     argon_models:
       match:
         contains:
         - argon
-        - gemini-4
+      daily_limit: 50
+      daily_token_limit: 15000000
+    image_models:
+      match:
+        contains:
+        - image
+        - imagen
       daily_limit: 50
     flash_models:
       match:
         contains:
         - flash
       daily_limit: 150
+      daily_token_limit: 25000000
     pro_models:
       match:
         contains:
         - pro
       daily_limit: 50
-    image_models:
-      match:
-        contains:
-        - image
-        - imagen
-      daily_limit: 50
+      daily_token_limit: 13000000
     default_limit: 50
   Ultra:
+    hydrogen_models:
+      match:
+        contains:
+        - hydrogen
+      daily_limit: 200
     argon_models:
       match:
         contains:
         - argon
-        - gemini-4
-      daily_limit: 250
-    flash_models:
+      daily_limit: 200
+    carbon_models:
       match:
         contains:
-        - flash
-      daily_limit: 1500
-    pro_models:
-      match:
-        contains:
-        - pro
-      daily_limit: 250
+        - carbon
+      daily_limit: 200
     image_models:
       match:
         contains:
         - image
         - imagen
-      daily_limit: 250
+      daily_limit: 200
     video_models:
       match:
         contains:
         - veo
       daily_limit: 50
-    default_limit: 250
-  Ultra_20X:
-    argon_models:
-      match:
-        contains:
-        - argon
-        - gemini-4
-      daily_limit: 1000
     flash_models:
       match:
         contains:
         - flash
-      daily_limit: 5000
+      daily_limit: 200
     pro_models:
       match:
         contains:
         - pro
-      daily_limit: 1000
+      daily_limit: 100
+    default_limit: 200
+  Ultra_20X:
+    hydrogen_models:
+      match:
+        contains:
+        - hydrogen
+      daily_limit: 200
+    argon_models:
+      match:
+        contains:
+        - argon
+      daily_limit: 200
+    carbon_models:
+      match:
+        contains:
+        - carbon
+      daily_limit: 200
     image_models:
       match:
         contains:
         - image
         - imagen
-      daily_limit: 1000
+      daily_limit: 200
     video_models:
       match:
         contains:
         - veo
+      daily_limit: 50
+    flash_models:
+      match:
+        contains:
+        - flash
       daily_limit: 200
-    default_limit: 1000
+    pro_models:
+      match:
+        contains:
+        - pro
+      daily_limit: 100
+    default_limit: 200
   overrides: {}
 account_presets:
 - id: preset_all
