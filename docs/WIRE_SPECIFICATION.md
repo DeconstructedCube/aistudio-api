@@ -85,9 +85,10 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 | **工具调用 (FunctionCall)** | `[..., [name, args_struct, call_id]]` | 请求中位于下标 `10` (Field 11)；响应中主路径位于下标 `3` (Field 4)，变体回退兼容下标 `10` |
 | **工具结果 (FunctionResponse)** | `[..., [name, response_struct, call_id]]` | 请求中位于下标 `11` (Field 12)；响应中主路径位于下标 `4` (Field 5)，变体回退兼容下标 `11` |
 | **资源引用 (FileData)** | `[null, null, null, null, null, ["file_id"]]` | 下标 `5` (Field 6) 为 `[file_id]` |
-| **可执行代码 (ExecutableCode)** | `[..., "print('hello')", ...]` | 下标 `8` (Field 9) 为模型生成的待执行代码脚本源码 |
-| **代码执行结果 (CodeResult)** | `[..., "output: hello", ...]` | 下标 `9` (Field 10) 为代码执行沙箱返回的输出结果 |
+| **可执行代码 (ExecutableCode)** | `[..., [lang_code, "print('hello')"]]` | 下标 `8` (Field 9) 为 `[lang_code, code]`（`1`=PYTHON, `0`=未指定） |
+| **代码执行结果 (CodeResult)** | `[..., [outcome_code, "output: hello"]]` | 下标 `9` (Field 10) 为 `[outcome_code, output]`（`1`=OK, `2`=FAILED, `3`=DEADLINE_EXCEEDED） |
 | **思维签名 (ThoughtSignature)** | 位于任意 Part 的下标 `14` (`part[14] = "signature"`) | Google 官方校验思维链真实性的签名字符串 |
+| **媒体/语音元数据 (Metadata)** | `part[40]` | 下标 `40`：图像/视频携带 `video_metadata`，语音文本携带 `[speaker, style]` |
 
 #### 参数与返回值的 Protobuf 结构体编码 (Struct & Value)
 在 `FunctionCall.args` 与 `FunctionResponse.response` 中，键值数据遵循 `google.protobuf.Struct` 紧凑数组格式：
@@ -117,12 +118,14 @@ Google AI Studio 在 Web 端（`alkalimakersuite-pa.clients6.google.com`）与�
 | **`10`** | `frequency_penalty` | `float \| null` | 频率惩罚系数 |
 | **`11`** | `response_logprobs` | `bool \| null` | 是否返回 Logprobs |
 | **`12`** | `logprobs` | `int \| null` | Logprobs 候选数 |
-| **`14`** | `image_output_mode` | `list[int] \| null` | 生图输出模式：`[2]` (仅图片) 或 `[2, 1]` (图文混合) |
-| **`16`** | `thinking_config` | `list \| null` | 思考模式：`[mode, null, null, level]`（`1`=LOW, `2`=MEDIUM, `3`=HIGH, `4`=MINIMAL） |
+| **`14`** | `image_output_mode` / `response_modalities` | `list[int] \| null` | 输出模态：`[2]` (仅图片)、`[2, 1]` (图文混合)、`[3]` (AUDIO/TTS)、`[4]` (VIDEO)、`[4, 1]` (VIDEO+TEXT) |
+| **`15`** | `speech_config` | `list \| null` | TTS 语音合成配置：`[[[voice_name]], language_code, [null, [[speaker, [[voice_name]]], ...], mode]]` |
+| **`16`** | `thinking_config` | `list \| null` | 思考模式：`[mode, budget, null, level]`（`budget` 为 `thinkingBudget`；`level`：`1`=LOW, `2`=MEDIUM, `3`=HIGH, `4`=MINIMAL） |
 | **`17`** | `media_resolution` | `int \| null` | 多模态输入分辨率：`1`=LOW, `2`=MEDIUM, `3`=HIGH |
 | **`18`** | `seed` | `int \| null` | 随机种子（Field 19） |
+| **`24`** | `video_config` | `list \| null` | 视频生成配置：`[aspect_ratio, duration, resolution]` |
 | **`26`** | `output_resolution` | `list[str] \| null` | 生图分辨率配置，如 `["1:1", "1K"]` |
-
+| **`45`** | `argon_capability_flag` | `object \| null` | Argon 系列专用能力标记（非 Argon 模型发送前清空） |
 ---
 
 ## 5. 安全策略 (SafetySettings)
@@ -258,6 +261,7 @@ Google AI Studio 响应为 Protobuf JSON 数组，每个流式分块或单次响
 ### 7.2 Candidate 与 Part 字段解析
 
 - `chunk[0][0]`：候选回答对象（Candidate）；
+- `chunk[1]`：PromptFeedback 数组 `[blockReason, safetyRatings, blockReasonMessage]`（当 Candidate 缺失 `finish_reason` 时回退映射 `blockReason`）；
 - `candidate[0]`：结构化内容 `[parts_list, role]`；
 - `candidate[1]`：FinishReason 代码（`1` 对应 STOP）；
 - `candidate[3]`：FinishMessage 说明；

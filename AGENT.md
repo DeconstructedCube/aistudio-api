@@ -54,7 +54,7 @@ uv run python3 main.py server --port 8080
 | `[Errno 98] address already in use` | 端口被占用或上一次服务未完全退出 | 执行 `pkill -f 'main.py server'` 后重试，或指定 `--port <other_port>` |
 | `pydantic-core` 报 `GLIBC_X.Y not found` | 使用了系统 pip 安装而非 `uv` | 清理 `.venv/` 后重新执行 `uv sync` |
 
-### 2.5 临时文件与目录规范 (Termux)
+### 2.4 临时文件与目录规范 (Termux)
 
 - **避免硬编码 `/tmp`**：Android Termux 环境中不存在系统级 `/tmp` 目录。在代码、测试、脚本或临时分析中严禁硬编码 `/tmp/`，否则会引发 `FileNotFoundError: [Errno 2] No such file or directory: '/tmp'`。
 - **统一使用 `tempfile` / `$TMPDIR`**：所有临时目录或文件操作必须通过 `tempfile.gettempdir()` 或 `tempfile.mkdtemp()` 创建（自动安全解析至 `$TMPDIR` 即 `/data/data/com.termux/files/usr/tmp`），并在操作完成后通过 `try...finally` 与 `shutil.rmtree` 及时清理。
@@ -89,18 +89,24 @@ uv run python3 main.py server --port 8080
   - `Q` / `RSE` / `RET` (引号、raise 括号与返回值规范)
   - `A` (内建函数命名防覆盖)
   - `YTT` (flake8-2020 版本兼容性检查)
+  - `T10` (flake8-debugger 调试断点检查)
+  - `ARG` (flake8-unused-arguments 未使用参数检查)
+  - `PGH` (pygrep-hooks 规范检查)
+  - `G` / `ISC` / `ICN` (logging 格式化、隐式字符串拼接与 import 别名规范)
 - **全局豁免（均有明确理由）**：
   - `B008`：FastAPI `Depends()` 注入参数的标准模式
   - `RUF001` / `RUF002` / `RUF003`：注释与文档字符串中的中文全角标点（项目文档语言为中文）
   - `ASYNC109` / `ASYNC230` / `ASYNC240`：异步函数中的超时参数与本地文件访问（单机自托管场景）
   - `E501`：行宽由 formatter 统一处理
-- **按文件豁免**：`main.py` 豁免 `E402`（启动时需先注入 `sys.path`）；`tests/**` 豁免动态殊性规则
+- **按文件豁免**：`main.py` 豁免 `E402`（启动时需先注入 `sys.path`）；`src/aistudio_api/infrastructure/account/account_store.py` 豁免 `PTH`；`tests/**` 豁免动态测试规则
 - **检查与格式化指令**：
   ```bash
   # 代码风格与 Lint 检查
-  ruff check .
+  uv run ruff check .
   # 自动格式化与 import 排序修复
-  ruff check . --fix
+  uv run ruff check . --fix
+  # 代码格式校验
+  uv run ruff format --check .
   ```
 ### 3.3 智能体工具调用与开发工作守则
 
@@ -142,7 +148,7 @@ uv run python3 main.py server --port 8080
 |---|---|---|
 | **Python 代码风格与 Lint** | `uv run ruff check .` | 0 errors |
 | **Python 代码格式化** | `uv run ruff format --check .` | 全部文件已格式化 |
-| **Python 类型检查** | `bun x pyright src tests` | 0 errors |
+| **Python 类型检查** | `bun x pyright src tests` | 0 errors（以根目录 `pyrightconfig.json` 为准） |
 | **Python 单元测试** | `uv run pytest` | 全部通过 |
 | **前端代码规范** | `cd web && bun run lint` | 0 errors, 0 warnings |
 | **前端类型检查** | `cd web && bun run type-check` | 0 errors |
@@ -161,8 +167,8 @@ uv run python3 main.py server --port 8080
 > 1. **原子化文件写入**：所有 JSON 状态文件（`registry.json`、`auth.json`、`meta.json`、`stats.json`、`rotator_state.json`）必须使用 `common.atomic_write_json`（写入临时文件后通过 `Path.replace` 替换），防止并发写入截断。
 > 2. **内存会话切换**：切换账号时，`GatewaySession` 直接加载目标账号的 Cookie 与 `auth_user` / `tier` 元数据并更新 `SessionContext`。
 > 3. **单请求独立快照签名**：每次请求根据 `contents` 计算 SHA-256 摘要，并调用 `WaaSigner` 生成新的一次性 `!` 前缀证明令牌，不跨请求复用。
-> 4. **403 故障转移与重签**：遇到 `The caller does not have permission` (403) 时，累加当前账号 `auth_errors`（调度惩罚权重 +200）并切换至备用账号；无备用号可用时触发当前账号重签重试。
-> 5. **Cookie 过滤**：导入 Cookie 时过滤设备/IP 绑定的易失效项（`OSID`、`__Secure-OSID`、`SIDCC`、`_ga` 等），向上游发请求时通过 `MINIMAL_COOKIE_WHITELIST` 仅携带核心认证项。
+> 4. **403 阶梯自愈与代际隔离**：遇到 `The caller does not have permission` (403) 时，由 `Auth403RetryManager` 执行 5 级重试（第 1~2 次原地重放，第 3~4 次尝试 `RotateCookies` 轮换并 `forceRecreate` 冷重建 Worker 后重签，第 5 次切号故障转移），同时累加 `auth_errors`（调度惩罚权重 +200）。所有异步重试、轮换与写回操作均校验 `cookie_id` 代际（过期请求抛出 `StaleSessionError`），防止旧结果覆盖新导入凭据。
+> 5. **Cookie 过滤与轮换**：导入 Cookie 时通过 `DISCARDABLE_IMPORT_COOKIE_NAMES` 过滤遥测/设备绑定项（`OSID`、`__Secure-OSID`、`_ga`、`_gid`、`NID`、`AEC` 等）与非白名单 `__Host-*` 项；保留 `SIDCC`、`__Secure-1PSIDCC`、`__Secure-3PSIDCC`、`__Secure-1PSIDTS`、`__Secure-3PSIDTS` 等滚动会话凭据并每 7 分钟通过 `RotateCookies` 续期同步至同源兄弟账号；向上游发请求时通过 `MINIMAL_COOKIE_WHITELIST` 仅携带核心认证项。
 > 6. **接口路由与缓存控制**：账号管理 REST 接口位于 `/api/accounts`（兼容 `/accounts`），SPA 与 API 响应下发 `Vary: Accept` 与 `Cache-Control: no-store`。
 
 ## 5. 代码结构索引
@@ -171,7 +177,7 @@ uv run python3 main.py server --port 8080
 aistudio-api/
 ├── web/                           # Web 管理控制台 (Vite + Vue 3 + TS + Tailwind)
 │   ├── src/
-│   │   ├── api/                   # REST 请求封装 (auth, accounts, system, models)
+│   │   ├── api/                   # REST 请求封装 (auth, accounts, system, client)
 │   │   ├── types/                 # TypeScript 类型契约
 │   │   ├── stores/                # Pinia 状态管理
 │   │   ├── components/            # UI 与业务解耦组件
@@ -201,14 +207,15 @@ aistudio-api/
 │   │   └── models.py              # 领域数据结构 (Candidate, ModelOutput 等)
 │   ├── infrastructure/            # 基础设施层
 │   │   ├── account/               # Cookie 解析、SAPISIDHASH 计算与凭据存储 (account_store, cookie_parser)
-│   │   ├── waa/                   # WAA 证明令牌签名客户端 (signer)
-│   │   └── gateway/               # 会话管理 (session)、HTTP/2 传输层 (transport)、模型发现 (model_discovery)、Wire 编解码与流式管道
+│   │   ├── waa/                   # WAA 证明令牌签名客户端 (signer) 与本地守护进程管理 (daemon)
+│   │   └── gateway/               # 会话管理 (session)、请求头大小写合并 (headers)、HTTP/2 传输层 (transport)、模型发现与默认规则 (model_discovery, model_defaults)、Wire 编解码与流式管道 (wire_spec, wire_types, wire_codec, wire_parser, stream_parser, streaming)
 ├── waa-signer/                    # 独立 Go WAA 签名服务 (SpiderMonkey 152 + Firefox 152 DOM)
-│   ├── build.sh                   # 跨平台一键自动下载依赖与静态构建脚本
+│   ├── build.sh / build.bat / build.ps1 # 跨平台一键自动下载依赖与静态构建脚本
 │   ├── cmd/waa-signer/main.go     # HTTP 服务入口 (/health, /v1/proof/mint, /v1/rpc/send)
 │   └── internal/                  # WAA 解释器、SpiderMonkey CGO 绑定与网络栈
 ├── scripts/
-│   ├── setup-env.sh               # 跨平台环境自动检测与 TUR 源配置脚本
+│   ├── setup-env.sh               # Linux/Termux 环境自动检测与 TUR 源配置脚本
+│   ├── setup-env.ps1              # Windows PowerShell 环境初始化与依赖检查脚本
 │   └── waa_vm_inspector.js        # WAA 虚拟机 AST 规格提取、五阶段符号反汇编与 Proof 解码 CLI 工具
 ├── docs/
 │   ├── ARCHITECTURE.md            # 系统整体分层架构与并发控制设计

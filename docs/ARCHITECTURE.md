@@ -46,6 +46,8 @@ flowchart TD
         subgraph GatewaySub ["协议网关与编解码 (gateway/)"]
             Client["client.py<br/>AIStudioClient 统一门面"]
             Session["session.py<br/>GatewaySession 会话与签名协调"]
+            Headers["headers.py<br/>大小写不敏感请求头合并"]
+            WireSpec["wire_spec.py<br/>JSPB 索引常量与容器"]
             WireCodec["wire_codec.py<br/>Protobuf-JSON 请求编码器"]
             WireParser["wire_parser.py<br/>Protobuf-JSON 响应解析器"]
             StreamParser["stream_parser.py<br/>增量流式 JSON 状态机解析器"]
@@ -57,6 +59,7 @@ flowchart TD
         end
         subgraph WaaSub ["WAA 签名子系统 (waa/)"]
             WaaSigner["signer.py<br/>WaaSigner 与 RemoteProofSigner 证明生成"]
+            WaaDaemon["daemon.py<br/>本地 waa-signer 自动拉起与生命周期绑定"]
         end
         subgraph AccountSub ["账号凭据与持久化 (account/)"]
             AccountStore["account_store.py<br/>原子紧凑 JSON 文件凭据库"]
@@ -87,9 +90,9 @@ flowchart TD
 |---|---|
 | `routes_gemini.py` | 对外暴露 `/v1beta/models/{model}:generateContent` 和 `:streamGenerateContent` 端点 |
 | `routes_models.py` | 动态向上游拉取并缓存可用模型列表（如 `gemini-3.7-flash`、`gemini-3.8-flash` 等） |
-| `routes_accounts.py` | 提供 Cookie 单条/Bundle文件导入、多账号递归探活（`u/0`, `u/1`...）、手动激活与删除接口 |
-| `routes_system.py` | 监控指标查询、在线编辑与热重载 `config.yaml` 规则 |
-| `dependencies.py` | 统一 API Key 鉴权拦截（支持 Query 参数 `?key=`、Header `x-goog-api-key`、`x-api-key` 或 `Bearer`） |
+| `routes_accounts.py` | 提供 Cookie 单条/Bundle文件导入、多账号递归探活（`u/0`, `u/1`...）、分组与预设方案、Cookie 轮换续期、手动激活与删除接口 |
+| `routes_system.py` | `/health` 探活、调用统计、调度冷却管理、WAA 签名节点切换、API Key 管理与 `config.yaml` 热重载 |
+| `dependencies.py` | 统一 API 鉴权拦截（`require_api_key` 支持 `?key=`、`x-goog-api-key`、`x-api-key` 或 `Bearer`）与 Web 控制台密码守卫（`require_web_auth`） |
 
 ### 2.2 应用服务层 (`src/aistudio_api/application/`)
 
@@ -112,9 +115,11 @@ flowchart TD
 
 - **WAA 签名子系统 (`waa/`)**：
   - `signer.py`：提供 `extract_content_digest` 内容哈希计算、`RemoteProofSigner` 证明请求客户端以及 `WaaSigner` 门面。支持在 `config.yaml` 中配置多签名服务节点（本地 Go 原生引擎 `waa-signer` 或远程 NodeVM 签名服务），纯手动切换，并自动将签名服务绑定的特征 `User-Agent` 与特征请求头同步到外层 HTTP 传输中。
+  - `daemon.py`：在服务启动时自动检测本地 `waa-signer` 二进制，若不存在健壮运行实例则自动拉起并通过 Linux `prctl(PR_SET_PDEATHSIG, SIGTERM)` 与 `atexit` 绑定主进程生命周期；若未编译本地二进制则自动降级切换至 `remote_spinsnow`。
 - **网关与编解码子系统 (`gateway/`)**：
   - `client.py`：`AIStudioClient` 统一门面，组装请求签名、HTTP 发送、流式生成与会话生命周期。
-  - `session.py`：`GatewaySession` 与 `SessionContext` 核心，管理内存态账号上下文切换、WAA 快照签名生成与 HTTP 传输路由。
+  - `headers.py`：`merge_header_case_insensitive` 请求头大小写不敏感合并工具，避免 HTTP/2 传输层因大小写差异重复发送同名头（如 `X-Goog-Ext-519733851-Bin`）触发上游 403。
+  - `session.py`：`GatewaySession` 与 `SessionContext` 核心，管理内存态账号上下文切换、按账号加锁串行化 WAA 快照签名、凭据代际校验与 HTTP 传输路由。
   - `wire_spec.py`：Protobuf-over-JSON (JSPB) 字段索引枚举与 `JspbArray` 稀疏容器定义。
   - `wire_codec.py`：JSPB 请求结构直接编码、参数组装与内置工具注入。
   - `wire_parser.py`：JSPB 响应解析器，处理 Struct 结构体、ListValue 数组与状态码映射。
@@ -172,25 +177,26 @@ sequenceDiagram
 
 - 通过 `HTTPStreamTransport` 维护共享 `httpx.AsyncClient` 连接池。
 - 流式请求通过 `codecs.getincrementaldecoder("utf-8")` 与 `IncrementalJSONStreamParser` 进行增量解码与括号深度切块，避免多字节 UTF-8 字符跨 chunk 截断乱码。
-### 4.2 模型独立限流、403 鉴权隔离与 Sticky 调度
+### 4.2 模型独立限流、订阅等级抢切与 403 阶梯自愈
 
-- **模型级配额隔离**：各账号针对不同模型（如 `gemini-3.7-flash`、`gemini-3.8-flash`）的 429 状态独立记录，单模型额度耗尽不影响其他模型的正常调用。
-- **403 鉴权异常快速避让与自愈**：当账号遭遇 `The caller does not have permission` (403) 异常时，调度器立即对该账号增加动态调度惩罚权重（`auth_errors * 200.0`），优先调度至健康备用账号；若无备用号则触发在位会话刷新与重新签名自愈。
-- **Sticky 黏性调度**：默认保持当前活跃账号，直到该账号针对当前模型遭遇 429 限流或 403 异常时，才自动顺延切换至下一个健康账号。
-- **自动配额重置**：每日美西时间午夜（00:00 PST / 16:00 CST）自动重置 RPD 限制，无需重启服务。
+- **模型级配额隔离与渐进式冷却**：各账号针对不同模型的 429 状态独立记录，单模型额度耗尽不影响其他模型；触发 429 后按次数从短冷却（`60s`）进入 `drip_mode` 渐进冷却（`300s` / `600s`，上限不超过距美西午夜时间）。
+- **付费模型订阅抢切（Tier Preemption）**：`ensure_active_account` 根据 `config.yaml` 的 `paid_model_rules` 与 `ListModels` 缓存的 `accessModes`，在请求 Pro / Ultra 专属模型且当前账号订阅等级不足时，自动提前抢切至满足条件的付费账号。
+- **5 级 403 阶梯自愈 (`Auth403RetryManager`)**：遇到 `The caller does not have permission` (403) 时累加当前账号 `auth_errors`（调度惩罚权重 `auth_errors * 200.0`），并按 5 级阶梯重试：前 2 次原地重放已签名请求；第 3~4 次先尝试 `RotateCookies` 轮换并通过 `forceRecreate` 通知签名服务冷重建 Worker 后重新签名；第 5 次携带 `forceRecreate` 切换至备用账号。
+- **Sticky 黏性调度与后台 Cookie 轮换**：默认保持当前活跃账号（低于 `stickiness_threshold` 时获得 `-stickiness_bonus` 打分优势），每日美西时间午夜（00:00 PST）自动重置每日统计与限额；后台每 7 分钟巡检并调用 `RotateCookies` 刷新 `__Secure-1PSIDTS` / `SIDCC`，同步更新同源兄弟账号。
 
-### 4.3 防切号雪崩互斥锁 (`_switch_lock`) 与自愈
+### 4.3 防切号雪崩互斥锁 (`_switch_lock`) 与长耗时保活
 
 当多个并发协程同时遭遇 429 限流或 403 权限异常时：
 1. 率先获得 `_switch_lock` 的协程执行实质性切号与内存会话上下文切换；
 2. 后续排队获得锁的协程通过双重检查（Double-Checked Locking），识别到账号已被切换至健康账号且对当前模型可用，直接复用重试，避免并发异常导致多次无谓切号；
-3. 若为单账号或备用账号全部耗尽时，系统自动对当前账号触发在位会话刷新（In-Place Refresh）并重新签名重试。
+3. 若为单账号或备用账号全部耗尽时，非会话失效场景下自动对当前账号触发在位会话刷新并重新签名重试；
+4. **非流式防超时保活**：非流式请求在超过 10 秒未返回时自动切换为 `StreamingResponse`，每 10 秒发送 `\n` 换行保活帧，防止前置反代（如 Cloudflare 524）超时断连。
 
-### 4.4 会话切换与请求上下文绑定
+### 4.4 会话切换、请求上下文绑定与代际隔离
 
-在多账号并发场景下，`GatewaySession` 维护请求级凭据隔离：
-1. **内存上下文切换**：触发账号轮换时，`GatewaySession.transition_to_account` 从目标账号的 `auth.json` 与 `meta.json` 加载 Cookie、`auth_user` 与 `tier`，构造新的 `SessionContext`；
-2. **请求上下文绑定**：每个 `PreparedRequest` 在签名时绑定当时的 `SessionContext`，后续 HTTP 传输直接使用该上下文的凭据，避免并发切号期间跨账号串号。
+在多账号并发场景下，`GatewaySession` 维护请求级凭据与代际隔离：
+1. **内存上下文切换**：触发账号轮换时，`GatewaySession.transition_to_account` 从目标账号的 `auth.json` 与 `meta.json` 加载 Cookie、`auth_user`、`tier` 与 `cookie_id`，构造新的 `SessionContext`；
+2. **请求上下文绑定与代际校验**：每个 `PreparedRequest` 在签名时绑定当时的 `SessionContext`（含 `cookie_id` 导入代际），同一账号的签名操作通过 `_signing_locks` 串行化；若请求处理期间账号凭据被重新导入替换，旧请求检测到代际变化后触发 `StaleSessionError` 重新签名，绝不用旧认证结果惩罚或覆盖新凭据。
 
 ## 5. 跨平台支持与依赖隔离
 

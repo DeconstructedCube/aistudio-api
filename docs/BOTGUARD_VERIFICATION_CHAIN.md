@@ -332,10 +332,10 @@ flowchart TD
 > **上游偶发 403 / 404 说明**：
 > 在上游风控抽查或连接抖动时，即使 Cookie、SAPISIDHASH 与 `!proof` 签名均合法，上游仍可能偶发返回 403 `The caller does not have permission` 或 404 `Ambiguous request for service`。此类响应并非账号封禁，通常通过重放、在位重签或切换账号即可恢复。
 
-网关针对该报错建立两级自愈机制：
-1. **多账号故障转移（Failover）**：网关自动对触发 403 的故障账号增加调度惩罚分（`auth_errors * 200.0`），优先调度下一个健康账号，同时不加硬冷却锁，允许同账号重新请求签名自愈。
-2. **单账号在位重签（In-Place Recovery）**：当首次遭遇 403 或无备用账号可用时，网关自动重新加载账号凭据并请求 `WaaSigner` 生成全新证明令牌进行重试，恢复服务可用性。
-
+网关针对该报错建立 **5 级阶梯自愈机制（`Auth403RetryManager`）**，并在全流程中绑定 `auth_errors`（调度惩罚权重 `auth_errors * 200.0`）与 `cookie_id` 代际校验：
+1. **第 1~2 次 403（在位重放）**：保留当前已签名请求原样重放，快速消化上游偶发风控抖动；
+2. **第 3~4 次 403（轮换与冷重建重签）**：第 3 次先触发 `RotateCookies` 轮换滚动 Cookie，并通过 `forceRecreate=true` 通知签名服务销毁热 Worker 冷重建后重新生成签名，第 4 次再次重签；
+3. **第 5 次 403（多账号故障转移）**：携带 `forceRecreate=true` 调用 `try_switch_account` 切换至下一个健康备用账号重试（单账号模式下则重置当前会话）。
 ### 6.2 外层 HTTP 请求头与签名特征环境一致性约束 (403 权限异常根源)
 
 BotGuard 在前端或签名服务沙箱执行时，会调用 `navigator.userAgent` 提取当前宿主现场特征，并将此特征作为签名载荷的一部分加密到 Proof Token 中。

@@ -47,15 +47,15 @@
 
 | Feature | Description |
 |---|---|
-| **Gemini API Compatibility** | Supports `/v1beta/...` endpoints including Thinking, multimodal inputs, function calling, and image generation |
+| **Gemini API Compatibility** | Supports `/v1beta/...` endpoints including Thinking, multimodal inputs, function calling, image generation, TTS audio synthesis, and video generation |
 | **Dynamic Model Discovery** | Automatically synchronizes and discovers available models from upstream Google AI Studio |
-| **Multi-Account Rotation** | Manages multiple accounts with automatic failover, tracks 429 rate limits per model independently, and resets quotas at midnight Pacific Time |
+| **Multi-Account Rotation** | Manages multiple accounts with automatic failover, per-model 429 cooldown isolation, Pacific midnight reset, paid-tier preemption, and 7-minute periodic Cookie rotation (`RotateCookies`) |
 | **Runtime State Persistence** | Model usage statistics (`stats.json`) and account 429 cooldown & quota status (`rotator_state.json`) are automatically persisted to disk across restarts |
 | **Downstream Parameter Fault Tolerance** | `drop_unsupported_params` automatically drops unsupported safety categories (e.g. `HARM_CATEGORY_CIVIC_INTEGRITY`) and tools to prevent 400 errors |
 | **Multi-Account Probing** | Extracts and verifies sub-accounts (`u/0`, `u/1`...) automatically when importing a multi-session Cookie |
-| **Built-in Tools** | Supports official tools such as Google Search, Google Maps, and Code Execution sandbox |
-| **Dual-Track Signing & Feature Alignment** | Browserless architecture supporting standalone Go signer (SpiderMonkey 152) or remote NodeVM signers with matched User-Agent/header binding |
-| **Web Management Console** | Built-in web dashboard for account management (supporting text and JSON bundle file imports), live request metrics, and runtime `config.yaml` hot reloading |
+| **Built-in Tools** | Supports official tools such as Google Search, Google Maps, URL Context, and Code Execution sandbox |
+| **Dual-Track Signing & Feature Alignment** | Browserless architecture supporting standalone Go signer (SpiderMonkey 152) or remote NodeVM signers with matched User-Agent/header binding and 5-stage 403 recovery |
+| **Web Management Console** | Built-in web dashboard for account management (groups, presets, text/JSON bundle imports), live request metrics, WAA signer switching, logging/dump controls, and `config.yaml` hot reloading |
 > [!NOTE]
 > **Memory Footprint**: Operating completely browserless, resident memory is only ~35 - 50 MB with sub-second cold start, running smoothly even on lightweight mobile Termux environments or entry-level servers.
 ## Architecture & Documentation
@@ -279,7 +279,7 @@ Open `http://localhost:8080` in your browser to access the Web Console.
 | `AISTUDIO_CONFIG_FILE` | string | `config.yaml` | Path to model rules and default tools configuration YAML |
 | `AISTUDIO_PERSIST_STATS` | bool | `true` | Persist request and token usage metrics across service restarts |
 | `AISTUDIO_PERSIST_ROTATOR` | bool | `true` | Persist account 429 rate limit dates & cooldowns across restarts |
-| `AISTUDIO_PROOF_SERVER_URL` | string | `http://127.0.0.1:8081` | Proof server URL override; recommended to configure servers & bound feature headers in `config.yaml` (`waa.servers`) with manual switching |
+| `AISTUDIO_PROOF_SERVER_URL` | string | `https://waa.spinsnow.fun` | Fallback proof server URL; active signer & bound User-Agent are primarily configured in `config.yaml` (`waa.active_server`, falling back to `remote_spinsnow` if local binary is absent) |
 | `AISTUDIO_DEFAULT_TEXT_MODEL` | string | `gemini-3.7-flash` | Default text model |
 | `AISTUDIO_TIMEZONE` | string | Auto | Wire protocol timezone (`America/Los_Angeles` by default) |
 | `AISTUDIO_DUMP_REQUESTS` | bool | `false` | Dump API request/response exchanges to console logs (enabled via `DEBUG=1`) |
@@ -434,8 +434,8 @@ if response.function_calls:
 The service includes a built-in static Web Console served at `http://localhost:8080`:
 
 - **Dashboard**: Real-time view of service health, per-model request stats, success rates, and rate-limit cooldown status.
-- **Accounts**: Import Cookie credentials (single text or bundle files), auto-probe multiple accounts, switch the active account, or reset rate limits.
-- **Settings**: Online editor for `config.yaml` with instant hot-reloading on save.
+- **Accounts**: Import Cookie credentials (single text or bundle files), auto-probe multiple accounts, organize groups and one-click presets, switch the active account, or reset rate limits.
+- **Settings**: Online editor for `config.yaml` with instant hot-reloading, manual WAA signer server switching, API key management, and dynamic log/dump settings.
 - **Access Control**: Enable authentication by setting `AISTUDIO_WEB_PASSWORD`.
 
 ---
@@ -459,7 +459,7 @@ Python quality checks and tests:
 # Run code style & lint check
 uv run ruff check .
 # Run static type checking
-bun x pyright
+bun x pyright src tests
 
 # Run test suite
 uv run pytest

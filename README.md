@@ -47,15 +47,15 @@
 
 | 功能模块 | 说明 |
 |---|---|
-| **Gemini 协议兼容** | 支持 `/v1beta/...` 接口规范，包括 Thinking 思维链、多模态、Function Calling 工具调用及图片生成 |
+| **Gemini 协议兼容** | 支持 `/v1beta/...` 接口规范，包括 Thinking 思维链、多模态、Function Calling 工具调用、图片生成、TTS 语音合成及视频生成 |
 | **动态模型发现** | 自动向上游同步可用模型列表，支持 `gemini-3.7-flash`、`gemini-3.8-flash` 等最新模型 |
-| **多账号自动轮换** | 支持多账号管理与故障自动切换，按模型独立记录 429 配额，每日美西午夜自动重置 |
+| **多账号自动轮换** | 支持多账号管理与故障自动切换，按模型独立记录 429 冷却，每日美西午夜自动重置；支持付费模型按订阅等级抢切与 7 分钟周期 Cookie 自动轮换续期 |
 | **运行状态持久化** | 模型调用量、Token 消耗统计 (`stats.json`) 以及账号 429 限额与冷却状态 (`rotator_state.json`) 自动落盘，容器/服务重启不丢失状态 |
 | **下游参数容错与丢弃** | 支持配置 `drop_unsupported_params` 自动过滤下游传入的非标准安全分类（如 `HARM_CATEGORY_CIVIC_INTEGRITY`）与不兼容工具，避免 400 阻断 |
 | **批量子账号探活** | 导入单个包含多个 Google 身份的 Cookie 后，自动探测子账号（`u/0`, `u/1`...）并分别建档 |
-| **内置搜索与工具** | 支持 Google Search 联网搜索、Google Maps、代码执行沙箱等官方扩展能力 |
-| **双轨签名与特征对齐** | 脱离重型浏览器，支持本地 Go 签名服务 (SpiderMonkey 152) 与远程 NodeVM 签名节点，自动绑定匹配的 User-Agent 与请求头特征 |
-| **Web 管理面板** | 提供 Web 管理控制台，支持账号管理（文本与 JSON 批量导入）、调用量监控、在线编辑与热重载 `config.yaml` |
+| **内置搜索与工具** | 支持 Google Search 联网搜索、Google Maps、代码执行沙箱、URL 上下文提取等官方扩展能力 |
+| **双轨签名与特征对齐** | 脱离重型浏览器，支持本地 Go 签名服务 (SpiderMonkey 152) 与远程 NodeVM 签名节点，自动绑定匹配的 User-Agent 与请求头特征，并支持 5 级 403 自愈重试 |
+| **Web 管理面板** | 提供 Web 管理控制台，支持账号分组与预设方案、文本/JSON 批量导入、调用量监控、WAA 节点切换、日志转储控制及在线热重载 `config.yaml` |
 > [!NOTE]
 > **内存占用参考**：脱离重型浏览器后，服务常驻物理内存仅约 35 - 50 MB，冷启动毫秒级，即使在入门级 Android 手机（Termux）或轻量服务器上亦可稳定高效常驻。
 ## 技术架构与文档
@@ -280,7 +280,7 @@ docker compose up -d
 | `AISTUDIO_CONFIG_FILE` | string | `config.yaml` | 模型规则与默认工具配置文件路径 |
 | `AISTUDIO_PERSIST_STATS` | bool | `true` | 是否持久化模型调用与 Token 统计（1=开启，0=关闭） |
 | `AISTUDIO_PERSIST_ROTATOR` | bool | `true` | 是否持久化账号 429 冷却与调度状态（1=开启，0=关闭） |
-| `AISTUDIO_PROOF_SERVER_URL` | string | `http://127.0.0.1:8081` | 签名服务器地址覆盖项；推荐在 `config.yaml` 的 `waa.servers` 中统一配置各节点及其特征 User-Agent 并手动切换 |
+| `AISTUDIO_PROOF_SERVER_URL` | string | `https://waa.spinsnow.fun` | 签名服务兜底地址；默认优先使用 `config.yaml` 中 `waa.active_server` 指定的节点及其绑定的特征 User-Agent（无本地二进制时自动切换为 `remote_spinsnow`） |
 | `AISTUDIO_DEFAULT_TEXT_MODEL` | string | `gemini-3.7-flash` | 默认文本模型 |
 | `AISTUDIO_TIMEZONE` | string | 自动探测 | Wire 协议交互时区（默认 `America/Los_Angeles`） |
 | `AISTUDIO_DUMP_REQUESTS` | bool | `false` | 是否在终端转储每次 API 交互报文详情（支持 `DEBUG=1` 触发） |
@@ -434,8 +434,8 @@ if response.function_calls:
 系统内置静态打包的 Web 前端管理控制台（访问 `http://localhost:8080`）：
 
 - **仪表盘 (Dashboard)**：实时展示服务健康状况、各模型请求量、成功率及 429 冷却指标。
-- **账号管理 (Accounts)**：支持 Cookie 单条与凭据包批量导入、自动探测多账号、手动切换当前活跃账号或重置冷却状态。
-- **系统设置 (Settings)**：在线编辑 `config.yaml`（支持配置 profiles 与 models 默认规则），保存后服务端即时热重载。
+- **账号管理 (Accounts)**：支持 Cookie 单条与凭据包批量导入、自动探测多账号、业务分组与预设方案一键切换、手动切换活跃账号或重置冷却状态。
+- **系统设置 (Settings)**：在线编辑与热重载 `config.yaml`、手动切换 WAA 签名服务节点、管理 API Key 以及动态调整日志级别与请求转储开关。
 - **访问鉴权**：设置环境变量 `AISTUDIO_WEB_PASSWORD` 后自动开启登录鉴权守卫。
 
 ---
@@ -460,7 +460,7 @@ Python 端质量检查与测试：
 # 执行代码风格与 Lint 检查
 uv run ruff check .
 # 执行静态类型检查
-bun x pyright
+bun x pyright src tests
 
 # 执行单元测试套件
 uv run pytest

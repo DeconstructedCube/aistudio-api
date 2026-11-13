@@ -4,9 +4,10 @@
 
 ## 方案特性
 1. **独立进程与嵌入式运行时**：基于 SpiderMonkey 152 引擎与 Firefox 152 宿主环境，直接执行 BotGuard 挑战，无需启动完整无头浏览器。
-2. **实测性能参考**：
+2. **实测性能与热复用寿命**：
    - 首次冷启动（加载页面与初始化 VM）：约 5-8 秒
    - 二次热复用：约 10-30 毫秒
+   - 热 Worker 最长复用时长为 **6 小时**（`maxWorkerAge`），超时后自动回收并冷启动刷新页面构建号与 `visitId`，防止长驻老化触发 403
 3. **环境特征匹配**：
    - 提取与当前 VM 会话绑定的 `User-Agent`、`X-AIStudio-Visit-Id`、`X-Goog-Ext-519733851-Bin`、`X-Goog-Api-Key` 等动态头并在响应中返回。
    - 避免外层 HTTP 请求头与 Proof 加密声明的客户端环境不一致导致 403 错误。
@@ -88,7 +89,11 @@ nohup ./bin/waa-signer -listen "127.0.0.1:8081" -proxy "http://127.0.0.1:7890" >
   "g1Tier": "TIER1",
   "model": "models/gemini-3.8-flash",
   "prompt": "用户提示词文本",
-  "wireContents": []
+  "pagePrompt": "页面同步用最后一轮文本（可选，缺省时从 wireContents 提取）",
+  "digest": "预计算的 SHA-256 内容摘要（可选，缺省时按绑定提示词计算）",
+  "wireContents": [],
+  "proxy": "可选单次请求覆盖代理 URL",
+  "forceRecreate": false
 }
 ```
 **响应体 (JSON)**：
