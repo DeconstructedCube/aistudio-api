@@ -17,6 +17,10 @@ class SessionExpiredError(AuthError):
     """明确被 Google 重定向至登录页（Cookie 真正失效）。"""
 
 
+class StaleSessionError(AistudioError):
+    """请求持有的凭据代际已被重新导入替换，重试时不得惩罚当前账号。"""
+
+
 class UsageLimitExceeded(AistudioError):
     pass
 

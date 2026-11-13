@@ -14,11 +14,18 @@ from aistudio_api.api.app import app
 from aistudio_api.api.dependencies import get_client
 from aistudio_api.domain.errors import UsageLimitExceeded
 from aistudio_api.domain.models import Candidate, ModelOutput
+from aistudio_api.infrastructure.gateway.client import PreparedRequest
 
 
 @pytest.fixture
 def mock_client() -> MagicMock:
-    return MagicMock()
+    client = MagicMock()
+    client.prepare_request = AsyncMock(
+        return_value=PreparedRequest(
+            url="https://example.test/rpc", headers={}, body="[]"
+        )
+    )
+    return client
 
 
 @pytest.mark.asyncio
@@ -158,10 +165,11 @@ async def test_genai_sdk_function_calling_and_response_flow(
 
     async def fake_generate(
         model: str,
-        contents: list[object],
         **kwargs: object,
     ) -> ModelOutput:
-        captured_requests.append((model, contents))
+        captured_requests.append(
+            (model, mock_client.prepare_request.call_args.kwargs["contents"])
+        )
         if len(captured_requests) == 1:
             return ModelOutput(
                 candidates=[
@@ -342,7 +350,8 @@ async def test_genai_sdk_tool_config_forwarding(mock_client: MagicMock) -> None:
                 ),
             )
             assert mock_client.generate_content.called
-            call_kwargs = mock_client.generate_content.call_args.kwargs
+            mock_client.prepare_request.assert_awaited_once()
+            call_kwargs = mock_client.prepare_request.call_args.kwargs
             assert "tool_config" in call_kwargs
             assert call_kwargs["tool_config"] == [None, [2]]
     finally:

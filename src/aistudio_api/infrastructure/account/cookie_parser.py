@@ -401,6 +401,19 @@ def get_auth_user_from_meta(auth_file: str | Path | None) -> str:
     return "0"
 
 
+def get_cookie_id_from_meta(auth_file: str | Path | None) -> str:
+    """读取导入代际；旧版元数据缺少 cookie_id 时使用空串。"""
+    if auth_file:
+        try:
+            meta_path = Path(auth_file).parent / "meta.json"
+            if meta_path.is_file():
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                return str(meta.get("cookie_id") or "")
+        except Exception:
+            pass
+    return ""
+
+
 def get_tier_from_meta(auth_file: str | Path | None) -> str:
     """Read benefit tier from meta.json adjacent to auth_file."""
     if auth_file:

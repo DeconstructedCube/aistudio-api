@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,14 +30,42 @@ const (
 	generateContentURL = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent"
 )
 
+// poolWorker 只暴露池和请求处理需要的操作，离线测试可使用内存 Worker。
+type poolWorker interface {
+	State() aistudio.WorkerState
+	Close() error
+	BrowserStorageState(context.Context) (aistudio.StorageState, error)
+	ProofByDigest(context.Context, string, string) (string, http.Header, error)
+	ProtocolHeaders(context.Context, string) (http.Header, error)
+	SendProtected(context.Context, aistudio.ProtectedRequest) (*aistudio.RPCResponse, error)
+}
+
+type workerFactory func(context.Context, string, camoufoxnative.Options, aistudio.StorageState) (poolWorker, error)
+
 type workerEntry struct {
-	mu        sync.Mutex
-	worker    *aistudio.NativeWorker
-	statePath string
-	authUser  int
-	proxy     string
-	createdAt time.Time
-	lastUsed  time.Time
+	mu               sync.Mutex
+	workerMu         sync.RWMutex
+	worker           poolWorker
+	inputFingerprint string
+	inputCookies     map[cookieIdentity][]fingerprintCookie
+	statePath        string
+	authUser         int
+	proxy            string
+	createdAt        time.Time
+	lastUsed         time.Time
+}
+
+// workerSnapshot 只持短锁，健康检查不会等待签名或整段响应流。
+func (entry *workerEntry) workerSnapshot() poolWorker {
+	entry.workerMu.RLock()
+	defer entry.workerMu.RUnlock()
+	return entry.worker
+}
+
+func (entry *workerEntry) setWorker(worker poolWorker) {
+	entry.workerMu.Lock()
+	defer entry.workerMu.Unlock()
+	entry.worker = worker
 }
 
 type WorkerPool struct {
@@ -46,6 +75,7 @@ type WorkerPool struct {
 	proxy    string
 	locale   string
 	timezone string
+	factory  workerFactory
 }
 
 func NewWorkerPool(stateDir, proxy, locale, timezone string) *WorkerPool {
@@ -55,7 +85,23 @@ func NewWorkerPool(stateDir, proxy, locale, timezone string) *WorkerPool {
 		proxy:    proxy,
 		locale:   locale,
 		timezone: timezone,
+		factory:  createNativeWorker,
 	}
+}
+
+// createNativeWorker 保留真实初始化的磁盘操作，假工厂不会创建或清理文件。
+func createNativeWorker(ctx context.Context, key string, opts camoufoxnative.Options, state aistudio.StorageState) (poolWorker, error) {
+	if err := os.MkdirAll(filepath.Dir(opts.StorageStatePath), 0o755); err != nil {
+		return nil, fmt.Errorf("创建账户状态目录失败: %w", err)
+	}
+	if err := aistudio.WriteStorageState(opts.StorageStatePath, state); err != nil {
+		return nil, fmt.Errorf("写入 storage-state.json 失败: %w", err)
+	}
+	worker, err := aistudio.NewSpiderMonkeyWorker(ctx, key, opts)
+	if err != nil {
+		return nil, err
+	}
+	return worker, nil
 }
 
 func (p *WorkerPool) CloseAll() {
@@ -69,21 +115,27 @@ func (p *WorkerPool) CloseAll() {
 
 	for _, entry := range entries {
 		entry.mu.Lock()
-		if entry.worker != nil {
-			_ = entry.worker.Close()
-			entry.worker = nil
+		if worker := entry.workerSnapshot(); worker != nil {
+			_ = worker.Close()
+			entry.setWorker(nil)
 		}
+		entry.inputFingerprint = ""
+		entry.inputCookies = nil
 		entry.mu.Unlock()
 	}
 }
 
 func (p *WorkerPool) ActiveCount() int {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-	count := 0
+	entries := make([]*workerEntry, 0, len(p.entries))
 	for _, entry := range p.entries {
-		if entry.worker != nil {
-			st := entry.worker.State()
+		entries = append(entries, entry)
+	}
+	p.mu.RUnlock()
+	count := 0
+	for _, entry := range entries {
+		if worker := entry.workerSnapshot(); worker != nil {
+			st := worker.State()
 			if st.Phase == aistudio.WorkerReady || st.Phase == aistudio.WorkerBusy {
 				count++
 			}
@@ -105,6 +157,158 @@ func accountKeyFromState(state aistudio.StorageState, authUser int) string {
 	return fmt.Sprintf("acc_%s_u%d", hex.EncodeToString(sum[:6]), authUser)
 }
 
+type cookieIdentity struct {
+	Domain string
+	Path   string
+	Name   string
+}
+
+type cookieFingerprints struct {
+	input   string
+	cookies map[cookieIdentity][]fingerprintCookie
+}
+
+type fingerprintCookie struct {
+	Name     string
+	Value    string
+	Domain   string
+	Path     string
+	HTTPOnly bool
+	Secure   bool
+	RPC      bool
+}
+
+// effectiveCookieFingerprint 保留有效 Cookie 的域和路径，同名同范围的顺序也保留。
+func effectiveCookieFingerprint(state aistudio.StorageState) (cookieFingerprints, error) {
+	now := time.Now()
+	header, err := state.CookieHeader(generateContentURL, now)
+	if err != nil {
+		return cookieFingerprints{}, err
+	}
+	if header == "" {
+		return cookieFingerprints{}, fmt.Errorf("没有可用于上游 RPC 的有效 Cookie")
+	}
+	all := make([]fingerprintCookie, 0, len(state.Cookies))
+	for _, cookie := range state.Cookies {
+		if cookie.Value == "" || cookie.Expires >= 0 && cookie.Expires <= float64(now.UnixNano())/1e9 {
+			continue
+		}
+		single := aistudio.StorageState{Cookies: []aistudio.StateCookie{cookie}}
+		rpcHeader, headerErr := single.CookieHeader(generateContentURL, now)
+		if headerErr != nil {
+			return cookieFingerprints{}, headerErr
+		}
+		all = append(all, fingerprintCookie{
+			Name: cookie.Name, Value: cookie.Value,
+			Domain: strings.ToLower(strings.TrimPrefix(cookie.Domain, ".")), Path: cookie.Path,
+			HTTPOnly: cookie.HTTPOnly, Secure: cookie.Secure, RPC: rpcHeader != "",
+		})
+	}
+	sort.SliceStable(all, func(left, right int) bool {
+		a, b := all[left], all[right]
+		if a.Domain != b.Domain {
+			return a.Domain < b.Domain
+		}
+		if a.Path != b.Path {
+			return a.Path < b.Path
+		}
+		return a.Name < b.Name
+	})
+	encoded, err := json.Marshal(all)
+	if err != nil {
+		return cookieFingerprints{}, err
+	}
+	groups := make(map[cookieIdentity][]fingerprintCookie)
+	for _, cookie := range all {
+		key := cookieIdentity{Domain: cookie.Domain, Path: cookie.Path, Name: cookie.Name}
+		groups[key] = append(groups[key], cookie)
+	}
+	sum := sha256.Sum256(encoded)
+	return cookieFingerprints{input: hex.EncodeToString(sum[:]), cookies: groups}, nil
+}
+
+func sameCookieGroup(left, right []fingerprintCookie) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index, cookie := range left {
+		if cookie != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// cookieMetadataExplicit 与解析器采用相同形态判断；原始 Cookie 头不携带 Secure/HTTPOnly 标志。
+func cookieMetadataExplicit(rawCookies string) bool {
+	text := strings.TrimSpace(strings.TrimPrefix(rawCookies, string(rune(0xFEFF))))
+	return strings.HasPrefix(text, "[") || strings.HasPrefix(text, "{") || strings.Contains(text, "\t")
+}
+
+// matchesCurrentCredentials 比较真实凭据；只有明确改变的导出标志才约束当前 Worker 元数据。
+func matchesCurrentCredentials(input, previous, current []fingerprintCookie, explicitMetadata bool) bool {
+	if len(input) != len(current) {
+		return false
+	}
+	for index, cookie := range input {
+		active := current[index]
+		if cookie.Name != active.Name || cookie.Value != active.Value || cookie.Domain != active.Domain || cookie.Path != active.Path {
+			return false
+		}
+		if !explicitMetadata {
+			continue
+		}
+		if len(previous) != len(input) {
+			if cookie.HTTPOnly != active.HTTPOnly || cookie.Secure != active.Secure {
+				return false
+			}
+			continue
+		}
+		old := previous[index]
+		if cookie.HTTPOnly != old.HTTPOnly && cookie.HTTPOnly != active.HTTPOnly ||
+			cookie.Secure != old.Secure && cookie.Secure != active.Secure {
+			return false
+		}
+	}
+	return true
+}
+
+// cookieUpdatesMatchCurrent 只核对调用者实际改变的字段，未回传的内部更新不回退。
+func cookieUpdatesMatchCurrent(input, previous, current map[cookieIdentity][]fingerprintCookie, explicitMetadata bool) bool {
+	for key, incoming := range input {
+		if !sameCookieGroup(incoming, previous[key]) && !matchesCurrentCredentials(incoming, previous[key], current[key], explicitMetadata) {
+			return false
+		}
+	}
+	for key, old := range previous {
+		if _, exists := input[key]; exists {
+			continue
+		}
+		// RPC 头无法携带页面专属 Cookie，缺失这些字段不表示用户替换了凭据。
+		if len(old) > 0 && !old[0].RPC {
+			continue
+		}
+		if len(current[key]) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// retainUnsentCookieInputs 记住 RPC 回传无法携带的旧输入，兼容下一次带页面 Cookie 的请求。
+func retainUnsentCookieInputs(previous, input map[cookieIdentity][]fingerprintCookie) map[cookieIdentity][]fingerprintCookie {
+	next := make(map[cookieIdentity][]fingerprintCookie, len(input))
+	for key, cookies := range input {
+		next[key] = append([]fingerprintCookie(nil), cookies...)
+	}
+	for key, cookies := range previous {
+		if _, exists := next[key]; !exists && len(cookies) > 0 && !cookies[0].RPC {
+			next[key] = append([]fingerprintCookie(nil), cookies...)
+		}
+	}
+	return next
+}
+
 func (p *WorkerPool) getEntry(key string) *workerEntry {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -116,82 +320,139 @@ func (p *WorkerPool) getEntry(key string) *workerEntry {
 	return entry
 }
 
-func (p *WorkerPool) AcquireWorker(
-	ctx context.Context,
-	rawCookies string,
-	authUser int,
-	model string,
-	proxyOverride string,
-	forceRecreate bool,
-) (*aistudio.NativeWorker, string, error) {
-	state, err := aistudio.ParseCookieText(rawCookies)
+// workerLease 将获取、签名、取头和响应流放在同一账户租约内，避免中途关闭 Worker。
+type workerLease struct {
+	pool             *WorkerPool
+	entry            *workerEntry
+	worker           poolWorker
+	poolState        string
+	key              string
+	options          camoufoxnative.Options
+	inputState       aistudio.StorageState
+	inputFingerprint cookieFingerprints
+	releaseOnce      sync.Once
+}
+
+func (lease *workerLease) Release() {
+	lease.releaseOnce.Do(func() { lease.entry.mu.Unlock() })
+}
+
+// Recreate 只能在持有租约时调用；当前 Worker 状态优先，保留其已轮换的凭据。
+func (lease *workerLease) Recreate(ctx context.Context) error {
+	if lease.entry.workerSnapshot() != lease.worker {
+		return fmt.Errorf("Worker 已被替换，拒绝陈旧的重建请求")
+	}
+	state := lease.inputState
+	if current, err := lease.worker.BrowserStorageState(ctx); err == nil {
+		state = current
+	}
+	previousInputCookies := lease.entry.inputCookies
+	worker, err := lease.pool.initializeWorker(ctx, lease.entry, lease.key, lease.options, state, lease.inputFingerprint)
 	if err != nil {
-		return nil, "", fmt.Errorf("解析 Cookie 失败: %w", err)
+		return err
+	}
+	lease.entry.inputCookies = retainUnsentCookieInputs(previousInputCookies, lease.inputFingerprint.cookies)
+	lease.worker = worker
+	lease.poolState = "cold"
+	return nil
+}
+
+// initializeWorker 由账户租约保护，只在成功初始化后发布 Worker 和输入指纹。
+func (p *WorkerPool) initializeWorker(ctx context.Context, entry *workerEntry, key string, opts camoufoxnative.Options, state aistudio.StorageState, inputFingerprint cookieFingerprints) (poolWorker, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	entry.inputFingerprint = ""
+	entry.inputCookies = nil
+	entry.statePath = ""
+	if previous := entry.workerSnapshot(); previous != nil {
+		err := previous.Close()
+		entry.setWorker(nil)
+		if err != nil {
+			return nil, fmt.Errorf("关闭旧 Worker 失败: %w", err)
+		}
 	}
 
+	slog.Info("正在初始化 SpiderMonkey WAA Worker", "account", key, "auth_user", opts.AuthUser, "model", opts.Model, "proxy", opts.Proxy != "")
+	t0 := time.Now()
+	worker, err := p.factory(ctx, key, opts, state)
+	if err != nil {
+		return nil, fmt.Errorf("初始化 SpiderMonkey WAA Worker 失败: %w", err)
+	}
+	if worker == nil {
+		return nil, fmt.Errorf("初始化 SpiderMonkey WAA Worker 返回空实例")
+	}
+	slog.Info("SpiderMonkey WAA Worker 初始化就绪", "account", key, "elapsed_ms", time.Since(t0).Milliseconds())
+	entry.setWorker(worker)
+	entry.inputFingerprint = inputFingerprint.input
+	entry.inputCookies = retainUnsentCookieInputs(nil, inputFingerprint.cookies)
+	entry.statePath = opts.StorageStatePath
+	entry.authUser = opts.AuthUser
+	entry.proxy = opts.Proxy
+	entry.createdAt = time.Now()
+	entry.lastUsed = time.Now()
+	return worker, nil
+}
+
+func (p *WorkerPool) AcquireWorker(ctx context.Context, rawCookies string, authUser int, model string, proxyOverride string) (*workerLease, error) {
+	state, err := aistudio.ParseCookieText(rawCookies)
+	if err != nil {
+		return nil, fmt.Errorf("解析 Cookie 失败: %w", err)
+	}
+	inputFingerprint, err := effectiveCookieFingerprint(state)
+	if err != nil {
+		return nil, fmt.Errorf("规范化 Cookie 失败: %w", err)
+	}
 	key := accountKeyFromState(state, authUser)
 	entry := p.getEntry(key)
-
 	entry.mu.Lock()
-	defer entry.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		entry.mu.Unlock()
+		return nil, err
+	}
 
 	effectiveProxy := strings.TrimSpace(proxyOverride)
 	if effectiveProxy == "" {
 		effectiveProxy = p.proxy
 	}
-
-	if !forceRecreate && entry.worker != nil && entry.proxy == effectiveProxy {
-		st := entry.worker.State()
-		if st.Phase == aistudio.WorkerReady || st.Phase == aistudio.WorkerBusy {
-			entry.lastUsed = time.Now()
-			return entry.worker, "hot", nil
-		}
-	}
-
-	if entry.worker != nil {
-		_ = entry.worker.Close()
-		entry.worker = nil
-	}
-
-	accDir := filepath.Join(p.stateDir, key)
-	if err := os.MkdirAll(accDir, 0o755); err != nil {
-		return nil, "", fmt.Errorf("创建账户状态目录失败: %w", err)
-	}
-	statePath := filepath.Join(accDir, "storage-state.json")
-	if err := aistudio.WriteStorageState(statePath, state); err != nil {
-		return nil, "", fmt.Errorf("写入 storage-state.json 失败: %w", err)
-	}
-
 	cleanModel := strings.TrimPrefix(strings.TrimSpace(model), "models/")
 	if cleanModel == "" {
 		cleanModel = defaultModel
 	}
-
-	opts := camoufoxnative.Options{
-		StorageStatePath: statePath,
-		Model:            cleanModel,
-		BootstrapPrompt:  camoufoxnative.DefaultBootstrapPrompt,
-		Locale:           p.locale,
-		Timezone:         p.timezone,
-		Proxy:            effectiveProxy,
-		AuthUser:         authUser,
+	lease := &workerLease{
+		pool: p, entry: entry, key: key, inputState: state, inputFingerprint: inputFingerprint,
+		options: camoufoxnative.Options{
+			StorageStatePath: filepath.Join(p.stateDir, key, "storage-state.json"),
+			Model:            cleanModel, BootstrapPrompt: camoufoxnative.DefaultBootstrapPrompt,
+			Locale: p.locale, Timezone: p.timezone, Proxy: effectiveProxy, AuthUser: authUser,
+		},
 	}
-
-	slog.Info("正在初始化 SpiderMonkey WAA Worker", "account", key, "auth_user", authUser, "model", cleanModel, "proxy", effectiveProxy != "")
-	t0 := time.Now()
-	worker, err := aistudio.NewSpiderMonkeyWorker(ctx, key, opts)
+	if worker := entry.workerSnapshot(); worker != nil && entry.proxy == effectiveProxy {
+		phase := worker.State().Phase
+		if phase == aistudio.WorkerReady || phase == aistudio.WorkerBusy {
+			reuse := entry.inputFingerprint == inputFingerprint.input
+			if !reuse {
+				if current, stateErr := worker.BrowserStorageState(ctx); stateErr == nil {
+					currentFingerprint, fingerprintErr := effectiveCookieFingerprint(current)
+					reuse = fingerprintErr == nil && cookieUpdatesMatchCurrent(inputFingerprint.cookies, entry.inputCookies, currentFingerprint.cookies, cookieMetadataExplicit(rawCookies))
+				}
+			}
+			if reuse {
+				entry.inputFingerprint = inputFingerprint.input
+				entry.inputCookies = retainUnsentCookieInputs(entry.inputCookies, inputFingerprint.cookies)
+				entry.lastUsed = time.Now()
+				lease.worker, lease.poolState = worker, "hot"
+				return lease, nil
+			}
+		}
+	}
+	worker, err := p.initializeWorker(ctx, entry, key, lease.options, state, inputFingerprint)
 	if err != nil {
-		return nil, "", fmt.Errorf("初始化 SpiderMonkey WAA Worker 失败: %w", err)
+		entry.mu.Unlock()
+		return nil, err
 	}
-	slog.Info("SpiderMonkey WAA Worker 初始化就绪", "account", key, "elapsed_ms", time.Since(t0).Milliseconds())
-
-	entry.worker = worker
-	entry.statePath = statePath
-	entry.authUser = authUser
-	entry.proxy = effectiveProxy
-	entry.createdAt = time.Now()
-	entry.lastUsed = time.Now()
-	return worker, "cold", nil
+	lease.worker, lease.poolState = worker, "cold"
+	return lease, nil
 }
 
 type MintRequest struct {
@@ -328,7 +589,7 @@ func extractPromptsFromWire(wireContents json.RawMessage, fallbackPrompt string)
 	return bindingPrompt, pagePrompt
 }
 
-func buildSessionHeaders(ctx context.Context, worker *aistudio.NativeWorker, protoHeaders http.Header, g1Tier string) map[string]string {
+func buildSessionHeaders(ctx context.Context, worker poolWorker, protoHeaders http.Header, g1Tier string) map[string]string {
 	out := make(map[string]string)
 	for k, vals := range protoHeaders {
 		if len(vals) > 0 && vals[0] != "" {
@@ -453,19 +714,21 @@ func main() {
 		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 		defer cancel()
 
-		worker, poolState, err := pool.AcquireWorker(ctx, req.Cookies, authUser, req.Model, req.Proxy, false)
+		lease, err := pool.AcquireWorker(ctx, req.Cookies, authUser, req.Model, req.Proxy)
 		if err != nil {
 			slog.Warn("获取 WAA Worker 失败", "auth_user", authUser, "error", err)
 			writeJSON(w, http.StatusBadGateway, MintResponse{OK: false, Error: err.Error()})
 			return
 		}
+		defer lease.Release()
+		worker, poolState := lease.worker, lease.poolState
 
 		t0 := time.Now()
 		proof, protoHeaders, err := worker.ProofByDigest(ctx, digest, pagePrompt)
 		if err != nil && ctx.Err() == nil && poolState == "hot" {
 			slog.Warn("热 Worker 签名失败，正在重建 Worker 重试", "auth_user", authUser, "error", err)
-			worker, poolState, err = pool.AcquireWorker(ctx, req.Cookies, authUser, req.Model, req.Proxy, true)
-			if err == nil {
+			if err = lease.Recreate(ctx); err == nil {
+				worker, poolState = lease.worker, lease.poolState
 				proof, protoHeaders, err = worker.ProofByDigest(ctx, digest, pagePrompt)
 			}
 		}
@@ -476,6 +739,7 @@ func main() {
 		}
 
 		headers := buildSessionHeaders(ctx, worker, protoHeaders, req.G1Tier)
+		lease.Release()
 		slog.Info(
 			"生成 WAA Proof 成功",
 			"auth_user", authUser,
@@ -512,11 +776,14 @@ func main() {
 		}
 		authUser := parseAuthUser(req.AuthUser)
 
-		worker, _, err := pool.AcquireWorker(r.Context(), req.Cookies, authUser, req.Model, req.Proxy, false)
+		lease, err := pool.AcquireWorker(r.Context(), req.Cookies, authUser, req.Model, req.Proxy)
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": err.Error()})
 			return
 		}
+		// 响应体的 Close 在租约释放前执行，流结束前不替换账户 Worker。
+		defer lease.Release()
+		worker := lease.worker
 
 		protoHeaders, err := worker.ProtocolHeaders(r.Context(), "")
 		if err != nil {
@@ -568,7 +835,9 @@ func main() {
 		for {
 			n, readErr := resp.Body.Read(buf)
 			if n > 0 {
-				_, _ = w.Write(buf[:n])
+				if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+					return
+				}
 				if canFlush {
 					flusher.Flush()
 				}

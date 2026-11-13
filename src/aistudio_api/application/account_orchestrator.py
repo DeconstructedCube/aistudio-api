@@ -34,6 +34,7 @@ async def try_switch_account(
     required_tiers: tuple[str, ...] | list[str] | None = None,
     *,
     is_session_expired: bool = False,
+    expected_cookie_id: str | None = None,
 ) -> bool:
     """尝试切换到下一个对目标 model 可用的账号。防止并发级联切号。"""
     global _last_switch_time
@@ -75,6 +76,19 @@ async def try_switch_account(
             or client.session is None
         ):
             return False
+
+        # 等待切号锁期间可能已重新导入，旧认证结果不得处罚新代际。
+        if (
+            failed_account_id
+            and expected_cookie_id is not None
+            and not account_service.is_cookie_generation_current(
+                failed_account_id, expected_cookie_id
+            )
+        ):
+            logger.info(
+                "忽略等待切号锁期间过期的认证结果: account=%s", failed_account_id
+            )
+            return True
 
         current_active = account_service.get_active_account()
         current_id = current_active.id if current_active else None

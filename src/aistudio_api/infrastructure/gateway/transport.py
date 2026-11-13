@@ -17,6 +17,7 @@ from aistudio_api.infrastructure.account.cookie_parser import (
     apply_set_cookies,
     calculate_sapisid_hash,
     filter_minimal_cookies,
+    get_cookie_id_from_meta,
     get_tier_header_value,
     load_cookies_from_auth_file,
 )
@@ -66,6 +67,7 @@ def _sync_response_cookies(
     resp: httpx.Response,
     auth_file: str | None = None,
     cookies: dict[str, str] | None = None,
+    expected_cookie_id: str | None = None,
 ) -> None:
     """捕获上游响应中的 Set-Cookie 并同步回内存与 AccountStore。"""
     set_cookies = resp.headers.get_list("set-cookie")
@@ -86,6 +88,7 @@ def _sync_response_cookies(
         AccountStore().update_account_cookies(
             auth_file=auth_file,
             new_cookies=target_map,
+            expected_cookie_id=expected_cookie_id,
         )
     except Exception as e:
         logger.debug("持久化 Set-Cookie 失败: %s", e)
@@ -173,15 +176,25 @@ class HTTPStreamTransport:
         tier: str | None = None,
         auth_file: str | None = None,
         cookies: dict[str, str] | None = None,
+        expected_cookie_id: str | None = None,
     ) -> tuple[int, bytes]:
         """Execute non-streaming HTTP request directly."""
         t0 = time.perf_counter()
+        # 必须在网络等待前捕获 Cookie 与代际，不能用响应到达后的新凭据回填。
+        request_cookies = (
+            cookies if cookies is not None else (_get_auth_cookies(auth_file) or {})
+        )
+        cookie_id = (
+            expected_cookie_id
+            if expected_cookie_id is not None
+            else get_cookie_id_from_meta(auth_file)
+        )
         clean_headers = await _ensure_authorization_header(
             headers,
             auth_user=auth_user,
             tier=tier,
             auth_file=auth_file,
-            cookies=cookies,
+            cookies=request_cookies,
         )
         logger.debug(
             "发送请求: url=%s, body_len=%d, u/%s",
@@ -195,7 +208,12 @@ class HTTPStreamTransport:
             resp = await client.post(
                 url, headers=clean_headers, content=body.encode("utf-8")
             )
-            _sync_response_cookies(resp, auth_file=auth_file, cookies=cookies)
+            _sync_response_cookies(
+                resp,
+                auth_file=auth_file,
+                cookies=request_cookies,
+                expected_cookie_id=cookie_id,
+            )
             elapsed_ms = (time.perf_counter() - t0) * 1000
             logger.debug(
                 "请求完成: status=%d, 耗时=%.1fms, 响应长度=%d",
@@ -221,14 +239,24 @@ class HTTPStreamTransport:
         tier: str | None = None,
         auth_file: str | None = None,
         cookies: dict[str, str] | None = None,
+        expected_cookie_id: str | None = None,
     ) -> AsyncGenerator[tuple[str, object], None]:
         """Stream HTTP response chunks directly."""
+        # 必须在网络等待前捕获 Cookie 与代际，不能用响应到达后的新凭据回填。
+        request_cookies = (
+            cookies if cookies is not None else (_get_auth_cookies(auth_file) or {})
+        )
+        cookie_id = (
+            expected_cookie_id
+            if expected_cookie_id is not None
+            else get_cookie_id_from_meta(auth_file)
+        )
         clean_headers = await _ensure_authorization_header(
             headers,
             auth_user=auth_user,
             tier=tier,
             auth_file=auth_file,
-            cookies=cookies,
+            cookies=request_cookies,
         )
         logger.debug("建立流式请求: url=%s, u/%s", url, auth_user)
 
@@ -240,7 +268,12 @@ class HTTPStreamTransport:
                 "POST", url, headers=clean_headers, content=body.encode("utf-8")
             )
             resp = await client.send(req, stream=True)
-            _sync_response_cookies(resp, auth_file=auth_file, cookies=cookies)
+            _sync_response_cookies(
+                resp,
+                auth_file=auth_file,
+                cookies=request_cookies,
+                expected_cookie_id=cookie_id,
+            )
             yield ("status", resp.status_code)
 
             if resp.status_code != 200:

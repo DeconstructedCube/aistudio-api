@@ -41,6 +41,12 @@ class AccountService:
         """获取当前活跃账号。"""
         return self._store.get_active_account()
 
+    def is_cookie_generation_current(
+        self, account_id: str, cookie_id: str | None
+    ) -> bool:
+        """旧请求或探活结果不得影响已重新导入的当前凭据。"""
+        return self._store.is_cookie_generation_current(account_id, cookie_id)
+
     def set_active_account(self, account_id: str) -> None:
         """设置当前活跃账号。"""
         self._store.set_active_account(account_id)
@@ -118,18 +124,24 @@ class AccountService:
         if not auth_path:
             return {"ok": False, "status": 0, "updated": []}
 
+        account = self._store.get_account(account_id)
+        if account is None:
+            return {"ok": False, "status": 0, "updated": []}
+        expected_cookie_id = account.cookie_id or ""
         cookies = load_cookies_from_auth_file(auth_path)
         if not cookies:
             return {"ok": False, "status": 0, "updated": []}
 
         result = await rotate_google_cookies(cookies, client=client)
+        if not self.is_cookie_generation_current(account_id, expected_cookie_id):
+            return {**result, "ok": False, "stale": True, "updated": []}
         if not result.get("ok"):
             # 若当前子账号缺少最新滚动种子，尝试合并同会话兄弟账号的 Cookie 重试
             anchor = compute_session_anchor(cookies)
             target_acc = self._store.get_account(account_id)
             target_cid = target_acc.cookie_id if target_acc else None
             for sib in self._store.list_accounts():
-                if sib.id == account_id:
+                if sib.id == account_id or (sib.cookie_id or "") != expected_cookie_id:
                     continue
                 sib_path = self._store.get_auth_path(sib.id)
                 if not sib_path:
@@ -145,6 +157,10 @@ class AccountService:
                     continue
                 merged_sib = {**cookies, **sib_cookies}
                 sib_res = await rotate_google_cookies(merged_sib, client=client)
+                if not self.is_cookie_generation_current(
+                    account_id, expected_cookie_id
+                ):
+                    return {**sib_res, "ok": False, "stale": True, "updated": []}
                 if sib_res.get("ok"):
                     cookies = merged_sib
                     result = sib_res
@@ -156,6 +172,7 @@ class AccountService:
                 account_id=account_id,
                 new_cookies=cookies,
                 rotated_at=now_ts,
+                expected_cookie_id=expected_cookie_id,
             )
             if session is not None and session.active_context is not None:
                 active_file = session.active_context.auth_file

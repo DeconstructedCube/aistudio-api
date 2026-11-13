@@ -750,10 +750,19 @@ async def probe_and_import(
     imported_accounts = [to_account_response(account) for account in metas]
 
     client_obj = getattr(runtime_state, "client", None)
-    if not had_active_account and metas and client_obj is not None:
+    active_account = account_service.get_active_account()
+    imported_ids = {meta.id for meta in metas}
+    reload_id = (
+        metas[0].id
+        if not had_active_account and metas
+        else active_account.id
+        if active_account is not None and active_account.id in imported_ids
+        else None
+    )
+    if reload_id is not None and client_obj is not None:
         gateway_session = client_obj.session
         if gateway_session is not None:
-            await account_service.activate_account(metas[0].id, gateway_session)
+            await account_service.activate_account(reload_id, gateway_session)
     log.info("Cookie 探活完成: 导入账号数=%d", len(imported_accounts))
     return ProbeAndImportResponse(
         imported_count=len(imported_accounts),
@@ -885,13 +894,20 @@ async def import_bundle(
             rotator.add_account(account.id)
             rotator.clear_cooldown(account.id)
         imported_accounts.append(to_account_response(account))
-    if not had_active_account and imported_accounts:
-        account_service.set_active_account(imported_accounts[0].id)
+    active_account = account_service.get_active_account()
+    imported_ids = {account.id for account in imported_accounts}
+    reload_id = (
+        imported_accounts[0].id
+        if not had_active_account and imported_accounts
+        else active_account.id
+        if active_account is not None and active_account.id in imported_ids
+        else None
+    )
+    if reload_id is not None:
+        account_service.set_active_account(reload_id)
         client_obj = getattr(runtime_state, "client", None)
         if client_obj is not None and client_obj.session is not None:
-            await account_service.activate_account(
-                imported_accounts[0].id, client_obj.session
-            )
+            await account_service.activate_account(reload_id, client_obj.session)
     log.info("批量导入完成: 导入账号数=%d", len(imported_accounts))
     return ImportBundleResponse(
         imported_count=len(imported_accounts),

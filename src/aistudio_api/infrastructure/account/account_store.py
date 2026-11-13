@@ -304,6 +304,13 @@ class AccountStore:
         registry = self._load_registry()
         return self._find_registered_account(registry, account_id)
 
+    def is_cookie_generation_current(
+        self, account_id: str, cookie_id: str | None
+    ) -> bool:
+        """校验请求捕获的导入代际，防止旧异步结果写回新凭据。"""
+        account = self.get_account(account_id)
+        return account is not None and (account.cookie_id or "") == (cookie_id or "")
+
     def get_active_account(self) -> AccountMeta | None:
         """获取当前活跃账号，若未设置或已被禁用则回退到首个可用账号。"""
         registry = self._load_registry()
@@ -427,7 +434,7 @@ class AccountStore:
         registry.accounts[safe_id] = meta
         if registry.active_account_id is None:
             registry.active_account_id = safe_id
-        self._sync_sibling_cookies_locked(registry)
+        self._sync_sibling_cookies_locked(registry, preferred_account_id=safe_id)
         self._save_registry(registry)
         return meta
 
@@ -502,7 +509,9 @@ class AccountStore:
         self._save_registry(registry)
         return changed
 
-    def _sync_sibling_cookies_locked(self, registry: Registry) -> bool:
+    def _sync_sibling_cookies_locked(
+        self, registry: Registry, preferred_account_id: str | None = None
+    ) -> bool:
         """同步共享同一浏览器会话 (SAPISID / SID) 的多登兄弟账号 (u/0..u/N) 的滚动 Cookie。"""
         from aistudio_api.infrastructure.account.cookie_parser import (
             ROTATING_SESSION_COOKIE_NAMES,
@@ -510,7 +519,18 @@ class AccountStore:
             load_cookies_from_auth_file,
         )
 
-        groups: dict[str, list[tuple[AccountMeta, Path, dict[str, str]]]] = {}
+        preferred_anchor = ""
+        if preferred_account_id is not None:
+            preferred_path = (
+                _safe_account_dir(self._accounts_dir, preferred_account_id)
+                / "auth.json"
+            )
+            preferred_anchor = compute_session_anchor(
+                load_cookies_from_auth_file(preferred_path)
+            )
+        groups: dict[
+            tuple[str, str], list[tuple[AccountMeta, Path, dict[str, str]]]
+        ] = {}
         for acc_id, acc in registry.accounts.items():
             try:
                 auth_path = _safe_account_dir(self._accounts_dir, acc_id) / "auth.json"
@@ -524,7 +544,9 @@ class AccountStore:
             anchor = compute_session_anchor(cdict)
             if not anchor:
                 continue
-            groups.setdefault(anchor, []).append((acc, auth_path, cdict))
+            # 加载时按导入代际隔离；手动导入才允许新快照优先同步同会话。
+            generation = "" if anchor == preferred_anchor else (acc.cookie_id or "")
+            groups.setdefault((anchor, generation), []).append((acc, auth_path, cdict))
 
         meta_changed = False
         for group in groups.values():
@@ -533,6 +555,8 @@ class AccountStore:
             # 按是否存在 __Secure-1PSIDTS 以及最近轮换时间排序（最旧在前，最新在后，后者覆盖前者）
             group.sort(
                 key=lambda item: (
+                    # 手动导入的快照优先于继承的旧轮换时间，不能被兄弟账号回滚。
+                    item[0].id == preferred_account_id,
                     1
                     if (
                         item[2].get("__Secure-1PSIDTS")
@@ -583,6 +607,7 @@ class AccountStore:
         auth_file: str | Path | None = None,
         new_cookies: dict[str, str],
         rotated_at: float | None = None,
+        expected_cookie_id: str | None = None,
     ) -> list[str]:
         """将更新后的 Cookie 写回目标账号及其同源多登兄弟账号 (u/0..u/N) 的 auth.json。"""
         from aistudio_api.infrastructure.account.cookie_parser import (
@@ -602,6 +627,13 @@ class AccountStore:
                 if cand_id in registry.accounts:
                     target_id = cand_id
                 elif p.is_file():
+                    if expected_cookie_id is not None:
+                        from aistudio_api.infrastructure.account.cookie_parser import (
+                            get_cookie_id_from_meta,
+                        )
+
+                        if get_cookie_id_from_meta(p) != expected_cookie_id:
+                            return []
                     cur = load_cookies_from_auth_file(p)
                     merged = {**cur, **{k: v for k, v in new_cookies.items() if v}}
                     if merged != cur:
@@ -621,6 +653,10 @@ class AccountStore:
 
         target_acc = registry.accounts.get(target_id) if target_id else None
         target_cid = target_acc.cookie_id if target_acc else None
+        if expected_cookie_id is not None and (
+            target_acc is None or (target_cid or "") != expected_cookie_id
+        ):
+            return []
         anchor = compute_session_anchor(new_cookies)
         if not anchor and target_id:
             t_path = self.get_auth_path_optional(target_id, require_exists=True)
@@ -644,6 +680,12 @@ class AccountStore:
             is_same_cid = bool(target_cid and acc.cookie_id == target_cid)
             is_same_anchor = bool(anchor and cur_anchor == anchor)
             if not (is_target or is_same_cid or is_same_anchor):
+                continue
+            # 带代际的异步回写仅同步同一导入批次，不能覆盖单独重导的兄弟账号。
+            if (
+                expected_cookie_id is not None
+                and (acc.cookie_id or "") != expected_cookie_id
+            ):
                 continue
 
             merged = dict(cur_cookies)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from pathlib import Path
 
 from fastapi import HTTPException
 from fastapi.exceptions import RequestValidationError
@@ -25,6 +26,7 @@ from aistudio_api.application.account_orchestrator import (
     try_switch_account,
 )
 from aistudio_api.application.chat_service import (
+    NormalizedGeminiRequest,
     normalize_gemini_request,
 )
 from aistudio_api.domain.errors import (
@@ -32,19 +34,82 @@ from aistudio_api.domain.errors import (
     AuthError,
     RequestError,
     SessionExpiredError,
+    StaleSessionError,
     TransportError,
     UsageLimitExceeded,
     is_transient_rpc_error,
     is_transport_error,
     parse_upstream_grpc_error,
 )
+from aistudio_api.infrastructure.account.account_store import AccountMeta
 from aistudio_api.infrastructure.gateway.client import (
     AIStudioClient,
     PreparedRequest,
 )
+from aistudio_api.infrastructure.gateway.session import SessionContext
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("api.gemini")
+
+
+def _request_account(
+    request_ctx: SessionContext | None,
+) -> tuple[AccountMeta | None, str | None]:
+    """按本次请求的凭据路径确定账号，缺少上下文时保留兼容行为。"""
+    account_svc = runtime_state.account_service
+    if account_svc is None:
+        return None, None
+    if request_ctx is not None and request_ctx.auth_file:
+        account_id = Path(request_ctx.auth_file).parent.name
+        return account_svc.get_account(account_id), account_id
+    account = account_svc.get_active_account()
+    return account, account.id if account else None
+
+
+def _is_request_generation_current(request_ctx: SessionContext | None) -> bool:
+    """认证结果只能影响生成该请求时使用的 Cookie 代际。"""
+    account_svc = runtime_state.account_service
+    if request_ctx is None or not request_ctx.auth_file or account_svc is None:
+        return True
+    return bool(
+        account_svc.is_cookie_generation_current(
+            Path(request_ctx.auth_file).parent.name, request_ctx.cookie_id
+        )
+    )
+
+
+def _record_request_auth_error(model: str, request_ctx: SessionContext | None) -> None:
+    """将认证处罚记到实际请求账号，避免并发切号后的全局账号错归因。"""
+    if request_ctx is None:
+        record_rotator_event("auth_error", model=model)
+        return
+    _, account_id = _request_account(request_ctx)
+    if account_id and runtime_state.rotator is not None:
+        runtime_state.rotator.record_auth_error(account_id, model=model)
+
+
+async def _prepare_content_request(
+    client: AIStudioClient,
+    normalized: NormalizedGeminiRequest,
+    prepared: PreparedRequest | None,
+) -> PreparedRequest:
+    """显式持有本次签名快照，普通与流式请求共用相同的上下文绑定。"""
+    if prepared is not None:
+        return prepared
+    return await client.prepare_request(
+        model=normalized.model,
+        contents=normalized.contents,
+        system_instruction_content=normalized.system_instruction,
+        tools=normalized.tools,
+        tool_config=normalized.tool_config,
+        safety_settings=normalized.safety_settings,
+        temperature=normalized.temperature,
+        top_p=normalized.top_p,
+        top_k=normalized.top_k,
+        max_tokens=normalized.max_tokens,
+        generation_config_overrides=normalized.generation_config_overrides,
+    )
+
 
 AUTH_403_MAX_RETRIES = (
     5  # 403 阶梯重试机制：前 2 次重放，后 2 次重新签名，最后 1 次切号
@@ -67,17 +132,25 @@ class Auth403RetryManager:
         client: AIStudioClient,
         has_yielded_data: bool = False,
     ) -> bool:
+        request_ctx = self.current_prepared.ctx if self.current_prepared else None
+        if not _is_request_generation_current(request_ctx):
+            self.current_prepared = None
+            if not has_yielded_data:
+                return True
+            raise HTTPException(
+                503, detail="Request credentials were replaced."
+            ) from exc
         if has_yielded_data:
             raise HTTPException(
                 403, detail={"message": str(exc), "type": "auth_error"}
             ) from exc
 
         self.count += 1
-        record_rotator_event("auth_error", model=model)
+        _record_request_auth_error(model, request_ctx)
 
         # 1. 前 2 次 403: 重放已签名请求
         if self.count <= 2:
-            self.current_prepared = client.last_prepared_request
+            # 本次快照由请求处理器绑定，不读取客户端共享的最近请求。
             logger.warning(
                 "HTTP 403 重试 (%d/2 重放): model=%s",
                 self.count,
@@ -90,7 +163,7 @@ class Auth403RetryManager:
             self.current_prepared = None
             if self.count == 3:
                 account_svc = runtime_state.account_service
-                active_acc = account_svc.get_active_account() if account_svc else None
+                active_acc, _ = _request_account(request_ctx)
                 if (
                     account_svc is not None
                     and active_acc is not None
@@ -98,7 +171,13 @@ class Auth403RetryManager:
                 ):
                     try:
                         session = getattr(client, "session", None)
-                        await account_svc.rotate_account_cookies(active_acc.id, session)
+                        result = await account_svc.rotate_account_cookies(
+                            active_acc.id, session
+                        )
+                        if result.get(
+                            "stale"
+                        ) is True or not _is_request_generation_current(request_ctx):
+                            return True
                     except Exception:
                         pass
             logger.warning(
@@ -111,10 +190,12 @@ class Auth403RetryManager:
         # 3. 第 5 次 403: 切换备用账号
         if self.count == 5:
             self.current_prepared = None
-            account_svc = runtime_state.account_service
-            active_acc = account_svc.get_active_account() if account_svc else None
-            failed_id = active_acc.id if active_acc else None
-            if await try_switch_account(model=model, failed_account_id=failed_id):
+            _, failed_id = _request_account(request_ctx)
+            if await try_switch_account(
+                model=model,
+                failed_account_id=failed_id,
+                expected_cookie_id=request_ctx.cookie_id if request_ctx else None,
+            ):
                 logger.warning(
                     "HTTP 403 切换备用账号重试: model=%s",
                     model,
@@ -244,6 +325,7 @@ async def handle_attempt_exception(
     attempt: int,
     model_path: str,
     normalized_model: str | None,
+    request_ctx: SessionContext | None = None,
     has_yielded_data: bool = False,
 ) -> bool:
     """Handle per-attempt error classification and account switching.
@@ -251,9 +333,18 @@ async def handle_attempt_exception(
     Returns True if the operation should be retried, or raises HTTPException / re-raises.
     """
     target_model = normalized_model or model_path
+    if isinstance(exc, StaleSessionError):
+        if not has_yielded_data:
+            logger.info("请求凭据代际已更新，重新准备请求: model=%s", target_model)
+            return True
+        raise HTTPException(503, detail="Request credentials were replaced.") from exc
     account_svc = runtime_state.account_service
-    active_acc = account_svc.get_active_account() if account_svc else None
-    failed_id = active_acc.id if active_acc else None
+    active_acc, failed_id = _request_account(request_ctx)
+    if isinstance(exc, AuthError) and not _is_request_generation_current(request_ctx):
+        if not has_yielded_data:
+            logger.info("忽略旧 Cookie 代际的认证结果: account=%s", failed_id)
+            return True
+        raise HTTPException(503, detail="Request credentials were replaced.") from exc
 
     if isinstance(exc, ValueError):
         raise HTTPException(
@@ -274,6 +365,8 @@ async def handle_attempt_exception(
                 before_ts = cdict.get("__Secure-1PSIDTS", "")
                 if cdict:
                     alive, _ = await probe_aistudio_session(cdict)
+                    if not _is_request_generation_current(request_ctx):
+                        return True
                     if alive and hasattr(account_svc, "rotate_account_cookies"):
                         session = (
                             runtime_state.client.session
@@ -283,6 +376,10 @@ async def handle_attempt_exception(
                         rot_res = await account_svc.rotate_account_cookies(
                             active_acc.id, session
                         )
+                        if rot_res.get(
+                            "stale"
+                        ) is True or not _is_request_generation_current(request_ctx):
+                            return True
                         new_cookies = rot_res.get("cookies")
                         after_ts = (
                             new_cookies.get("__Secure-1PSIDTS", "")
@@ -298,11 +395,14 @@ async def handle_attempt_exception(
             except Exception as rot_err:
                 logger.debug("401 Cookie 轮换探测异常: %s", rot_err)
 
+        if not _is_request_generation_current(request_ctx):
+            return True
         logger.warning("账号登录态已失效: account=%s, %s", failed_id, exc)
         if not has_yielded_data and await try_switch_account(
             model=target_model,
             failed_account_id=failed_id,
             is_session_expired=True,
+            expected_cookie_id=request_ctx.cookie_id if request_ctx else None,
         ):
             logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
             return True
@@ -316,7 +416,7 @@ async def handle_attempt_exception(
 
     if isinstance(exc, AuthError):
         logger.warning("账号权限被拒绝 (HTTP 403): %s", exc)
-        record_rotator_event("auth_error", model=target_model)
+        _record_request_auth_error(target_model, request_ctx)
 
         raise HTTPException(
             403, detail={"message": str(exc), "type": "auth_error"}
@@ -439,6 +539,7 @@ async def handle_gemini_generate_content(
     for attempt in range(total_attempts):
         await ensure_active_account(attempt, model=model_path)
         normalized = None
+        request_ctx: SessionContext | None = None
         try:
             normalized = normalize_gemini_request(req, model_path)
             logger.info(
@@ -448,19 +549,13 @@ async def handle_gemini_generate_content(
                 attempt + 1,
                 total_attempts,
             )
+            prepared = await _prepare_content_request(
+                client, normalized, auth_manager.current_prepared
+            )
+            request_ctx = prepared.ctx
+            auth_manager.current_prepared = prepared
             output = await client.generate_content(
-                model=normalized.model,
-                contents=normalized.contents,
-                system_instruction_content=normalized.system_instruction,
-                tools=normalized.tools,
-                tool_config=normalized.tool_config,
-                safety_settings=normalized.safety_settings,
-                temperature=normalized.temperature,
-                top_p=normalized.top_p,
-                top_k=normalized.top_k,
-                max_tokens=normalized.max_tokens,
-                generation_config_overrides=normalized.generation_config_overrides,
-                prepared=auth_manager.current_prepared,
+                model=normalized.model, prepared=prepared
             )
             auth_manager.current_prepared = None
 
@@ -520,7 +615,9 @@ async def handle_gemini_generate_content(
                 attempt=attempt,
                 model_path=model_path,
                 normalized_model=normalized.model if normalized else None,
+                request_ctx=request_ctx,
             ):
+                auth_manager.current_prepared = None
                 continue
             raise
 
@@ -677,20 +774,15 @@ def _build_gemini_streaming_response(
                 buffered_thought_sig = None
                 await ensure_active_account(stream_attempt, model=model_path)
                 normalized = normalize_gemini_request(req, model_path)
+                request_ctx = None
                 try:
+                    prepared = await _prepare_content_request(
+                        client, normalized, auth_manager.current_prepared
+                    )
+                    request_ctx = prepared.ctx
+                    auth_manager.current_prepared = prepared
                     async for event_type, text in client.stream_generate_content(
-                        model=normalized.model,
-                        contents=normalized.contents,
-                        system_instruction_content=normalized.system_instruction,
-                        tools=normalized.tools,
-                        tool_config=normalized.tool_config,
-                        safety_settings=normalized.safety_settings,
-                        temperature=normalized.temperature,
-                        top_p=normalized.top_p,
-                        top_k=normalized.top_k,
-                        max_tokens=normalized.max_tokens,
-                        generation_config_overrides=normalized.generation_config_overrides,
-                        prepared=auth_manager.current_prepared,
+                        model=normalized.model, prepared=prepared
                     ):
                         if event_type == "usage":
                             final_usage = text if isinstance(text, dict) else None
@@ -750,8 +842,10 @@ def _build_gemini_streaming_response(
                         attempt=stream_attempt,
                         model_path=model_path,
                         normalized_model=normalized.model if normalized else None,
+                        request_ctx=request_ctx,
                         has_yielded_data=has_yielded_data,
                     ):
+                        auth_manager.current_prepared = None
                         continue
                     raise
 

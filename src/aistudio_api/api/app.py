@@ -174,7 +174,7 @@ async def lifespan(_app: FastAPI):
         while True:
             try:
                 now_ts = time.time()
-                seen_anchors: set[str] = set()
+                seen_anchors: set[tuple[str, str]] = set()
                 accounts = account_store.list_accounts()
                 async with httpx.AsyncClient(
                     timeout=15.0, proxy=settings.proxy_url, follow_redirects=False
@@ -194,21 +194,33 @@ async def lifespan(_app: FastAPI):
                         cdict = load_cookies_from_auth_file(apath)
                         if not cdict:
                             continue
+                        # 同源 Cookie 不同导入代际分别轮换，且在异步操作前保存代际。
+                        cookie_id = acc.cookie_id or ""
                         anchor = compute_session_anchor(cdict)
                         if anchor:
-                            if anchor in seen_anchors:
+                            session_key = (anchor, cookie_id)
+                            if session_key in seen_anchors:
                                 continue
-                            seen_anchors.add(anchor)
-
+                            seen_anchors.add(session_key)
                         before_ts = cdict.get("__Secure-1PSIDTS", "")
                         rot_res = await account_service.rotate_account_cookies(
                             acc.id, client.session, client=rot_client
                         )
+                        if rot_res.get(
+                            "stale"
+                        ) is True or not account_service.is_cookie_generation_current(
+                            acc.id, cookie_id
+                        ):
+                            continue
                         status_code = rot_res.get("status", 0)
                         if status_code == 401:
                             alive, _ = await probe_aistudio_session(
                                 cdict, client=rot_client
                             )
+                            if not account_service.is_cookie_generation_current(
+                                acc.id, cookie_id
+                            ):
+                                continue
                             if not alive:
                                 rotator.record_session_expired(acc.id)
                             continue
@@ -228,6 +240,10 @@ async def lifespan(_app: FastAPI):
                                 new_cdict if isinstance(new_cdict, dict) else cdict,
                                 client=rot_client,
                             )
+                            if not account_service.is_cookie_generation_current(
+                                acc.id, cookie_id
+                            ):
+                                continue
                             if not alive:
                                 rotator.record_session_expired(acc.id)
             except asyncio.CancelledError:

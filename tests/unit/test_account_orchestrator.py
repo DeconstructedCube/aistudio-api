@@ -462,7 +462,7 @@ async def test_auth_403_five_stage_retry_mechanism():
         body="{}",
         model="models/gemini-3.8-flash",
     )
-    mock_client.last_prepared_request = mock_prep
+    manager.current_prepared = mock_prep
 
     err = AuthError("Permission denied")
 
