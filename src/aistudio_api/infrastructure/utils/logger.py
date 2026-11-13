@@ -98,6 +98,7 @@ def is_dump_to_file_enabled() -> bool:
 
 def set_dump_to_file(enabled: bool | None) -> None:
     """动态设置是否将转储数据持久化为文件。"""
+    global _dump_to_file_override
     _dump_to_file_override = enabled
     if enabled is not None:
         from aistudio_api.config import settings
