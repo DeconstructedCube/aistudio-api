@@ -1,11 +1,13 @@
 # Stage 1: Build native Go WAA signer daemon
-FROM golang:1.23-bookworm AS signer-builder
+FROM golang:1.27-trixie AS signer-builder
 
 WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     clang \
+    libc++-dev \
+    libc++abi-dev \
     build-essential \
     file \
     && rm -rf /var/lib/apt/lists/*
@@ -17,8 +19,8 @@ RUN if [ ! -f "bin/waa-signer" ] || ! file bin/waa-signer | grep -q "ELF"; then 
     fi
 
 # Stage 2: Runtime Python environment
-# Use Debian 12 (bookworm) explicitly so package names stay stable.
-FROM python:3.11-slim-bookworm
+# Keep the runtime on the same Debian release as the native signer build.
+FROM python:3.11-slim-trixie
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
