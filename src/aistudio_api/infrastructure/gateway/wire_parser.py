@@ -13,7 +13,9 @@ import struct
 
 from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
 from aistudio_api.infrastructure.gateway.wire_spec import (
+    DECISION_USAGE_MODALITY_NAMES,
     WIRE_FINISH_REASON_CONTINUING,
+    DecisionAnswerIndex,
 )
 from aistudio_api.infrastructure.utils.common import (
     decode_base64_images,
@@ -908,6 +910,179 @@ def parse_text_output(raw: str) -> ModelOutput:
     return output
 
 
+def parse_decision_response(raw_text: str) -> dict[str, object]:
+    """Parse MakerSuiteService/CreateDecision JSPB response into Decisions API JSON."""
+    parts = extract_outer_json(raw_text)
+    if not parts or not isinstance(parts[0], list):
+        return {
+            "answers": {},
+            "usage": {
+                "total_input_tokens": 0,
+                "input_tokens_by_modality": [],
+                "total_output_tokens": 0,
+                "total_tokens": 0,
+            },
+        }
+
+    outer = parts[0]
+    answers: dict[str, dict[str, object]] = {}
+    raw_answers = outer[0] if len(outer) > 0 and isinstance(outer[0], list) else []
+    for entry in raw_answers:
+        if (
+            not isinstance(entry, list)
+            or len(entry) < 2
+            or not isinstance(entry[0], str)
+        ):
+            continue
+        q_key = entry[0]
+        ans = entry[1]
+        if not isinstance(ans, list):
+            continue
+        raw_conf = (
+            ans[DecisionAnswerIndex.CONFIDENCE]
+            if len(ans) > DecisionAnswerIndex.CONFIDENCE
+            else None
+        )
+        confidence = (
+            float(raw_conf)
+            if isinstance(raw_conf, (int, float)) and not isinstance(raw_conf, bool)
+            else 0.0
+        )
+
+        noul_detail = (
+            ans[DecisionAnswerIndex.NOUL_DETAIL]
+            if len(ans) > DecisionAnswerIndex.NOUL_DETAIL
+            else None
+        )
+        choice_detail = (
+            ans[DecisionAnswerIndex.CHOICE_DETAIL]
+            if len(ans) > DecisionAnswerIndex.CHOICE_DETAIL
+            else None
+        )
+        score_detail = (
+            ans[DecisionAnswerIndex.SCORE_DETAIL]
+            if len(ans) > DecisionAnswerIndex.SCORE_DETAIL
+            else None
+        )
+
+        if isinstance(noul_detail, list) and len(noul_detail) >= 2:
+            raw_noul = noul_detail[1]
+            noul_prob = (
+                float(raw_noul)
+                if isinstance(raw_noul, (int, float)) and not isinstance(raw_noul, bool)
+                else confidence
+            )
+            answers[q_key] = {
+                "type": "noul",
+                "noul": noul_prob,
+                "confidence": confidence,
+            }
+        elif isinstance(choice_detail, list) and len(choice_detail) >= 2:
+            top_choice = str(choice_detail[0]) if choice_detail[0] is not None else ""
+            probs: dict[str, float] = {}
+            if isinstance(choice_detail[1], list):
+                for pair in choice_detail[1]:
+                    if (
+                        isinstance(pair, list)
+                        and len(pair) >= 2
+                        and isinstance(pair[1], (int, float))
+                    ):
+                        probs[str(pair[0])] = float(pair[1])
+            answers[q_key] = {
+                "type": "choice",
+                "choice": top_choice,
+                "probabilities": probs,
+                "confidence": confidence,
+            }
+        elif isinstance(score_detail, list) and len(score_detail) >= 1:
+            raw_score = score_detail[0]
+            score_val = (
+                float(raw_score)
+                if isinstance(raw_score, (int, float))
+                and not isinstance(raw_score, bool)
+                else 0.0
+            )
+            probs = {}
+            if len(score_detail) > 3 and isinstance(score_detail[3], list):
+                for pair in score_detail[3]:
+                    if (
+                        isinstance(pair, list)
+                        and len(pair) >= 2
+                        and isinstance(pair[1], (int, float))
+                    ):
+                        probs[str(pair[0])] = float(pair[1])
+            legend: dict[str, str] = {}
+            if len(score_detail) > 4 and isinstance(score_detail[4], list):
+                for pair in score_detail[4]:
+                    if isinstance(pair, list) and len(pair) >= 2:
+                        legend[str(pair[0])] = str(pair[1])
+            answers[q_key] = {
+                "type": "score",
+                "score": score_val,
+                "legend": legend,
+                "probabilities": probs,
+                "confidence": confidence,
+            }
+
+    usage_raw = outer[1] if len(outer) > 1 and isinstance(outer[1], list) else []
+    total_in = _coerce_int(usage_raw[0] if len(usage_raw) > 0 else None) or 0
+    total_tok = _coerce_int(usage_raw[9] if len(usage_raw) > 9 else None)
+    if total_tok is None:
+        total_tok = total_in
+    by_modality: list[dict[str, object]] = []
+    if len(usage_raw) > 1 and isinstance(usage_raw[1], list):
+        for mod_entry in usage_raw[1]:
+            if isinstance(mod_entry, list) and len(mod_entry) >= 2:
+                mod_code = _coerce_int(mod_entry[0])
+                mod_tokens = _coerce_int(mod_entry[1]) or 0
+                mod_name = DECISION_USAGE_MODALITY_NAMES.get(
+                    mod_code or 0, f"unknown_{mod_code}"
+                )
+                by_modality.append({"modality": mod_name, "tokens": mod_tokens})
+
+    return {
+        "answers": answers,
+        "usage": {
+            "total_input_tokens": total_in,
+            "input_tokens_by_modality": by_modality,
+            "total_output_tokens": 0,
+            "total_tokens": total_tok,
+        },
+    }
+
+
+def parse_count_tokens_response(raw_text: str) -> dict[str, object]:
+    """Parse MakerSuiteService/CountTokens JSPB response."""
+    parts = extract_outer_json(raw_text)
+    if not parts or not isinstance(parts[0], list):
+        return {"totalTokens": 0}
+    outer = parts[0]
+    total = _coerce_int(outer[0] if len(outer) > 0 else None) or 0
+    result: dict[str, object] = {"totalTokens": total}
+    cached = _coerce_int(outer[3] if len(outer) > 3 else None)
+    if cached is not None:
+        result["cachedContentTokenCount"] = cached
+    modality_map = {1: "TEXT", 2: "IMAGE", 3: "AUDIO", 4: "VIDEO", 5: "DOCUMENT"}
+    if len(outer) > 5 and isinstance(outer[5], list):
+        details: list[dict[str, object]] = []
+        for entry in outer[5]:
+            if isinstance(entry, list) and len(entry) >= 2:
+                m_code = _coerce_int(entry[0])
+                t_cnt = _coerce_int(entry[1])
+                if m_code is not None and t_cnt is not None:
+                    details.append(
+                        {
+                            "modality": modality_map.get(
+                                m_code, "MODALITY_UNSPECIFIED"
+                            ),
+                            "tokenCount": t_cnt,
+                        }
+                    )
+        if details:
+            result["promptTokensDetails"] = details
+    return result
+
+
 __all__ = [
     "WIRE_CANDIDATE_CONTENT",
     "WIRE_CANDIDATE_FINISH_MESSAGE",
@@ -940,6 +1115,8 @@ __all__ = [
     "is_inline_thought_leak",
     "may_start_inline_thought",
     "parse_chunk_usage",
+    "parse_count_tokens_response",
+    "parse_decision_response",
     "parse_response_chunk",
     "parse_response_part",
     "parse_text_output",

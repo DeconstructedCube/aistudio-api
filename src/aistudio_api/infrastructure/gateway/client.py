@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL
@@ -17,13 +18,24 @@ from aistudio_api.infrastructure.gateway.headers import (
     merge_header_case_insensitive,
 )
 from aistudio_api.infrastructure.gateway.session import (
+    COUNT_TOKENS_URL,
+    CREATE_DECISION_URL,
     DEFAULT_UPSTREAM_HEADERS,
     GENERATE_CONTENT_URL,
     GatewaySession,
     SessionContext,
 )
-from aistudio_api.infrastructure.gateway.wire_codec import encode_request_body
-from aistudio_api.infrastructure.gateway.wire_parser import parse_text_output
+from aistudio_api.infrastructure.gateway.wire_codec import (
+    encode_count_tokens_body,
+    encode_decision_request_body,
+    encode_request_body,
+    extract_decision_digest_contents,
+)
+from aistudio_api.infrastructure.gateway.wire_parser import (
+    parse_count_tokens_response,
+    parse_decision_response,
+    parse_text_output,
+)
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
 from aistudio_api.infrastructure.utils.logger import get_logger
 
@@ -115,26 +127,7 @@ class AIStudioClient:
             generation_config_overrides=generation_config_overrides,
             snapshot=snapshot,
         )
-        from aistudio_api.infrastructure.gateway.model_defaults import (
-            get_active_waa_server,
-        )
-
-        active_waa = get_active_waa_server()
-        headers = dict(DEFAULT_UPSTREAM_HEADERS)
-        if active_waa.get("user_agent"):
-            merge_header_case_insensitive(
-                headers, "User-Agent", str(active_waa["user_agent"])
-            )
-        server_hdrs = active_waa.get("headers")
-        if isinstance(server_hdrs, dict):
-            for k, v in server_hdrs.items():
-                merge_header_case_insensitive(headers, str(k), str(v))
-        dyn_headers = getattr(self._session, "last_signer_headers", None)
-        if isinstance(dyn_headers, dict):
-            for k, v in dyn_headers.items():
-                if k.lower() not in ("cookie", "authorization"):
-                    merge_header_case_insensitive(headers, str(k), str(v))
-        merge_header_case_insensitive(headers, "X-Goog-AuthUser", ctx.auth_user)
+        headers = self._build_upstream_headers(ctx)
         prepared = PreparedRequest(
             url=GENERATE_CONTENT_URL,
             headers=headers,
@@ -243,6 +236,127 @@ class AIStudioClient:
         output = parse_text_output(raw_text)
         output.model = model
         return output
+
+    def _build_upstream_headers(self, ctx: SessionContext) -> dict[str, str]:
+        from aistudio_api.infrastructure.gateway.model_defaults import (
+            get_active_waa_server,
+        )
+
+        active_waa = get_active_waa_server()
+        headers = dict(DEFAULT_UPSTREAM_HEADERS)
+        if active_waa.get("user_agent"):
+            merge_header_case_insensitive(
+                headers, "User-Agent", str(active_waa["user_agent"])
+            )
+        server_hdrs = active_waa.get("headers")
+        if isinstance(server_hdrs, dict):
+            for k, v in server_hdrs.items():
+                merge_header_case_insensitive(headers, str(k), str(v))
+        dyn_headers = getattr(self._session, "last_signer_headers", None)
+        if isinstance(dyn_headers, dict):
+            for k, v in dyn_headers.items():
+                if k.lower() not in ("cookie", "authorization"):
+                    merge_header_case_insensitive(headers, str(k), str(v))
+        merge_header_case_insensitive(headers, "X-Goog-AuthUser", ctx.auth_user)
+        return headers
+
+    async def prepare_decision_request(
+        self,
+        *,
+        model: str = "models/gemini-decision-1",
+        raw_input: str | dict[str, object] | Sequence[object],
+        questions: dict[str, dict[str, object]],
+        temperature: float | None = None,
+        force_recreate_signer: bool = False,
+    ) -> PreparedRequest:
+        ctx = await self._session.ensure_ready()
+        digest_contents = extract_decision_digest_contents(raw_input)
+        if force_recreate_signer:
+            snapshot = await self._session.generate_snapshot(
+                digest_contents, ctx=ctx, model=model, force_recreate=True
+            )
+        else:
+            snapshot = await self._session.generate_snapshot(
+                digest_contents, ctx=ctx, model=model
+            )
+        body = encode_decision_request_body(
+            model=model,
+            raw_input=raw_input,
+            questions=questions,
+            temperature=temperature,
+            snapshot=snapshot,
+        )
+        headers = self._build_upstream_headers(ctx)
+        prepared = PreparedRequest(
+            url=CREATE_DECISION_URL,
+            headers=headers,
+            body=body,
+            model=model,
+            snapshot=snapshot,
+            ctx=ctx,
+        )
+        self.last_prepared_request = prepared
+        return prepared
+
+    async def create_decision(
+        self,
+        *,
+        model: str = "models/gemini-decision-1",
+        raw_input: str | dict[str, object] | Sequence[object] = "",
+        questions: dict[str, dict[str, object]] | None = None,
+        temperature: float | None = None,
+        force_recreate_signer: bool = False,
+        prepared: PreparedRequest | None = None,
+    ) -> dict[str, object]:
+        effective_prep = prepared or await self.prepare_decision_request(
+            model=model,
+            raw_input=raw_input,
+            questions=questions or {},
+            temperature=temperature,
+            force_recreate_signer=force_recreate_signer,
+        )
+        status, raw = await self._session.send_request(
+            body=effective_prep.body,
+            url=effective_prep.url,
+            headers=effective_prep.headers,
+            ctx=effective_prep.ctx,
+        )
+        raw_text = raw.decode("utf-8", errors="replace")
+        if status != 200:
+            raise classify_error(status, raw_text)
+        if not raw_text.strip():
+            raise TransportError("empty 200 body (connection truncated)")
+        if is_login_redirect_payload(raw_text):
+            raise SessionExpiredError("登录态已失效: 被重定向至 Google 登录页")
+        if is_html_payload(raw_text):
+            raise TransportError("upstream returned HTML error page on HTTP 200")
+        return parse_decision_response(raw_text)
+
+    async def count_tokens(
+        self,
+        *,
+        model: str = DEFAULT_TEXT_MODEL,
+        contents: list[AistudioContent],
+    ) -> dict[str, object]:
+        ctx = await self._session.ensure_ready()
+        body = encode_count_tokens_body(model=model, contents=contents)
+        headers = self._build_upstream_headers(ctx)
+        status, raw = await self._session.send_request(
+            body=body,
+            url=COUNT_TOKENS_URL,
+            headers=headers,
+            ctx=ctx,
+        )
+        raw_text = raw.decode("utf-8", errors="replace")
+        if status != 200:
+            raise classify_error(status, raw_text)
+        if not raw_text.strip():
+            raise TransportError("empty 200 body (connection truncated)")
+        if is_login_redirect_payload(raw_text):
+            raise SessionExpiredError("登录态已失效: 被重定向至 Google 登录页")
+        if is_html_payload(raw_text):
+            raise TransportError("upstream returned HTML error page on HTTP 200")
+        return parse_count_tokens_response(raw_text)
 
 
 __all__ = ["AIStudioClient", "PreparedRequest"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL, settings
 
@@ -11,7 +12,17 @@ from .wire_parser import (
     WIRE_PART_FILE_DATA_INDEX,
     parse_response_part,
 )
-from .wire_spec import GenerationConfigIndex, TopLevelIndex
+from .wire_spec import (
+    INTERACTIONS_AUDIO_MIME_TYPES,
+    INTERACTIONS_IMAGE_MIME_TYPES,
+    INTERACTIONS_VIDEO_MIME_TYPES,
+    CreateDecisionIndex,
+    DecisionQuestionIndex,
+    GenerationConfigIndex,
+    InteractionsContentIndex,
+    JspbArray,
+    TopLevelIndex,
+)
 from .wire_types import (
     AistudioContent,
     AistudioGenerationConfig,
@@ -513,3 +524,215 @@ def encode_request_body(
         generation_config_overrides=generation_config_overrides,
     )
     return _codec.encode(request)
+
+
+def _normalize_interactions_blocks(
+    raw_input: str | dict[str, object] | Sequence[object],
+) -> list[dict[str, object]]:
+    if isinstance(raw_input, str):
+        if not raw_input:
+            raise ValueError("input must not be empty")
+        return [{"type": "text", "text": raw_input}]
+    if isinstance(raw_input, dict):
+        return [raw_input]
+    blocks = [item for item in raw_input if isinstance(item, dict)]
+    if not blocks:
+        raise ValueError("input must contain at least one content block")
+    return blocks
+
+
+def _encode_interactions_block(block: dict[str, object]) -> list[object]:
+    block_type = str(block.get("type") or "").strip().lower()
+    if not block_type and "text" in block:
+        block_type = "text"
+
+    wire = JspbArray()
+    if block_type == "text":
+        text = block.get("text")
+        if not isinstance(text, str):
+            raise ValueError("text content block requires string 'text'")
+        wire[InteractionsContentIndex.TEXT] = [text, None]
+        return wire.compact()
+
+    mime_type = (
+        str(block.get("mime_type") or block.get("mimeType") or "").strip().lower()
+    )
+    data = block.get("data")
+    uri = block.get("uri")
+    if not isinstance(data, str) or not data:
+        data = None
+    if not isinstance(uri, str) or not uri:
+        uri = None
+    if data is None and uri is None:
+        raise ValueError(
+            f"{block_type or 'media'} content block requires 'data' or 'uri'"
+        )
+
+    if block_type == "image":
+        mime_code = INTERACTIONS_IMAGE_MIME_TYPES.get(mime_type, 0)
+        media_wire = JspbArray([mime_code])
+        if data is not None:
+            media_wire[1] = data
+        if uri is not None:
+            media_wire[2] = uri
+        wire[InteractionsContentIndex.IMAGE] = media_wire.compact()
+        return wire.compact()
+
+    if block_type == "audio":
+        mime_code = INTERACTIONS_AUDIO_MIME_TYPES.get(mime_type, 0)
+        media_wire = JspbArray([mime_code])
+        if data is not None:
+            media_wire[1] = data
+        if uri is not None:
+            media_wire[2] = uri
+        wire[InteractionsContentIndex.AUDIO] = media_wire.compact()
+        return wire.compact()
+
+    if block_type == "document":
+        mime_code = 1 if mime_type == "application/pdf" else 0
+        media_wire = JspbArray([mime_code])
+        if data is not None:
+            media_wire[1] = data
+        if uri is not None:
+            media_wire[2] = uri
+        wire[InteractionsContentIndex.DOCUMENT] = media_wire.compact()
+        return wire.compact()
+
+    if block_type == "video":
+        mime_code = INTERACTIONS_VIDEO_MIME_TYPES.get(mime_type, 0)
+        media_wire = JspbArray([mime_code])
+        if data is not None:
+            media_wire[1] = data
+        if uri is not None:
+            media_wire[2] = uri
+        wire[InteractionsContentIndex.VIDEO] = media_wire.compact()
+        return wire.compact()
+
+    raise ValueError(f"Unsupported Decisions API input block type: {block_type!r}")
+
+
+def extract_decision_digest_contents(
+    raw_input: str | dict[str, object] | Sequence[object],
+) -> list[AistudioContent]:
+    """Extract AistudioContent parts from Decisions input for WAA SHA-256 digest."""
+    blocks = _normalize_interactions_blocks(raw_input)
+    parts: list[AistudioPart] = []
+    for block in blocks:
+        block_type = str(block.get("type") or "").strip().lower()
+        if not block_type and "text" in block:
+            block_type = "text"
+        if block_type == "text":
+            parts.append(AistudioPart(text=str(block.get("text") or "")))
+        elif isinstance(block.get("data"), str) and block["data"]:
+            mime_type = str(
+                block.get("mime_type")
+                or block.get("mimeType")
+                or "application/octet-stream"
+            )
+            parts.append(AistudioPart(inline_data=(mime_type, str(block["data"]))))
+        elif isinstance(block.get("uri"), str) and block["uri"]:
+            parts.append(AistudioPart(file_id=str(block["uri"])))
+    return [AistudioContent(role="user", parts=parts or [AistudioPart(text="")])]
+
+
+def _encode_decision_question(
+    question: dict[str, object],
+) -> list[object]:
+    q_type = str(question.get("type") or "").strip().lower()
+    raw_instr = question.get("instructions")
+    if isinstance(raw_instr, str):
+        instr_blocks: list[dict[str, object]] = [{"type": "text", "text": raw_instr}]
+    elif isinstance(raw_instr, dict):
+        instr_blocks = [raw_instr]
+    elif isinstance(raw_instr, list):
+        instr_blocks = [b for b in raw_instr if isinstance(b, dict)]
+    else:
+        raise ValueError("question.instructions is required")
+    if not instr_blocks:
+        raise ValueError("question.instructions must not be empty")
+
+    instr_wire = [_encode_interactions_block(b) for b in instr_blocks]
+    q_wire = JspbArray()
+    q_wire[DecisionQuestionIndex.INSTRUCTIONS] = instr_wire
+
+    criteria = question.get("criteria")
+    if q_type == "noul":
+        if isinstance(criteria, dict):
+            true_desc = str(
+                criteria.get("true_description")
+                or criteria.get("trueDescription")
+                or ""
+            )
+            false_desc = str(
+                criteria.get("false_description")
+                or criteria.get("falseDescription")
+                or ""
+            )
+            q_wire[DecisionQuestionIndex.NOUL] = [[true_desc, false_desc]]
+        else:
+            q_wire[DecisionQuestionIndex.NOUL] = []
+    elif q_type == "choice":
+        if not isinstance(criteria, dict) or len(criteria) < 2:
+            raise ValueError(
+                "choice question requires criteria map with at least 2 options"
+            )
+        sorted_entries = sorted(
+            ((str(k), "" if v is None else str(v)) for k, v in criteria.items()),
+            key=lambda item: item[0].encode("utf-8"),
+        )
+        choice_wire = JspbArray([[[k, v] for k, v in sorted_entries]])
+        inc_none = question.get(
+            "includeNoneOfAbove", question.get("include_none_of_above")
+        )
+        if isinstance(inc_none, bool):
+            choice_wire[1] = inc_none
+        q_wire[DecisionQuestionIndex.CHOICE] = choice_wire.compact()
+    elif q_type == "score":
+        if not isinstance(criteria, list) or len(criteria) < 2:
+            raise ValueError(
+                "score question requires criteria list with at least 2 levels"
+            )
+        levels = [str(item) for item in criteria]
+        q_wire[DecisionQuestionIndex.SCORE] = [levels]
+    else:
+        raise ValueError(f"Unsupported Decisions question type: {q_type!r}")
+
+    return q_wire.compact()
+
+
+def encode_decision_request_body(
+    *,
+    model: str = "models/gemini-decision-1",
+    raw_input: str | dict[str, object] | Sequence[object],
+    questions: dict[str, dict[str, object]],
+    temperature: float | None = None,
+    snapshot: str | None = None,
+) -> str:
+    if not questions:
+        raise ValueError("questions must not be empty")
+    norm_model = model if model.startswith("models/") else f"models/{model}"
+    blocks = _normalize_interactions_blocks(raw_input)
+    input_wire = [_encode_interactions_block(block) for block in blocks]
+    questions_wire = [
+        [str(q_key), _encode_decision_question(q_val)]
+        for q_key, q_val in questions.items()
+    ]
+    body = JspbArray()
+    body[CreateDecisionIndex.MODEL] = norm_model
+    body[CreateDecisionIndex.INPUT] = input_wire
+    body[CreateDecisionIndex.QUESTIONS] = questions_wire
+    if temperature is not None and float(temperature) > 0:
+        body[CreateDecisionIndex.TEMPERATURE] = float(temperature)
+    if snapshot:
+        body[CreateDecisionIndex.REQUEST_SNAPSHOT] = snapshot
+    return json.dumps(body.compact(), separators=(",", ":"), ensure_ascii=False)
+
+
+def encode_count_tokens_body(
+    *,
+    model: str,
+    contents: list[AistudioContent],
+) -> str:
+    norm_model = model if model.startswith("models/") else f"models/{model}"
+    payload = [norm_model, [content.to_wire() for content in contents]]
+    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)

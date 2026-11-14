@@ -129,3 +129,91 @@ class JspbArray(list):
 
 
 WIRE_FINISH_REASON_CONTINUING = 22
+
+
+class CreateDecisionIndex(IntEnum):
+    """Indexes in the top-level MakerSuiteService/CreateDecision request array."""
+
+    MODEL = 0
+    INPUT = 1
+    QUESTIONS = 2
+    TEMPERATURE = 3
+    REQUEST_SNAPSHOT = 4
+
+
+class DecisionQuestionIndex(IntEnum):
+    """Indexes in CreateDecisionRequest.Question."""
+
+    INSTRUCTIONS = 0
+    NOUL = 1
+    CHOICE = 2
+    SCORE = 3
+
+
+class DecisionAnswerIndex(IntEnum):
+    """Indexes in CreateDecisionResponse.Answer."""
+
+    CONFIDENCE = 0
+    STATUS = 1
+    NOUL_DETAIL = 3
+    CHOICE_DETAIL = 4
+    SCORE_DETAIL = 5
+
+
+class InteractionsContentIndex(IntEnum):
+    """Indexes in google.internal.alkali.applications.makersuite.v1.interactions.Content."""
+
+    TEXT = 0
+    IMAGE = 1
+    AUDIO = 2
+    DOCUMENT = 3
+    VIDEO = 4
+
+
+INTERACTIONS_IMAGE_MIME_TYPES: dict[str, int] = {
+    "image/png": 1,
+    "image/jpeg": 2,
+    "image/jpg": 2,
+    "image/webp": 3,
+    "image/heic": 4,
+    "image/heif": 5,
+    "image/gif": 7,
+    "image/bmp": 8,
+    "image/tiff": 9,
+}
+
+INTERACTIONS_AUDIO_MIME_TYPES: dict[str, int] = {
+    "audio/wav": 1,
+    "audio/mp3": 2,
+    "audio/aiff": 3,
+    "audio/aac": 4,
+    "audio/ogg": 5,
+    "audio/flac": 6,
+    "audio/mpeg": 7,
+    "audio/m4a": 8,
+    "audio/l16": 9,
+    "audio/s16le": 10,
+    "audio/opus": 11,
+    "audio/alaw": 12,
+    "audio/mulaw": 13,
+}
+
+INTERACTIONS_VIDEO_MIME_TYPES: dict[str, int] = {
+    "video/mp4": 1,
+    "video/mpeg": 2,
+    "video/mpg": 3,
+    "video/mov": 4,
+    "video/avi": 5,
+    "video/x-flv": 6,
+    "video/webm": 7,
+    "video/wmv": 8,
+    "video/3gpp": 9,
+}
+
+DECISION_USAGE_MODALITY_NAMES: dict[int, str] = {
+    1: "text",
+    2: "image",
+    3: "audio",
+    4: "video",
+    5: "document",
+}

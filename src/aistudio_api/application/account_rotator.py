@@ -180,6 +180,24 @@ class AccountStats:
             self.daily_models[norm_m] = AccountModelDailyStats()
         return self.daily_models[norm_m]
 
+    def _quota_siblings(self, model: str | None) -> tuple[str, ...]:
+        if not model:
+            return ()
+        norm_m = normalize_model_key(model)
+        if not norm_m:
+            return ()
+        try:
+            from aistudio_api.infrastructure.gateway.model_discovery import (
+                model_discovery,
+            )
+
+            siblings = model_discovery.get_quota_family_siblings(norm_m)
+            if siblings:
+                return siblings
+        except Exception:
+            pass
+        return (norm_m,)
+
     def is_available(self, model: str | None = None) -> bool:
         """检查账号在指定模型下是否可用（软限额超标不禁用，仅上游真 429 冷却与登录态失效不可用）。"""
         now = time.time()
@@ -189,10 +207,9 @@ class AccountStats:
         self._check_date_reset(current_la)
 
         if model:
-            norm_m = normalize_model_key(model)
-            if norm_m and norm_m in self.daily_models:
-                m_stats = self.daily_models[norm_m]
-                if m_stats.cooldown_until > now:
+            for key in self._quota_siblings(model):
+                m_stats = self.daily_models.get(key)
+                if m_stats and m_stats.cooldown_until > now:
                     return False
 
         return True
@@ -203,11 +220,13 @@ class AccountStats:
             return 0.0
         now = time.time()
         if model:
-            norm_m = normalize_model_key(model)
-            if norm_m and norm_m in self.daily_models:
-                cd = self.daily_models[norm_m].cooldown_until
-                if cd > now:
-                    return max(0.0, cd - now)
+            max_cd = 0.0
+            for key in self._quota_siblings(model):
+                m_stats = self.daily_models.get(key)
+                if m_stats and m_stats.cooldown_until > now:
+                    max_cd = max(max_cd, m_stats.cooldown_until - now)
+            if max_cd > 0.0:
+                return max_cd
         return get_seconds_until_pacific_midnight()
 
     def record_success(
@@ -317,12 +336,12 @@ class AccountStats:
         self.session_expired = False
         self.last_session_expired = 0.0
         if model:
-            norm_m = normalize_model_key(model)
-            if norm_m and norm_m in self.daily_models:
-                st = self.daily_models[norm_m]
-                st.cooldown_until = 0.0
-                st.rate_limited = 0
-                st.drip_mode = False
+            for key in self._quota_siblings(model):
+                if key in self.daily_models:
+                    st = self.daily_models[key]
+                    st.cooldown_until = 0.0
+                    st.rate_limited = 0
+                    st.drip_mode = False
         else:
             for st in self.daily_models.values():
                 st.cooldown_until = 0.0
@@ -527,6 +546,7 @@ class AccountRotator:
         from aistudio_api.infrastructure.gateway.model_defaults import (
             resolve_tier_quota_limits,
         )
+
         result: dict[str, dict[str, object]] = {}
         current_la = get_pacific_date_key()
 

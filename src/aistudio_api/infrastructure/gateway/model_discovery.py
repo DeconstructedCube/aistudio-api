@@ -168,6 +168,15 @@ _FALLBACK_MODELS = [
         "displayName": "Gemini Omni 1.1 Flash",
         "description": "Omni multimodal text and video generation model",
     },
+    {
+        "id": "gemini-decision-1",
+        "displayName": "Gemini Decision 1",
+        "description": "Calibrated multimodal decision model for yes/no, choice, and score questions",
+        "category": "decision",
+        "inputTokenLimit": 262144,
+        "outputTokenLimit": 1,
+        "supportedGenerationMethods": ["createDecision"],
+    },
 ]
 
 
@@ -178,6 +187,8 @@ class ModelDiscoveryService:
         self._cache_ttl = cache_ttl_seconds
         self._cached_models: list[dict[str, object]] = []
         self._last_fetched_at: float = 0.0
+        self._quota_family_map: dict[str, str] = {}
+        self._quota_family_members: dict[str, list[str]] = {}
         self._lock = asyncio.Lock()
 
     async def get_models(
@@ -253,10 +264,17 @@ class ModelDiscoveryService:
                         self._cached_models = models
                         self._last_fetched_at = time.time()
                         logger.info("已更新上游模型列表: count=%d", len(models))
+                        try:
+                            await self._fetch_quota_models_via_http(
+                                effective_cookies,
+                                effective_auth_user,
+                                tier=effective_tier,
+                            )
+                        except Exception as qe:
+                            logger.debug("拉取配额分组列表失败: %s", qe)
                         return models
                 except Exception as e:
                     logger.debug("拉取模型列表失败: %s", e)
-            # 3. 保底返回本地默认模型列表
             if not self._cached_models:
                 self._cached_models = [dict(m) for m in _FALLBACK_MODELS]
                 self._last_fetched_at = time.time()
@@ -297,6 +315,24 @@ class ModelDiscoveryService:
             ):
                 return model_info
         return None
+
+    def resolve_quota_family(self, model_id: str) -> str:
+        """解析模型所属的上游共享配额桶标识；未知时返回规范化模型名。"""
+        clean = model_id.strip().removeprefix("models/").lower()
+        return self._quota_family_map.get(clean, clean)
+
+    def get_quota_family_siblings(self, model_id: str) -> tuple[str, ...]:
+        """返回与目标模型共享同一上游配额桶的模型列表（含自身）。"""
+        clean = model_id.strip().removeprefix("models/").lower()
+        if not clean:
+            return ()
+        family = self._quota_family_map.get(clean)
+        if not family:
+            return (clean,)
+        members = self._quota_family_members.get(family)
+        if not members:
+            return (clean,)
+        return tuple(members)
 
     def is_model_allowed_for_tier(self, model_id: str, tier: str | None) -> bool:
         """根据 config.yaml 付费规则以及缓存的 ListModels accessModes 判断指定订阅等级是否可访问该模型。"""
@@ -450,6 +486,81 @@ class ModelDiscoveryService:
                 return self._parse_raw_models(resp.json())
         return []
 
+    async def _fetch_quota_models_via_http(
+        self,
+        cookies: dict[str, str],
+        auth_user: str,
+        *,
+        tier: str = "Free",
+    ) -> dict[str, str]:
+        """通过 ListQuotaModels RPC 拉取上游共享配额桶映射。"""
+        import httpx
+
+        headers = build_makersuite_headers(
+            cookies,
+            auth_user=auth_user or "0",
+            tier=tier,
+            include_visit_id=True,
+        )
+        from aistudio_api.config import settings
+
+        url = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/ListQuotaModels"
+        async with httpx.AsyncClient(timeout=10.0, proxy=settings.proxy_url) as client:
+            resp = await client.post(url, headers=headers, content="[]")
+            if resp.status_code == 200:
+                return self._parse_quota_models(resp.json())
+        return {}
+
+    def _parse_quota_models(self, raw_data: object) -> dict[str, str]:
+        """解析 ListQuotaModels 响应，建立 model_id <-> quota_family 映射。"""
+        if (
+            not isinstance(raw_data, list)
+            or not raw_data
+            or not isinstance(raw_data[0], list)
+        ):
+            return {}
+
+        family_map: dict[str, str] = {}
+        family_members: dict[str, list[str]] = {}
+        for entry in raw_data[0]:
+            if (
+                not isinstance(entry, list)
+                or not entry
+                or not isinstance(entry[0], str)
+            ):
+                continue
+            family_id = entry[0].strip().lower()
+            if not family_id:
+                continue
+            members: list[str] = []
+            raw_instances = (
+                entry[4] if len(entry) > 4 and isinstance(entry[4], list) else []
+            )
+            for inst in raw_instances:
+                if (
+                    not isinstance(inst, list)
+                    or not inst
+                    or not isinstance(inst[0], str)
+                ):
+                    continue
+                clean_id = inst[0].strip().removeprefix("models/").lower()
+                if clean_id:
+                    family_map[clean_id] = family_id
+                    if clean_id not in members:
+                        members.append(clean_id)
+            if members:
+                family_members[family_id] = members
+
+        if family_map:
+            self._quota_family_map = family_map
+            self._quota_family_members = family_members
+            logger.debug(
+                "已同步上游配额分组: families=%d, models=%d",
+                len(family_members),
+                len(family_map),
+            )
+        return family_map
+
     def _parse_raw_models(self, raw_data: object) -> list[dict[str, object]]:
         """解析 Google ListModels 的原始 protobuf 数组结构。"""
         if (
@@ -527,13 +638,17 @@ class ModelDiscoveryService:
             paid = bool(len(item) > 77 and item[77] == 2)
             access_modes = _extract_int_list(item[82]) if len(item) > 82 else []
 
-            # 过滤支持内容生成的模型
-            if not any("generateContent" in str(m) for m in methods) and not any(
+            # 过滤支持内容生成或决策评估的模型
+            if not any(
+                "generateContent" in str(m) or "createDecision" in str(m)
+                for m in methods
+            ) and not any(
                 "image" in model_id
                 or "veo" in model_id
                 or "lyria" in model_id
                 or "omni" in model_id
                 or "tts" in model_id
+                or "decision" in model_id
                 for _ in [0]
             ):
                 continue
@@ -565,7 +680,9 @@ class ModelDiscoveryService:
                 or "tts" in model_id
             )
             category = "flagship"
-            if is_image:
+            if "createDecision" in supported_methods or "decision" in model_id:
+                category = "decision"
+            elif is_image:
                 category = "image"
             elif is_video:
                 category = "video"

@@ -48,6 +48,8 @@ class SessionContext:
 
 
 GENERATE_CONTENT_URL = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent"
+CREATE_DECISION_URL = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/CreateDecision"
+COUNT_TOKENS_URL = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/CountTokens"
 
 DEFAULT_UPSTREAM_HEADERS: dict[str, str] = build_makersuite_headers()
 
@@ -371,6 +373,8 @@ class GatewaySession:
 
 
 __all__ = [
+    "COUNT_TOKENS_URL",
+    "CREATE_DECISION_URL",
     "DEFAULT_UPSTREAM_HEADERS",
     "GENERATE_CONTENT_URL",
     "GatewaySession",

@@ -15,10 +15,18 @@ from fastapi.responses import StreamingResponse
 from aistudio_api.api.response_models import (
     GeminiCandidateResponse,
     GeminiContentResponse,
+    GeminiCountTokensResponse,
+    GeminiCreateDecisionResponse,
+    GeminiDecisionModalityUsage,
+    GeminiDecisionUsageResponse,
     GeminiGenerateContentResponse,
 )
 from aistudio_api.api.responses import to_gemini_parts, to_gemini_usage_metadata
-from aistudio_api.api.schemas import GeminiGenerateContentRequest
+from aistudio_api.api.schemas import (
+    GeminiCountTokensRequest,
+    GeminiCreateDecisionRequest,
+    GeminiGenerateContentRequest,
+)
 from aistudio_api.api.state import runtime_state
 from aistudio_api.application.account_orchestrator import (
     MAX_RETRIES,
@@ -1046,3 +1054,181 @@ def _build_gemini_streaming_response(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+async def handle_gemini_decisions(
+    req: GeminiCreateDecisionRequest,
+    client: AIStudioClient,
+) -> GeminiCreateDecisionResponse:
+    last_error: Exception | None = None
+    auth_manager = Auth403RetryManager()
+    total_attempts = MAX_RETRIES + AUTH_403_MAX_RETRIES
+    raw_model = req.model or "gemini-decision-1"
+    norm_model = raw_model if raw_model.startswith("models/") else f"models/{raw_model}"
+    questions_dict: dict[str, dict[str, object]] = {
+        key: val.model_dump(mode="json", exclude_none=True)
+        for key, val in req.questions.items()
+    }
+
+    for attempt in range(total_attempts):
+        await ensure_active_account(attempt, model=norm_model)
+        request_ctx: SessionContext | None = None
+        try:
+            logger.info(
+                "Decisions 请求: model=%s, questions=%d, 尝试=%d/%d",
+                norm_model,
+                len(questions_dict),
+                attempt + 1,
+                total_attempts,
+            )
+            force_recreate = auth_manager.force_recreate_signer
+            auth_manager.force_recreate_signer = False
+            prepared = auth_manager.current_prepared
+            if prepared is None:
+                prepared = await client.prepare_decision_request(
+                    model=norm_model,
+                    raw_input=req.input,
+                    questions=questions_dict,
+                    temperature=req.temperature,
+                    force_recreate_signer=force_recreate,
+                )
+            request_ctx = prepared.ctx
+            auth_manager.current_prepared = prepared
+            result = await client.create_decision(
+                model=norm_model,
+                prepared=prepared,
+            )
+            auth_manager.current_prepared = None
+
+            raw_usage = result.get("usage")
+            usage_map = raw_usage if isinstance(raw_usage, dict) else {}
+            prompt_tokens = int(str(usage_map.get("total_input_tokens") or 0))
+            total_tokens = int(str(usage_map.get("total_tokens") or prompt_tokens))
+            rotator_usage: dict[str, object] = {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": 0,
+                "total_tokens": total_tokens,
+            }
+            record_rotator_event("success", model=norm_model, usage=rotator_usage)
+            runtime_state.record(
+                norm_model,
+                "success",
+                usage=rotator_usage,
+                finish_reason="STOP",
+            )
+            raw_answers = result.get("answers")
+            answers = raw_answers if isinstance(raw_answers, dict) else {}
+            raw_mods = usage_map.get("input_tokens_by_modality")
+            modalities = [
+                GeminiDecisionModalityUsage(
+                    modality=str(item.get("modality") or "text"),
+                    tokens=int(str(item.get("tokens") or 0)),
+                )
+                for item in (raw_mods if isinstance(raw_mods, list) else [])
+                if isinstance(item, dict)
+            ]
+            return GeminiCreateDecisionResponse(
+                answers=answers,
+                usage=GeminiDecisionUsageResponse(
+                    total_input_tokens=prompt_tokens,
+                    input_tokens_by_modality=modalities,
+                    total_output_tokens=0,
+                    total_tokens=total_tokens,
+                ),
+            )
+        except Exception as exc:
+            last_error = exc
+            if isinstance(exc, AuthError) and not isinstance(exc, SessionExpiredError):
+                if await auth_manager.handle_403(exc, model=norm_model, client=client):
+                    continue
+                raise
+            if await handle_attempt_exception(
+                exc,
+                attempt=attempt,
+                model_path=norm_model,
+                normalized_model=norm_model,
+                request_ctx=request_ctx,
+            ):
+                auth_manager.current_prepared = None
+                continue
+            raise
+
+    raise HTTPException(
+        429,
+        detail={
+            "message": f"All accounts reached daily quota for model '{norm_model}'. Quota resets at 00:00 PST.",
+            "type": "rate_limit_exceeded",
+        },
+    ) from last_error
+
+
+async def handle_gemini_count_tokens(
+    model_path: str,
+    req: GeminiCountTokensRequest,
+    client: AIStudioClient,
+) -> GeminiCountTokensResponse:
+    if req.generateContentRequest is not None:
+        effective_req = req.generateContentRequest
+    elif req.contents is not None:
+        effective_req = GeminiGenerateContentRequest(
+            contents=req.contents,
+            systemInstruction=req.systemInstruction,
+            tools=req.tools,
+        )
+    else:
+        raise HTTPException(
+            400,
+            detail={
+                "message": "contents or generateContentRequest is required",
+                "type": "bad_request",
+            },
+        )
+
+    normalized = normalize_gemini_request(effective_req, model_path)
+    last_error: Exception | None = None
+    for attempt in range(MAX_RETRIES):
+        await ensure_active_account(attempt, model=normalized.model)
+        try:
+            res = await client.count_tokens(
+                model=normalized.model,
+                contents=normalized.contents,
+            )
+            raw_cached = res.get("cachedContentTokenCount")
+            cached_count = (
+                int(str(raw_cached))
+                if raw_cached is not None and not isinstance(raw_cached, bool)
+                else None
+            )
+            raw_details = res.get("promptTokensDetails")
+            details = (
+                [d for d in raw_details if isinstance(d, dict)]
+                if isinstance(raw_details, list)
+                else None
+            )
+            return GeminiCountTokensResponse(
+                totalTokens=int(str(res.get("totalTokens") or 0)),
+                cachedContentTokenCount=cached_count,
+                promptTokensDetails=details,
+            )
+        except Exception as exc:
+            last_error = exc
+            request_ctx = getattr(
+                getattr(client, "session", None), "active_context", None
+            )
+            if await handle_attempt_exception(
+                exc,
+                attempt=attempt,
+                model_path=model_path,
+                normalized_model=normalized.model,
+                request_ctx=request_ctx,
+            ):
+                continue
+            raise
+
+    raise HTTPException(
+        429,
+        detail={
+            "message": f"All accounts reached daily quota for model '{normalized.model}'.",
+            "type": "rate_limit_exceeded",
+        },
+    ) from last_error

@@ -283,3 +283,35 @@ class GeminiGenerateContentRequest(BaseModel):
         default=None,
         validation_alias=AliasChoices("reasoningEffort", "reasoning_effort"),
     )
+
+
+class GeminiCountTokensRequest(BaseModel):
+    contents: list[GeminiContent] | None = None
+    generateContentRequest: GeminiGenerateContentRequest | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "generateContentRequest", "generate_content_request"
+        ),
+    )
+    systemInstruction: GeminiContent | None = Field(
+        default=None,
+        validation_alias=AliasChoices("systemInstruction", "system_instruction"),
+    )
+    tools: list[GeminiTool] | None = None
+
+
+class GeminiDecisionQuestion(BaseModel):
+    type: str
+    instructions: str | dict[str, object] | list[dict[str, object]]
+    criteria: dict[str, object] | list[str] | None = None
+    includeNoneOfAbove: bool | None = Field(
+        default=None,
+        validation_alias=AliasChoices("includeNoneOfAbove", "include_none_of_above"),
+    )
+
+
+class GeminiCreateDecisionRequest(BaseModel):
+    model: str = "gemini-decision-1"
+    input: str | dict[str, object] | list[dict[str, object]]
+    questions: dict[str, GeminiDecisionQuestion]
+    temperature: float | None = None
