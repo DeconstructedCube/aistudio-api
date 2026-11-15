@@ -12,17 +12,26 @@ from google.genai import errors, types
 
 from aistudio_api.api.app import app
 from aistudio_api.api.dependencies import get_client
+from aistudio_api.application import api_service_gemini as gemini
 from aistudio_api.domain.errors import UsageLimitExceeded
 from aistudio_api.domain.models import Candidate, ModelOutput
 from aistudio_api.infrastructure.gateway.client import PreparedRequest
+from aistudio_api.infrastructure.gateway.session import SessionContext
 
 
 @pytest.fixture
-def mock_client() -> MagicMock:
+def mock_client(monkeypatch) -> MagicMock:
+    # 仅替换账号和外部签名边界，官方 SDK 到 ASGI 的协议链路保持真实。
+    monkeypatch.setattr(gemini, "ensure_active_account", AsyncMock())
+    monkeypatch.setattr(gemini.runtime_state, "account_service", None)
+    monkeypatch.setattr(gemini.runtime_state, "rotator", None)
     client = MagicMock()
     client.prepare_request = AsyncMock(
         return_value=PreparedRequest(
-            url="https://example.test/rpc", headers={}, body="[]"
+            url="https://example.test/rpc",
+            headers={},
+            body="[]",
+            ctx=SessionContext(cookies={"SID": "synthetic_sid"}),
         )
     )
     return client

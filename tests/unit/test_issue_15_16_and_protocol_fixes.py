@@ -52,8 +52,11 @@ def _make_part(
 
 
 @pytest.mark.asyncio
-async def test_streaming_trailing_standalone_thought_signature_not_dropped():
+async def test_streaming_trailing_standalone_thought_signature_not_dropped(monkeypatch):
     """Issue #15: standalone thoughtSignature chunk right before done must be emitted."""
+    # 此处验证签名尾包，账号就绪边界使用离线桩以进入真实 SSE 处理逻辑。
+    monkeypatch.setattr(gemini, "ensure_active_account", AsyncMock())
+    monkeypatch.setattr(gemini.runtime_state, "account_service", None)
     mock_client = MagicMock(spec=AIStudioClient)
     mock_client.prepare_request = AsyncMock(
         return_value=PreparedRequest(

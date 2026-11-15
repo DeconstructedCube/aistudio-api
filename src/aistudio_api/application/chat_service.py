@@ -829,6 +829,14 @@ def normalize_gemini_request(
                 continue
             if part.fileData is not None:
                 raise ValueError("fileData is not supported yet")
+            if part.thoughtSignature:
+                # 独立签名也是模型历史内容，回传时不能随空文本一起丢弃。
+                parts.append(
+                    AistudioPart(
+                        thought_signature=part.thoughtSignature,
+                        thought=bool(part.thought),
+                    )
+                )
         contents.append(AistudioContent(role=role, parts=parts))
     system_instruction = None
     if req.systemInstruction is not None:
@@ -929,9 +937,10 @@ def normalize_gemini_request(
         isinstance(tool_config, list)
         and len(tool_config) > 1
         and isinstance(tool_config[1], list)
+        and tool_config[1]
+        and tool_config[1][0] == 3
     ):
-        if tool_config[1] and tool_config[1][0] == 3:
-            is_mode_none = True
+        is_mode_none = True
 
     if is_mode_none:
         tools = None

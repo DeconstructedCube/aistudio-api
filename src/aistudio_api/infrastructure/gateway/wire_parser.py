@@ -11,6 +11,7 @@ import json
 import re
 import struct
 
+from aistudio_api.domain.errors import TransportError
 from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
 from aistudio_api.infrastructure.gateway.wire_spec import (
     DECISION_USAGE_MODALITY_NAMES,
@@ -640,7 +641,7 @@ def parse_chunk_usage(chunk: object) -> dict[str, object]:
     )
 
 
-def parse_response_chunk(chunk: list[object]) -> Candidate:
+def parse_response_chunk(chunk: object) -> Candidate:
     candidate = Candidate()
     if not isinstance(chunk, list) or not chunk:
         return candidate
@@ -910,21 +911,25 @@ def parse_text_output(raw: str) -> ModelOutput:
     return output
 
 
+def _parse_auxiliary_rpc_array(raw_text: str, rpc_name: str) -> list[object]:
+    """读取辅助 RPC 的完整 JSON 数组，并保留标准 XSSI 前缀支持。"""
+    payload = raw_text.strip()
+    if payload.startswith(")]}'"):
+        payload = payload[4:].lstrip()
+    try:
+        outer: object = json.loads(payload)
+    except json.JSONDecodeError:
+        raise TransportError(f"{rpc_name} 返回不可解析的 JSON。") from None
+    if not isinstance(outer, list):
+        raise TransportError(f"{rpc_name} 响应顶层不是数组。")
+    return outer
+
+
 def parse_decision_response(raw_text: str) -> dict[str, object]:
     """Parse MakerSuiteService/CreateDecision JSPB response into Decisions API JSON."""
-    parts = extract_outer_json(raw_text)
-    if not parts or not isinstance(parts[0], list):
-        return {
-            "answers": {},
-            "usage": {
-                "total_input_tokens": 0,
-                "input_tokens_by_modality": [],
-                "total_output_tokens": 0,
-                "total_tokens": 0,
-            },
-        }
-
-    outer = parts[0]
+    outer = _parse_auxiliary_rpc_array(raw_text, "CreateDecision")
+    if any(value is not None and not isinstance(value, list) for value in outer[:2]):
+        raise TransportError("CreateDecision 响应顶层字段不是数组。")
     answers: dict[str, dict[str, object]] = {}
     raw_answers = outer[0] if len(outer) > 0 and isinstance(outer[0], list) else []
     for entry in raw_answers:
@@ -1053,12 +1058,12 @@ def parse_decision_response(raw_text: str) -> dict[str, object]:
 
 def parse_count_tokens_response(raw_text: str) -> dict[str, object]:
     """Parse MakerSuiteService/CountTokens JSPB response."""
-    parts = extract_outer_json(raw_text)
-    if not parts or not isinstance(parts[0], list):
-        return {"totalTokens": 0}
-    outer = parts[0]
-    total = _coerce_int(outer[0] if len(outer) > 0 else None) or 0
-    result: dict[str, object] = {"totalTokens": total}
+    outer = _parse_auxiliary_rpc_array(raw_text, "CountTokens")
+    raw_total = outer[0] if outer else None
+    total = _coerce_int(raw_total)
+    if raw_total is not None and total is None:
+        raise TransportError("CountTokens 响应 token 总数不是整数。")
+    result: dict[str, object] = {"totalTokens": total or 0}
     cached = _coerce_int(outer[3] if len(outer) > 3 else None)
     if cached is not None:
         result["cachedContentTokenCount"] = cached

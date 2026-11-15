@@ -12,6 +12,7 @@ from google.genai import types
 
 from aistudio_api.api.app import app
 from aistudio_api.api.dependencies import get_client
+from aistudio_api.application import api_service_gemini as gemini
 from aistudio_api.application.account_rotator import AccountRotator
 from aistudio_api.config import settings
 from aistudio_api.domain.errors import AuthError
@@ -33,6 +34,14 @@ def _build_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     )
+
+
+@pytest.fixture
+def ready_account_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 只隔离账号就绪与外部签名边界，保留真实 SDK、ASGI 与业务序列化。
+    monkeypatch.setattr(gemini, "ensure_active_account", AsyncMock())
+    monkeypatch.setattr(gemini.runtime_state, "account_service", None)
+    monkeypatch.setattr(gemini.runtime_state, "rotator", None)
 
 
 def test_decision_wire_codec_and_digest_isolation() -> None:
@@ -177,6 +186,7 @@ def test_parse_decision_response_all_question_types() -> None:
 @pytest.mark.asyncio
 async def test_decisions_endpoint_and_403_retry(
     monkeypatch: pytest.MonkeyPatch,
+    ready_account_boundary: None,
 ) -> None:
     """Test POST /v1beta/decisions REST contract and 403 self-healing retry."""
     monkeypatch.setattr(settings, "api_keys", frozenset())
@@ -246,7 +256,9 @@ def test_count_tokens_wire_codec_and_parser() -> None:
 
 
 @pytest.mark.asyncio
-async def test_count_tokens_sdk_compat(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_count_tokens_sdk_compat(
+    monkeypatch: pytest.MonkeyPatch, ready_account_boundary: None
+) -> None:
     """Verify google-genai SDK models.count_tokens works against /v1beta/...:countTokens."""
     monkeypatch.setattr(settings, "api_keys", frozenset())
     mock_client = MagicMock()

@@ -521,7 +521,6 @@ class ModelDiscoveryService:
             return {}
 
         family_map: dict[str, str] = {}
-        family_members: dict[str, list[str]] = {}
         for entry in raw_data[0]:
             if (
                 not isinstance(entry, list)
@@ -532,7 +531,6 @@ class ModelDiscoveryService:
             family_id = entry[0].strip().lower()
             if not family_id:
                 continue
-            members: list[str] = []
             raw_instances = (
                 entry[4] if len(entry) > 4 and isinstance(entry[4], list) else []
             )
@@ -546,12 +544,12 @@ class ModelDiscoveryService:
                 clean_id = inst[0].strip().removeprefix("models/").lower()
                 if clean_id:
                     family_map[clean_id] = family_id
-                    if clean_id not in members:
-                        members.append(clean_id)
-            if members:
-                family_members[family_id] = members
 
         if family_map:
+            # 由最终归属重建成员，合并重复家族并移除跨家族的过期关联。
+            family_members: dict[str, list[str]] = {}
+            for model_id, family_id in family_map.items():
+                family_members.setdefault(family_id, []).append(model_id)
             self._quota_family_map = family_map
             self._quota_family_members = family_members
             logger.debug(

@@ -42,6 +42,7 @@ def stats_response() -> StatsResponse:
     from aistudio_api.infrastructure.gateway.model_defaults import (
         resolve_tier_quota_limits,
     )
+
     stats = dict(runtime_state.model_stats)
     rotator = runtime_state.rotator
     account_svc = runtime_state.account_service

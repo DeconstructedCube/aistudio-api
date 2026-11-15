@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import aclosing
 from dataclasses import dataclass
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL
@@ -176,11 +177,14 @@ class AIStudioClient:
             generation_config_overrides=generation_config_overrides,
             force_recreate_signer=force_recreate_signer,
         )
-        async for event in self._streaming_gateway.stream_chat(
-            request=effective_prep,
-            model=model,
-        ):
-            yield event
+        async with aclosing(
+            self._streaming_gateway.stream_chat(
+                request=effective_prep,
+                model=model,
+            )
+        ) as events:
+            async for event in events:
+                yield event
 
     async def generate_content(
         self,

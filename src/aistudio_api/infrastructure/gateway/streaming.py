@@ -5,6 +5,7 @@ from __future__ import annotations
 import codecs
 import json
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 
 from aistudio_api.domain.errors import (
     RequestError,
@@ -166,37 +167,40 @@ class StreamingGateway:
                 events.append(("thought_signature", candidate.standalone_signature))
             return events
 
-        async for event_type, payload in self._session.send_streaming_request(
-            body=request_body,
-            url=request.url,
-            headers=request.headers,
-            ctx=request.ctx,
-        ):
-            if event_type == "error":
-                err_msg = (
-                    str(payload).strip()
-                    if payload
-                    else "unknown streaming transport error"
-                )
-                raise TransportError(f"Streaming request failed: {err_msg}")
-            if event_type == "status" and payload and not status_code:
-                status_code = int(str(payload))
-            elif event_type == "chunk" and payload:
-                has_received_chunks = True
-                if isinstance(payload, bytes):
-                    text_payload = utf8_decoder.decode(payload, final=False)
-                else:
-                    text_payload = str(payload)
-                if not text_payload:
-                    continue
-                if status_code != 200:
-                    raw_parts.append(text_payload)
-                elif len(head_sample) < 512:
-                    head_sample += text_payload[: 512 - len(head_sample)]
-                for parsed_chunk in parser.feed(text_payload):
-                    for event in emit_parsed_chunk(parsed_chunk):
-                        emitted_any_chunk = True
-                        yield event
+        async with aclosing(
+            self._session.send_streaming_request(
+                body=request_body,
+                url=request.url,
+                headers=request.headers,
+                ctx=request.ctx,
+            )
+        ) as events:
+            async for event_type, payload in events:
+                if event_type == "error":
+                    err_msg = (
+                        str(payload).strip()
+                        if payload
+                        else "unknown streaming transport error"
+                    )
+                    raise TransportError(f"Streaming request failed: {err_msg}")
+                if event_type == "status" and payload and not status_code:
+                    status_code = int(str(payload))
+                elif event_type == "chunk" and payload:
+                    has_received_chunks = True
+                    if isinstance(payload, bytes):
+                        text_payload = utf8_decoder.decode(payload, final=False)
+                    else:
+                        text_payload = str(payload)
+                    if not text_payload:
+                        continue
+                    if status_code != 200:
+                        raw_parts.append(text_payload)
+                    elif len(head_sample) < 512:
+                        head_sample += text_payload[: 512 - len(head_sample)]
+                    for parsed_chunk in parser.feed(text_payload):
+                        for event in emit_parsed_chunk(parsed_chunk):
+                            emitted_any_chunk = True
+                            yield event
         trailing_text = utf8_decoder.decode(b"", final=True)
         if trailing_text:
             if status_code != 200:

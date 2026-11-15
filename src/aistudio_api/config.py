@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import tempfile
@@ -23,6 +24,18 @@ def _load_env(*names: str) -> str | None:
         if value not in (None, ""):
             return value
     return None
+
+
+def _load_positive_float_env(name: str, *, default: float) -> float:
+    """请求总预算必须为正有限秒数，配置错误在启动时明确报错。"""
+    raw = _load_env(name)
+    try:
+        value = default if raw is None else float(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive finite number") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a positive finite number")
+    return value
 
 
 def _load_bool_env(*names: str, default: bool) -> bool:
@@ -196,6 +209,9 @@ def resolve_timezone() -> str:
 @dataclass(slots=True)
 class Settings:
     port: int = int(os.getenv("AISTUDIO_PORT", "8080"))
+    request_timeout_seconds: float = _load_positive_float_env(
+        "AISTUDIO_REQUEST_TIMEOUT_SECONDS", default=900.0
+    )
     proof_server_url: str = os.getenv(
         "AISTUDIO_PROOF_SERVER_URL", "https://waa.spinsnow.fun"
     )

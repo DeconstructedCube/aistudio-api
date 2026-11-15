@@ -9,8 +9,10 @@ import pytest
 
 from aistudio_api.api.app import app
 from aistudio_api.api.state import runtime_state
+from aistudio_api.application.account_rotator import AccountRotator
 from aistudio_api.application.account_service import AccountService
-from aistudio_api.infrastructure.account.account_store import AccountMeta
+from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
+from aistudio_api.infrastructure.gateway.session import GatewaySession
 
 
 @pytest.fixture(autouse=True)
@@ -138,3 +140,100 @@ async def test_api_accounts_active_endpoint():
         assert "no-store" in resp.headers.get("Cache-Control", "")
         data = resp.json()
         assert data["id"] == "acc_1"
+
+
+async def _prepare_account_handoff(tmp_path, monkeypatch, *, with_backup=True):
+    """使用真实注册表与网关会话，保留两者不同步时的回归检测能力。"""
+    store = AccountStore(accounts_dir=tmp_path / "accounts")
+    service = AccountService(store)
+    active = service.save_account_from_cookies(
+        name="当前账号",
+        email="active@example.test",
+        storage_state={"cookies": [{"name": "SID", "value": "active-cookie"}]},
+        cookie_id="generation-active",
+        group="active-group",
+    )
+    backup = (
+        service.save_account_from_cookies(
+            name="备用账号",
+            email="backup@example.test",
+            storage_state={"cookies": [{"name": "SID", "value": "backup-cookie"}]},
+            cookie_id="generation-backup",
+            group="backup-group",
+        )
+        if with_backup
+        else None
+    )
+    session = GatewaySession()
+    await service.activate_account(active.id, session)
+    client = MagicMock()
+    client.session = session
+    monkeypatch.setattr(runtime_state, "account_service", service)
+    monkeypatch.setattr(runtime_state, "rotator", AccountRotator(store))
+    monkeypatch.setattr(runtime_state, "client", client)
+    return service, session, active, backup
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disable_group", [False, True])
+async def test_disabling_active_account_hands_session_to_backup(
+    tmp_path, monkeypatch, disable_group
+):
+    """单账号和分组禁用完成后，后续请求必须取得备用账号的实际凭据。"""
+    service, session, active, backup = await _prepare_account_handoff(
+        tmp_path, monkeypatch
+    )
+    assert backup is not None
+    path = (
+        "/api/accounts/groups/active-group/toggle"
+        if disable_group
+        else f"/api/accounts/{active.id}/toggle"
+    )
+    async with _client() as client:
+        response = await client.post(path, json={"enabled": False})
+
+    assert response.status_code == 200
+    current = service.get_active_account()
+    assert current is not None and current.id == backup.id
+    context = await session.ensure_ready()
+    assert context.auth_file == str(service.get_account_auth_path(backup.id))
+    assert context.cookie_id == backup.cookie_id
+    assert context.cookies["SID"] == "backup-cookie"
+
+
+@pytest.mark.asyncio
+async def test_disabling_last_account_clears_ready_session(tmp_path, monkeypatch):
+    """最后一个账号禁用后，不得让已有会话继续提供被禁用账号的凭据。"""
+    service, session, active, _ = await _prepare_account_handoff(
+        tmp_path, monkeypatch, with_backup=False
+    )
+    async with _client() as client:
+        response = await client.post(
+            f"/api/accounts/{active.id}/toggle", json={"enabled": False}
+        )
+
+    assert response.status_code == 200
+    assert service.get_active_account() is None
+    assert session.is_ready is False
+    assert session.active_context is None or not session.active_context.is_usable()
+
+
+@pytest.mark.asyncio
+async def test_disabling_inactive_account_preserves_active_context(
+    tmp_path, monkeypatch
+):
+    """停用备用账号时保留仍启用的活跃会话，避免无关请求被重新绑定。"""
+    service, session, active, backup = await _prepare_account_handoff(
+        tmp_path, monkeypatch
+    )
+    assert backup is not None
+    original_context = session.active_context
+    async with _client() as client:
+        response = await client.post(
+            f"/api/accounts/{backup.id}/toggle", json={"enabled": False}
+        )
+
+    assert response.status_code == 200
+    current = service.get_active_account()
+    assert current is not None and current.id == active.id
+    assert session.active_context is original_context

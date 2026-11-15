@@ -33,6 +33,7 @@ class TierQuotaLimits:
     daily_limit: int = 20
     daily_token_limit: int | None = None
 
+
 @dataclass(frozen=True)
 class ModelDefaults:
     is_image_model: bool = False
@@ -846,9 +847,10 @@ def resolve_tier_quota_limits(
         )
         if normalized_model:
             for rule_key, rule_data in tier_rules.items():
-                if rule_key in ("default_limit", "default_token_limit") or not isinstance(
-                    rule_data, dict
-                ):
+                if rule_key in (
+                    "default_limit",
+                    "default_token_limit",
+                ) or not isinstance(rule_data, dict):
                     continue
                 raw_match = rule_data.get("match")
                 if isinstance(raw_match, dict):
@@ -989,9 +991,7 @@ def validate_config_sections(parsed: dict[str, object]) -> None:
                 and tier_val["default_limit"] is not None
                 and not _is_pos_int(tier_val["default_limit"])
             ):
-                raise ValueError(
-                    f"tier_quotas.{tier_key}.default_limit 必须是正整数"
-                )
+                raise ValueError(f"tier_quotas.{tier_key}.default_limit 必须是正整数")
             if (
                 "default_token_limit" in tier_val
                 and tier_val["default_token_limit"] is not None
@@ -1066,6 +1066,7 @@ def validate_config_sections(parsed: dict[str, object]) -> None:
                 _is_nonneg_num(v) for v in cds.values()
             ):
                 raise ValueError("rotator.cooldowns 必须是非负数字映射字典")
+
 
 def get_configured_presets(
     config_path: str | os.PathLike[str] | None = None,

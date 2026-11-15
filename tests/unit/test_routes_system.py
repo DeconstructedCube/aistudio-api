@@ -111,11 +111,16 @@ async def test_get_config_defaults_and_yaml_section_validation():
         assert "rotator" in data
         assert "model_defaults" in data
         assert data["tier_quotas"]["Free"]["hydrogen_models"]["daily_limit"] == 50
-        assert data["tier_quotas"]["Free"]["hydrogen_models"]["daily_token_limit"] == 10_000_000
+        assert (
+            data["tier_quotas"]["Free"]["hydrogen_models"]["daily_token_limit"]
+            == 10_000_000
+        )
 
         bad_quota_resp = await client.put(
             "/config/yaml",
-            json={"yaml_content": "tier_quotas:\n  Free:\n    flash_models:\n      daily_limit: -5\n"},
+            json={
+                "yaml_content": "tier_quotas:\n  Free:\n    flash_models:\n      daily_limit: -5\n"
+            },
         )
         assert bad_quota_resp.status_code == 400
 
@@ -179,9 +184,20 @@ tier_quotas:
     rotator = AccountRotator(store)
     st1 = AccountStats(account_id="acc_1")
     # Only 5 requests, but 9M / 10M tokens (90% > stickiness_threshold 0.8)
-    st1.record_success(model="gemini-4-hydrogen", usage={"prompt_tokens": 9_000_000, "completion_tokens": 0, "total_tokens": 9_000_000})
+    st1.record_success(
+        model="gemini-4-hydrogen",
+        usage={
+            "prompt_tokens": 9_000_000,
+            "completion_tokens": 0,
+            "total_tokens": 9_000_000,
+        },
+    )
     st2 = AccountStats(account_id="acc_2")
 
-    score1 = rotator._score_candidate(acc_busy_tok, st1, "gemini-4-hydrogen", current_account_id="acc_1")
-    score2 = rotator._score_candidate(acc_fresh, st2, "gemini-4-hydrogen", current_account_id="acc_1")
+    score1 = rotator._score_candidate(
+        acc_busy_tok, st1, "gemini-4-hydrogen", current_account_id="acc_1"
+    )
+    score2 = rotator._score_candidate(
+        acc_fresh, st2, "gemini-4-hydrogen", current_account_id="acc_1"
+    )
     assert score2 < score1

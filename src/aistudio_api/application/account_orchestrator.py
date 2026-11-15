@@ -6,6 +6,7 @@ import asyncio
 import time
 
 from aistudio_api.api.state import runtime_state
+from aistudio_api.infrastructure.gateway.session import SessionContext
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("orchestrator")
@@ -26,6 +27,72 @@ def _get_switch_lock() -> asyncio.Lock:
         _switch_lock = asyncio.Lock()
         _switch_lock_loop = loop
     return _switch_lock
+
+
+def _is_session_bound_to_account(account_id: str) -> bool:
+    """注册表目标、凭据路径、Cookie 代际、登录索引和权益一致时才能复用会话。"""
+    account_service = runtime_state.account_service
+    client = runtime_state.client
+    if account_service is None or client is None or client.session is None:
+        return False
+    account = account_service.get_active_account()
+    context = client.session.active_context
+    if (
+        account is None
+        or account.id != account_id
+        or not account.enabled
+        or not isinstance(context, SessionContext)
+        or not client.session.is_ready
+        or not context.cookies
+    ):
+        return False
+    auth_path = account_service.get_account_auth_path(account_id)
+    return bool(
+        auth_path is not None
+        and context.auth_file == str(auth_path)
+        and context.cookie_id == (account.cookie_id or "")
+        and context.auth_user == (account.auth_user or "0")
+        and context.tier == (account.tier or "Free")
+    )
+
+
+def _clear_gateway_context() -> None:
+    """无可用目标时清空内存凭据，禁止旧的禁用会话继续被新请求使用。"""
+    client = runtime_state.client
+    if client is not None and client.session is not None:
+        client.session.set_ready_context(SessionContext())
+
+
+async def _ensure_bound_account(
+    account_id: str, *, force_refresh: bool = False
+) -> bool:
+    """持有切号锁时完成实际会话交接，并验证激活结果。"""
+    global _last_switch_time
+    if not force_refresh and _is_session_bound_to_account(account_id):
+        return True
+    account_service = runtime_state.account_service
+    client = runtime_state.client
+    if account_service is None or client is None or client.session is None:
+        _clear_gateway_context()
+        return False
+    account = account_service.get_account(account_id)
+    if (
+        account is None
+        or not account.enabled
+        or account_service.get_account_auth_path(account_id) is None
+    ):
+        _clear_gateway_context()
+        return False
+    try:
+        result = await account_service.activate_account(account_id, client.session)
+    except Exception:
+        _clear_gateway_context()
+        raise
+    if result is None or not _is_session_bound_to_account(account_id):
+        _clear_gateway_context()
+        return False
+    _last_switch_time = time.time()
+    return True
 
 
 async def try_switch_account(
@@ -61,6 +128,7 @@ async def try_switch_account(
                 )
                 and (not required_tiers or cur_active.tier in required_tiers)
                 and rotator.is_account_available(cur_active.id, model=model)
+                and _is_session_bound_to_account(cur_active.id)
             ):
                 return True
 
@@ -75,7 +143,11 @@ async def try_switch_account(
             or client is None
             or client.session is None
         ):
+            _clear_gateway_context()
             return False
+
+        current_active = account_service.get_active_account()
+        current_id = current_active.id if current_active else None
 
         # 等待切号锁期间可能已重新导入，旧认证结果不得处罚新代际。
         if (
@@ -88,10 +160,20 @@ async def try_switch_account(
             logger.info(
                 "忽略等待切号锁期间过期的认证结果: account=%s", failed_account_id
             )
-            return True
+            if (
+                current_active is not None
+                and current_id
+                and (not required_tiers or current_active.tier in required_tiers)
+                and rotator.is_account_available(current_id, model=model)
+            ):
+                return await _ensure_bound_account(current_id)
+            # 忽略旧代际处罚，但仍须选择并绑定一个当前可用账号。
+            failed_account_id = None
+            is_session_expired = False
 
-        current_active = account_service.get_active_account()
-        current_id = current_active.id if current_active else None
+        # 当前代际的失效必须先记到失败账号，随后才能复用并发已切换的健康会话。
+        if failed_account_id and is_session_expired:
+            rotator.record_session_expired(failed_account_id, model=model)
 
         # 双重检查 1：如果已有并发协程在 entry_time 之后完成切号或在位自愈刷新，且当前账号对该模型可用，则直接复用
         if (
@@ -109,11 +191,7 @@ async def try_switch_account(
                 current_id,
                 model,
             )
-            return True
-
-        # 遇到登录态失效时，永久禁用该账号并拒绝原地重试
-        if failed_account_id and is_session_expired:
-            rotator.record_session_expired(failed_account_id, model=model)
+            return await _ensure_bound_account(current_id)
 
         # 双重检查 2：如果已经由并发协程切换到了新账号，且新账号对当前 model 可用，则直接复用
         if (
@@ -131,7 +209,7 @@ async def try_switch_account(
                 current_id,
                 model,
             )
-            return True
+            return await _ensure_bound_account(current_id)
 
         next_account = await rotator.get_next_account(
             model=model,
@@ -152,14 +230,16 @@ async def try_switch_account(
                     model,
                     failed_account_id,
                 )
+            _clear_gateway_context()
             return False
 
-        if current_id is None or next_account.id != current_id:
-            result = await account_service.activate_account(
-                next_account.id,
-                client.session,
-            )
-            if result is not None:
+        if (
+            current_id is None
+            or next_account.id != current_id
+            or not _is_session_bound_to_account(next_account.id)
+        ):
+            activated = await _ensure_bound_account(next_account.id, force_refresh=True)
+            if activated:
                 rotator.clear_cooldown(next_account.id, model=model)
                 _last_switch_time = time.time()
                 logger.info(
@@ -168,12 +248,13 @@ async def try_switch_account(
                     next_account.id,
                     model,
                 )
-            return result is not None
+            return activated
         # 登录态失效严禁在原账号原地重试
         if is_session_expired and (
             failed_account_id == current_id or next_account.id == failed_account_id
         ):
             logger.error("账号 %s 登录态已失效，跳过原地重试", failed_account_id)
+            _clear_gateway_context()
             return False
 
         # 单账号模式或所有其他账号均不可用时（非登录态失效，如偶发 403 鉴权波动），如果指定了 failed_account_id，强制刷新当前会话
@@ -182,36 +263,35 @@ async def try_switch_account(
                 "无其他备用账号，重置当前会话: account=%s",
                 current_id,
             )
-            result = await account_service.activate_account(
-                current_id,
-                client.session,
-            )
-            if result is not None:
+            activated = await _ensure_bound_account(current_id, force_refresh=True)
+            if activated:
                 rotator.clear_cooldown(current_id, model=model)
                 _last_switch_time = time.time()
-            return result is not None
-        return bool(
+            return activated
+        if (
             current_id
             and (
                 not required_tiers
                 or (current_active and current_active.tier in required_tiers)
             )
             and rotator.is_account_available(current_id, model=model)
-        )
+        ):
+            return await _ensure_bound_account(current_id)
+        _clear_gateway_context()
+        return False
 
 
 async def ensure_active_account(attempt: int, model: str | None = None) -> None:
-    """确保在初次尝试时存在活跃账号，且若请求付费模型而当前账号权益不足时主动抢切。"""
-    if attempt != 0:
-        return
+    """每次尝试核对真实会话绑定，权益不足时抢切，无可用账号时立即拒绝。"""
+    from fastapi import HTTPException
+
     account_svc = runtime_state.account_service
     rotator = runtime_state.rotator
     current = account_svc.get_active_account() if account_svc else None
+    allowed_tiers: set[str] | None = None
 
     # 核心拦截：检测目标模型是否为 Paid 模型且当前账号层级不满足要求
     if model:
-        from fastapi import HTTPException
-
         from aistudio_api.infrastructure.gateway.model_discovery import model_discovery
 
         if model_discovery.is_paid_model(model):
@@ -256,23 +336,53 @@ async def ensure_active_account(attempt: int, model: str | None = None) -> None:
                     )
                 return
 
-    if not current:
-        await try_switch_account(model=model)
-    elif (
-        rotator and model and not rotator.is_account_available(current.id, model=model)
+    if (
+        current is not None
+        and rotator is not None
+        and rotator.is_account_available(current.id, model=model)
     ):
-        await try_switch_account(model=model, failed_account_id=current.id)
+        if _is_session_bound_to_account(current.id):
+            return
+        async with _get_switch_lock():
+            # 等锁期间目标可能变化，只为最新且可用的注册表目标同步凭据。
+            current = account_svc.get_active_account() if account_svc else None
+            if (
+                current is not None
+                and (not allowed_tiers or current.tier in allowed_tiers)
+                and rotator.is_account_available(current.id, model=model)
+            ):
+                logger.info(
+                    "同步注册表与实际会话: account=%s, 尝试=%d",
+                    current.id,
+                    attempt + 1,
+                )
+                if await _ensure_bound_account(current.id):
+                    return
+                # 当前账号凭据损坏时退出锁，继续尝试健康备用账号。
+
+    if not await try_switch_account(
+        model=model, failed_account_id=current.id if current else None
+    ):
+        raise HTTPException(503, detail="No available accounts for this request.")
 
 
 def record_rotator_event(
     event: str,
     model: str | None = None,
     usage: dict[str, object] | None = None,
+    *,
+    account_id: str | None = None,
 ) -> None:
-    """记录调度器事件（成功、限流、错误、鉴权异常）。"""
+    """记录指定账号事件；未指定时沿用活跃账号，显式未知目标不能回退。"""
     rotator = runtime_state.rotator
     account_service = runtime_state.account_service
-    account = account_service.get_active_account() if account_service else None
+    account = (
+        account_service.get_account(account_id)
+        if account_service and account_id is not None
+        else account_service.get_active_account()
+        if account_service
+        else None
+    )
     if not rotator or account is None:
         return
     if event == "success":
