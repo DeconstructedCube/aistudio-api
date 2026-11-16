@@ -339,24 +339,35 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
         config_yaml_path.write_text(req.yaml_content, encoding="utf-8")
         invalidate_config_cache()
 
-        if isinstance(parsed, dict) and "logging" in parsed:
-            raw_logging = parsed["logging"]
-            if isinstance(raw_logging, dict):
-                from aistudio_api.infrastructure.utils.logger import (
-                    set_dump_dir,
-                    set_dump_requests,
-                    set_dump_to_file,
-                    set_log_level,
-                )
+        if isinstance(parsed, dict):
+            from aistudio_api.infrastructure.gateway.model_defaults import (
+                get_configured_logging_settings,
+            )
+            from aistudio_api.infrastructure.utils.logger import (
+                set_dump_dir,
+                set_dump_requests,
+                set_dump_to_file,
+                set_log_level,
+            )
 
-                if "level" in raw_logging:
-                    set_log_level(str(raw_logging["level"]))
-                if "dump_requests" in raw_logging:
-                    set_dump_requests(bool(raw_logging["dump_requests"]))
-                if "dump_to_file" in raw_logging:
-                    set_dump_to_file(bool(raw_logging["dump_to_file"]))
-                if "dump_dir" in raw_logging:
-                    set_dump_dir(str(raw_logging["dump_dir"]))
+            log_cfg = get_configured_logging_settings()
+            raw_logging = (
+                parsed["logging"] if isinstance(parsed.get("logging"), dict) else {}
+            )
+            set_log_level(str(log_cfg.get("level", "INFO")))
+            set_dump_requests(
+                bool(raw_logging["dump_requests"])
+                if "dump_requests" in raw_logging
+                else None
+            )
+            set_dump_to_file(
+                bool(raw_logging["dump_to_file"])
+                if "dump_to_file" in raw_logging
+                else None
+            )
+            set_dump_dir(
+                str(raw_logging["dump_dir"]) if "dump_dir" in raw_logging else None
+            )
         logger.info("已更新并重载 config.yaml")
         return {"ok": True, "message": "配置已保存并重载"}
     except Exception as e:
@@ -533,12 +544,11 @@ async def update_logging_config(req: LoggingConfigRequest) -> dict[str, object]:
     )
     logger.info(
         "日志配置已更新: 级别=%s, 请求转储=%s, 文件转储=%s, 目录=%s",
-        req.level,
-        req.dump_requests,
-        req.dump_to_file,
-        req.dump_dir,
+        get_log_level(),
+        is_dump_requests_enabled(),
+        is_dump_to_file_enabled(),
+        get_dump_dir(),
     )
-
     return {
         "ok": True,
         "log_level": get_log_level(),

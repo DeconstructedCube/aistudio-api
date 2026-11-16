@@ -307,3 +307,70 @@ def test_dump_request_to_file_by_req_id(tmp_path):
     finally:
         set_dump_to_file(None)
         set_dump_dir(None)
+
+
+def test_set_dump_to_file_overrides_env_var():
+    """Verify set_dump_to_file(False) overrides AISTUDIO_DUMP_FILE env var via module global."""
+    from aistudio_api.infrastructure.utils.logger import (
+        is_dump_to_file_enabled,
+        set_dump_to_file,
+    )
+
+    with patch.dict(os.environ, {"AISTUDIO_DUMP_FILE": "1"}, clear=False):
+        set_dump_to_file(False)
+        try:
+            assert is_dump_to_file_enabled() is False
+        finally:
+            set_dump_to_file(None)
+
+
+@pytest.mark.asyncio
+async def test_file_only_dump_without_console_dump_works_for_keepalive_stream(tmp_path):
+    """Verify dump_to_file=True works when dump_requests=False and does not buffer streaming responses."""
+    import json
+
+    from fastapi.responses import StreamingResponse
+
+    from aistudio_api.infrastructure.utils.logger import (
+        set_dump_dir,
+        set_dump_requests,
+        set_dump_to_file,
+    )
+
+    dump_dir = tmp_path / "file_only_dumps"
+    set_dump_dir(dump_dir)
+    set_dump_requests(False)
+    set_dump_to_file(True)
+
+    @app.get("/_test_keepalive_dump")
+    async def _test_keepalive_route():
+        async def _gen():
+            yield b"\n"
+            yield b'{"ok":true}'
+
+        return StreamingResponse(
+            _gen(),
+            media_type="application/json",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    try:
+        async with _client() as client:
+            resp = await client.get("/_test_keepalive_dump")
+            assert resp.status_code == 200
+            assert resp.content == b'\n{"ok":true}'
+
+        latest = dump_dir / "latest_request.json"
+        assert latest.is_file()
+        payload = json.loads(latest.read_text(encoding="utf-8"))
+        assert payload["raw_response_body"] == '\n{"ok":true}'
+        assert payload["status_code"] == 200
+    finally:
+        app.router.routes[:] = [
+            r
+            for r in app.router.routes
+            if getattr(r, "path", None) != "/_test_keepalive_dump"
+        ]
+        set_dump_to_file(None)
+        set_dump_requests(None)
+        set_dump_dir(None)

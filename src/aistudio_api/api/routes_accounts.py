@@ -232,10 +232,14 @@ async def detect_account_email(
                     cookie_dict, auth_user=acc.auth_user or "0"
                 )
                 http_tier = await probe_account_benefit_tier(
-                    cookie_dict, auth_user=acc.auth_user or "0"
+                    cookie_dict, auth_user=acc.auth_user or "0", default=None
                 )
                 if http_tier:
-                    detected_tier = http_tier
+                    detected_tier = (
+                        "Ultra_20X"
+                        if acc.tier == "Ultra_20X" and http_tier == "Ultra"
+                        else http_tier
+                    )
         except Exception as e:
             log.debug("探测账号 %s 邮箱/等级失败: %s", account_id, e)
     if email:
@@ -267,16 +271,21 @@ async def detect_account_tier(
         try:
             cookie_dict = load_cookies_from_auth_file(target_auth)
             if cookie_dict:
-                detected_tier = await probe_account_benefit_tier(
-                    cookie_dict, auth_user=acc.auth_user or "0"
+                probed_tier = await probe_account_benefit_tier(
+                    cookie_dict, auth_user=acc.auth_user or "0", default=None
                 )
+                if probed_tier:
+                    detected_tier = (
+                        "Ultra_20X"
+                        if acc.tier == "Ultra_20X" and probed_tier == "Ultra"
+                        else probed_tier
+                    )
         except Exception as e:
             log.debug("探测账号 %s 订阅等级失败: %s", account_id, e)
 
     if detected_tier:
         account_service.update_account_tier(account_id, detected_tier)
         log.info("更新账号订阅等级: id=%s, tier=%s", account_id, detected_tier)
-
     acc = account_service.get_account(account_id)
     if not acc:
         raise HTTPException(status_code=404, detail="账号不存在")

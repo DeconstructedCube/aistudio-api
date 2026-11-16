@@ -336,11 +336,15 @@ class ModelDiscoveryService:
 
     def is_model_allowed_for_tier(self, model_id: str, tier: str | None) -> bool:
         """根据 config.yaml 付费规则以及缓存的 ListModels accessModes 判断指定订阅等级是否可访问该模型。"""
+        from aistudio_api.infrastructure.account.cookie_parser import (
+            normalize_benefit_tier,
+        )
+
         req_tiers = self.get_required_tiers(model_id)
         if req_tiers:
-            norm_tier = (tier or "Free").strip()
-            return norm_tier in req_tiers
-
+            norm_tier = normalize_benefit_tier(tier).lower()
+            allowed = {normalize_benefit_tier(t).lower() for t in req_tiers}
+            return norm_tier in allowed
         info = self.get_cached_model_info(model_id)
         if not info:
             return True
@@ -400,7 +404,7 @@ class ModelDiscoveryService:
             if info.get("paid") is True:
                 return True
             modes = info.get("accessModes")
-            if isinstance(modes, list) and modes and all(m in (3, 4) for m in modes):
+            if isinstance(modes, list) and any(m in (3, 4) for m in modes):
                 return True
             codes = info.get("capabilityCodes")
             if isinstance(codes, list) and 20 in codes:

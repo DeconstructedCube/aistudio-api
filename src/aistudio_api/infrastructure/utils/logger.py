@@ -89,20 +89,20 @@ def is_dump_to_file_enabled() -> bool:
         )
 
         cfg = get_configured_logging_settings()
-        if "dump_to_file" in cfg:
+        if cfg.get("dump_to_file_configured"):
             return bool(cfg["dump_to_file"])
-        return bool(cfg.get("dump_requests", False))
+        return bool(cfg.get("dump_requests", False)) or is_debug_env_active()
     except Exception:
-        return False
+        return is_debug_env_active()
 
 
 def set_dump_to_file(enabled: bool | None) -> None:
     """动态设置是否将转储数据持久化为文件。"""
+    global _dump_to_file_override
     _dump_to_file_override = enabled
-    if enabled is not None:
-        from aistudio_api.config import settings
+    from aistudio_api.config import _load_dump_to_file_env, settings
 
-        settings.dump_to_file = enabled
+    settings.dump_to_file = enabled if enabled is not None else _load_dump_to_file_env()
 
 
 def get_dump_dir() -> Path:
@@ -150,10 +150,13 @@ def set_dump_dir(dump_dir: str | Path | None) -> None:
     """动态设置转储文件存放目录。"""
     global _dump_dir_override
     _dump_dir_override = str(dump_dir) if dump_dir is not None else None
-    if dump_dir is not None:
-        from aistudio_api.config import settings
+    from aistudio_api.config import _PROJECT_ROOT, settings
 
-        settings.dump_dir = str(dump_dir)
+    settings.dump_dir = (
+        str(dump_dir)
+        if dump_dir is not None
+        else os.getenv("AISTUDIO_DUMP_DIR", str(_PROJECT_ROOT / "dumps"))
+    )
 
 
 def is_debug_env_active() -> bool:
@@ -207,13 +210,15 @@ def is_dump_requests_enabled() -> bool:
         return False
 
 
-def set_dump_requests(enabled: bool) -> None:
+def set_dump_requests(enabled: bool | None) -> None:
     """动态更新请求转储开关。"""
     global _dump_requests_override
     _dump_requests_override = enabled
-    from aistudio_api.config import settings
+    from aistudio_api.config import _load_dump_requests_env, settings
 
-    settings.dump_requests = enabled
+    settings.dump_requests = (
+        enabled if enabled is not None else _load_dump_requests_env()
+    )
 
 
 def get_log_level() -> str:
@@ -341,6 +346,7 @@ def dump_request_exchange(
     token_usage: dict[str, object] | None = None,
     finish_reason: str | None = None,
     error_detail: str | None = None,
+    emit_console: bool = True,
 ) -> None:
     """转储单次完整请求与响应详细信息。"""
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -365,9 +371,7 @@ def dump_request_exchange(
         pretty_body = "(空请求体)"
     # 格式化响应体
     pretty_resp = ""
-    if is_stream:
-        pretty_resp = f"(流式传输中，已开始分发，截至首包耗时 {elapsed_ms:.1f}ms)"
-    elif response_text:
+    if response_text:
         try:
             parsed = json.loads(response_text)
             pretty_resp = json.dumps(parsed, ensure_ascii=False, indent=2)
@@ -378,6 +382,8 @@ def dump_request_exchange(
                 pretty_resp[:4000]
                 + f"\n... [truncated, total {len(response_text)} chars]"
             )
+    elif is_stream:
+        pretty_resp = f"(流式传输中，已开始分发，截至首包耗时 {elapsed_ms:.1f}ms)"
     else:
         pretty_resp = "(空响应体)"
     safe_resp_headers = _mask_headers(response_headers)
@@ -478,4 +484,5 @@ def dump_request_exchange(
         f"==================== [转储结束: {req_id}] ===================="
     )
 
-    dump_logger.info(dump_msg)
+    if emit_console:
+        dump_logger.info(dump_msg)

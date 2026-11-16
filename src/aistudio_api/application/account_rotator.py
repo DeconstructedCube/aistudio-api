@@ -652,6 +652,15 @@ class AccountRotator:
         accounts = self._store.list_accounts()
         candidates: list[tuple[AccountMeta, AccountStats]] = []
 
+        from aistudio_api.infrastructure.account.cookie_parser import (
+            normalize_benefit_tier,
+        )
+
+        allowed_tier_keys = (
+            {normalize_benefit_tier(t).lower() for t in required_tiers}
+            if required_tiers
+            else set()
+        )
         for account in accounts:
             # 1. 主开关门禁
             if not account.enabled:
@@ -660,9 +669,12 @@ class AccountRotator:
             if active_groups and account.group not in active_groups:
                 continue
             # 3. 目标模型显式要求订阅过滤 (如 Pro/Ultra 抢切)
-            if required_tiers and account.tier not in required_tiers:
+            if (
+                allowed_tier_keys
+                and normalize_benefit_tier(account.tier).lower()
+                not in allowed_tier_keys
+            ):
                 continue
-
             stats = self._stats.setdefault(
                 account.id, AccountStats(account_id=account.id)
             )
@@ -813,8 +825,8 @@ class AccountRotator:
                 ),
             )
             if current_account_id and best_account.id != current_account_id:
-                logger.info(
-                    "切换账号: %s -> %s, model=%s, tier=%s",
+                logger.debug(
+                    "调度选中候选账号: %s -> %s, model=%s, tier=%s",
                     current_account_id,
                     best_account.id,
                     model,

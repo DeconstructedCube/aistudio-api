@@ -725,12 +725,14 @@ def get_configured_logging_settings(
             "level": str(raw_logging.get("level") or "INFO").strip().upper(),
             "dump_requests": bool(raw_logging.get("dump_requests", False)),
             "dump_to_file": bool(raw_logging.get("dump_to_file", False)),
+            "dump_to_file_configured": "dump_to_file" in raw_logging,
             "dump_dir": str(raw_logging.get("dump_dir") or "").strip(),
         }
     return {
         "level": "INFO",
         "dump_requests": False,
         "dump_to_file": False,
+        "dump_to_file_configured": False,
         "dump_dir": "",
     }
 

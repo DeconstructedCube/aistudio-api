@@ -181,3 +181,87 @@ async def test_pro_account_requesting_ultra_model_preempts_to_ultra_account():
         mock_service.activate_account.assert_awaited_once_with(
             "acc_ultra", mock_client.session
         )
+
+
+def test_is_paid_model_handles_mixed_access_modes():
+    """accessModes containing 3 or 4 alongside 1 must still be treated as paid."""
+    from aistudio_api.infrastructure.gateway.model_discovery import (
+        ModelDiscoveryService,
+    )
+
+    svc = ModelDiscoveryService()
+    svc._cached_models = [
+        {
+            "id": "custom-mixed-paid",
+            "name": "models/custom-mixed-paid",
+            "accessModes": [1, 3],
+        }
+    ]
+    assert svc.is_paid_model("custom-mixed-paid") is True
+    assert svc.get_required_tiers("custom-mixed-paid") == ["Pro", "Ultra", "Ultra_20X"]
+    assert svc.is_model_allowed_for_tier("custom-mixed-paid", "pro") is True
+    assert svc.is_model_allowed_for_tier("custom-mixed-paid", "Free") is False
+
+
+def test_record_rotator_event_explicit_account_id_avoids_concurrent_misattribution():
+    """Explicit account_id must attribute events to the request account even after active account switches."""
+    from aistudio_api.application.account_orchestrator import record_rotator_event
+
+    mock_rotator = MagicMock(spec=AccountRotator)
+    mock_service = MagicMock(spec=AccountService)
+    mock_service.get_active_account.return_value = AccountMeta(
+        id="acc_new_active",
+        name="New Active",
+        email="new@gmail.com",
+        created_at="2026-01-01",
+    )
+
+    with (
+        patch.object(runtime_state, "rotator", mock_rotator),
+        patch.object(runtime_state, "account_service", mock_service),
+    ):
+        record_rotator_event(
+            "rate_limited", model="gemini-3.7-flash", account_id="acc_original"
+        )
+        mock_rotator.record_rate_limited.assert_called_once_with(
+            "acc_original", model="gemini-3.7-flash"
+        )
+
+
+@pytest.mark.asyncio
+async def test_detect_account_tier_preserves_paid_tier_on_probe_failure(tmp_path):
+    """Transient probe errors must not downgrade existing Pro/Ultra_20X accounts to Free."""
+    import httpx
+
+    from aistudio_api.api.routes_accounts import detect_account_tier
+    from aistudio_api.application.account_service import AccountService
+    from aistudio_api.infrastructure.account.account_store import AccountStore
+    from aistudio_api.infrastructure.account.cookie_parser import (
+        probe_account_benefit_tier,
+    )
+
+    def failing_handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="Service Unavailable")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(failing_handler)
+    ) as mock_client:
+        probed = await probe_account_benefit_tier(
+            {"SID": "s1", "SAPISID": "sap1"}, client=mock_client, default=None
+        )
+        assert probed is None
+
+    store = AccountStore(accounts_dir=tmp_path / "accounts_tier_preserve")
+    svc = AccountService(store)
+    acc = svc.save_account_from_cookies(
+        name="Ultra 20X Acc",
+        email="u20@gmail.com",
+        storage_state={"cookies": [{"name": "SID", "value": "s1"}]},
+        tier="Ultra_20X",
+    )
+    with patch(
+        "aistudio_api.api.routes_accounts.probe_account_benefit_tier",
+        new=AsyncMock(return_value=None),
+    ):
+        res = await detect_account_tier(acc.id, account_service=svc)
+        assert res.tier == "Ultra_20X"

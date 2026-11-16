@@ -315,9 +315,31 @@ function handleYamlKeydown(e: KeyboardEvent) {
   }
 }
 
+const normalizedInitialYaml = computed(() => {
+  if (!props.initialYaml) return ''
+  try {
+    const doc = YAML.parse(props.initialYaml) || {}
+    return YAML.stringify(doc, { indent: 2 }).trim()
+  } catch {
+    return props.initialYaml.trim()
+  }
+})
+
 const hasUnsavedChanges = computed(() => {
-  const current = activeTab.value !== 'yaml' ? syncStateToYaml() : rawYaml.value
-  return Boolean(props.initialYaml && current.trim() !== props.initialYaml.trim())
+  if (!props.initialYaml) return false
+  if (activeTab.value === 'yaml') {
+    try {
+      const doc = YAML.parse(rawYaml.value) || {}
+      return YAML.stringify(doc, { indent: 2 }).trim() !== normalizedInitialYaml.value
+    } catch {
+      return rawYaml.value.trim() !== props.initialYaml.trim()
+    }
+  }
+  try {
+    return YAML.stringify(parsedConfig.value, { indent: 2 }).trim() !== normalizedInitialYaml.value
+  } catch {
+    return false
+  }
 })
 
 onBeforeRouteLeave((_to, _from, next) => {

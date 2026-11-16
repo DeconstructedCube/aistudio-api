@@ -237,7 +237,7 @@ const statList = computed(() => {
                             <span
                               class="px-1.5 py-0.2 rounded text-[10px] font-semibold"
                               :class="[
-                                acc.tier === 'Ultra' ? 'bg-purple-100 text-purple-800' :
+                                acc.tier.startsWith('Ultra') ? 'bg-purple-100 text-purple-800' :
                                 acc.tier === 'Pro' ? 'bg-amber-100 text-amber-800' :
                                 acc.tier === 'Plus' ? 'bg-emerald-100 text-emerald-800' :
                                 'bg-gray-100 text-gray-600',

@@ -162,7 +162,7 @@ async function handleDetectTier() {
           type="button"
           class="px-2 py-0.5 rounded-full text-[11px] font-mono font-semibold shrink-0 transition-opacity hover:opacity-80 cursor-pointer"
           :class="[
-            accountTier === 'Ultra'
+            accountTier.startsWith('Ultra')
               ? 'bg-purple-100 text-purple-800 border border-purple-300'
               : accountTier === 'Pro'
                 ? 'bg-amber-100 text-amber-800 border border-amber-300'

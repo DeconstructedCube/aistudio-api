@@ -203,6 +203,7 @@ class StreamingGateway:
                 raw_parts.append(trailing_text)
             for parsed_chunk in parser.feed(trailing_text):
                 for event in emit_parsed_chunk(parsed_chunk):
+                    emitted_any_chunk = True
                     yield event
 
         for parsed_chunk in parser.finish():

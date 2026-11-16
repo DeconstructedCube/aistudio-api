@@ -47,6 +47,14 @@ async def try_switch_account(
         if tiers:
             required_tiers = tuple(tiers)
 
+    from aistudio_api.infrastructure.account.cookie_parser import normalize_benefit_tier
+
+    allowed_tier_keys = (
+        {normalize_benefit_tier(t).lower() for t in required_tiers}
+        if required_tiers
+        else set()
+    )
+
     # 乐观快速预检：若无需记录永久失效/短时隔离，且当前活跃账号已被并发请求切换至健康状态，直接免锁复用
     if failed_account_id and not is_session_expired:
         rotator = runtime_state.rotator
@@ -59,7 +67,11 @@ async def try_switch_account(
                     cur_active.id != failed_account_id
                     or _last_switch_time >= entry_time
                 )
-                and (not required_tiers or cur_active.tier in required_tiers)
+                and (
+                    not allowed_tier_keys
+                    or normalize_benefit_tier(cur_active.tier).lower()
+                    in allowed_tier_keys
+                )
                 and rotator.is_account_available(cur_active.id, model=model)
             ):
                 return True
@@ -99,8 +111,12 @@ async def try_switch_account(
             and current_id
             and (not is_session_expired or current_id != failed_account_id)
             and (
-                not required_tiers
-                or (current_active and current_active.tier in required_tiers)
+                not allowed_tier_keys
+                or (
+                    current_active
+                    and normalize_benefit_tier(current_active.tier).lower()
+                    in allowed_tier_keys
+                )
             )
             and rotator.is_account_available(current_id, model=model)
         ):
@@ -121,8 +137,12 @@ async def try_switch_account(
             and current_id
             and current_id != failed_account_id
             and (
-                not required_tiers
-                or (current_active and current_active.tier in required_tiers)
+                not allowed_tier_keys
+                or (
+                    current_active
+                    and normalize_benefit_tier(current_active.tier).lower()
+                    in allowed_tier_keys
+                )
             )
             and rotator.is_account_available(current_id, model=model)
         ):
@@ -132,7 +152,6 @@ async def try_switch_account(
                 model,
             )
             return True
-
         next_account = await rotator.get_next_account(
             model=model,
             current_account_id=current_id,
@@ -163,9 +182,10 @@ async def try_switch_account(
                 rotator.clear_cooldown(next_account.id, model=model)
                 _last_switch_time = time.time()
                 logger.info(
-                    "切换账号: %s -> %s, model=%s",
+                    "切换账号: %s -> %s (tier=%s), model=%s",
                     current_id,
                     next_account.id,
+                    next_account.tier,
                     model,
                 )
             return result is not None
@@ -193,8 +213,12 @@ async def try_switch_account(
         return bool(
             current_id
             and (
-                not required_tiers
-                or (current_active and current_active.tier in required_tiers)
+                not allowed_tier_keys
+                or (
+                    current_active
+                    and normalize_benefit_tier(current_active.tier).lower()
+                    in allowed_tier_keys
+                )
             )
             and rotator.is_account_available(current_id, model=model)
         )
@@ -217,17 +241,21 @@ async def ensure_active_account(attempt: int, model: str | None = None) -> None:
         if model_discovery.is_paid_model(model):
             req_tier = model_discovery.get_required_tier(model)
             req_tiers = model_discovery.get_required_tiers(model)
+            from aistudio_api.infrastructure.account.cookie_parser import (
+                normalize_benefit_tier,
+            )
+
             allowed_tiers = (
-                set(req_tiers)
+                {normalize_benefit_tier(t).lower() for t in req_tiers}
                 if req_tiers
                 else (
-                    {"Pro", "Ultra", "Ultra_20X"}
+                    {"pro", "ultra", "ultra_20x"}
                     if req_tier == "Pro"
-                    else {"Ultra", "Ultra_20X"}
+                    else {"ultra", "ultra_20x"}
                 )
             )
-            cur_tier = (current.tier if current else None) or "Free"
-            if not current or cur_tier not in allowed_tiers:
+            cur_tier = normalize_benefit_tier(current.tier if current else None)
+            if not current or cur_tier.lower() not in allowed_tiers:
                 logger.info(
                     "模型 %s 要求 %s 订阅，当前账号 %s (%s)，切换至对应等级账号",
                     model,
@@ -268,21 +296,27 @@ def record_rotator_event(
     event: str,
     model: str | None = None,
     usage: dict[str, object] | None = None,
+    account_id: str | None = None,
 ) -> None:
     """记录调度器事件（成功、限流、错误、鉴权异常）。"""
     rotator = runtime_state.rotator
-    account_service = runtime_state.account_service
-    account = account_service.get_active_account() if account_service else None
-    if not rotator or account is None:
+    if not rotator:
         return
+    target_account_id = account_id
+    if not target_account_id:
+        account_service = runtime_state.account_service
+        account = account_service.get_active_account() if account_service else None
+        if account is None:
+            return
+        target_account_id = account.id
     if event == "success":
-        rotator.record_success(account.id, model=model, usage=usage)
+        rotator.record_success(target_account_id, model=model, usage=usage)
     elif event == "rate_limited":
-        rotator.record_rate_limited(account.id, model=model)
+        rotator.record_rate_limited(target_account_id, model=model)
     elif event == "auth_error":
-        rotator.record_auth_error(account.id, model=model)
+        rotator.record_auth_error(target_account_id, model=model)
     elif event == "error":
-        rotator.record_error(account.id, model=model)
+        rotator.record_error(target_account_id, model=model)
 
 
 __all__ = [

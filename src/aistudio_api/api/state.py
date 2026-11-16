@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from aistudio_api.config import resolve_stats_file, settings
@@ -137,8 +137,7 @@ class RuntimeState:
     ) -> None:
         stats = self.model_stats[model]
         stats.requests += 1
-        tz = timezone(timedelta(hours=8))
-        stats.last_used = datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+        stats.last_used = datetime.now(UTC).isoformat()
 
         if result == "success":
             stats.success += 1

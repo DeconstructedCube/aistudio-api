@@ -22,8 +22,10 @@ from aistudio_api.infrastructure.gateway.model_defaults import (
 )
 from aistudio_api.infrastructure.utils.logger import (
     dump_request_exchange,
+    get_log_level,
     get_logger,
     is_dump_requests_enabled,
+    is_dump_to_file_enabled,
     setup_logging,
 )
 
@@ -123,7 +125,6 @@ async def lifespan(_app: FastAPI):
                         cdict = load_cookies_from_auth_file(apath)
                         if not cdict:
                             return
-                        checked_count += 1
                         if not a.email:
                             em = await probe_account_email(
                                 cdict,
@@ -132,21 +133,38 @@ async def lifespan(_app: FastAPI):
                             )
                             if em:
                                 account_store.update_account_email(a.id, em)
-                        t = await probe_account_benefit_tier(
+                        old_tier = a.tier or "Free"
+                        probed_tier = await probe_account_benefit_tier(
                             cdict,
                             auth_user=a.auth_user or "0",
                             client=probe_client,
+                            default=None,
                         )
-                        resolved_tier = t or "Free"
+                        if probed_tier is None:
+                            logger.debug(
+                                "账号 %s (u/%s) 订阅等级探测未成功，保留原等级 %s",
+                                a.id,
+                                a.auth_user,
+                                old_tier,
+                            )
+                            return
+                        checked_count += 1
+                        resolved_tier = (
+                            "Ultra_20X"
+                            if old_tier == "Ultra_20X" and probed_tier == "Ultra"
+                            else probed_tier
+                        )
                         account_store.update_account_tier(
                             a.id, resolved_tier, checked_at=now_ts
                         )
-                        if resolved_tier != "Free" and a.tier == "Free":
-                            upgraded_count += 1
+                        if resolved_tier != old_tier:
+                            if old_tier == "Free" and resolved_tier != "Free":
+                                upgraded_count += 1
                             logger.info(
-                                "账号订阅等级更新: id=%s (u/%s) -> %s",
+                                "账号订阅等级更新: id=%s (u/%s) %s -> %s",
                                 a.id,
                                 a.auth_user,
+                                old_tier,
                                 resolved_tier,
                             )
                     except Exception as e:
@@ -345,13 +363,20 @@ async def logging_and_dump_middleware(request, call_next):
     path = request.url.path
 
     is_static = path.startswith(("/static", "/assets")) or path in ("/favicon.ico",)
-    dump_enabled = is_dump_requests_enabled() and not is_static
+    console_dump = is_dump_requests_enabled() and not is_static
+    file_dump = is_dump_to_file_enabled() and not is_static
+    dump_enabled = console_dump or file_dump
 
     req_id = ""
     body_text = None
     client_str = ""
     headers_dict = None
     query_dict = None
+    req_model: str | None = None
+    if path.startswith("/v1beta/models/"):
+        req_model = path.removeprefix("/v1beta/models/").split(":", 1)[0] or None
+    elif path == "/v1beta/decisions":
+        req_model = "gemini-decision-1"
 
     if dump_enabled:
         req_id = f"req_{secrets.token_hex(4)}"
@@ -372,6 +397,11 @@ async def logging_and_dump_middleware(request, call_next):
         response = await call_next(request)
     except Exception as exc:
         elapsed_ms = (time.perf_counter() - start_time) * 1000
+        active_acc = (
+            runtime_state.account_service.get_active_account()
+            if runtime_state.account_service
+            else None
+        )
         if dump_enabled:
             dump_request_exchange(
                 req_id=req_id,
@@ -384,6 +414,11 @@ async def logging_and_dump_middleware(request, call_next):
                 status_code=500,
                 elapsed_ms=elapsed_ms,
                 response_text=f"Internal Server Error (Exception: {exc})",
+                model=req_model,
+                account_id=active_acc.id if active_acc else None,
+                auth_user=active_acc.auth_user if active_acc else None,
+                error_detail=str(exc),
+                emit_console=console_dump,
             )
         else:
             logger.error(
@@ -398,11 +433,77 @@ async def logging_and_dump_middleware(request, call_next):
     elapsed_ms = (time.perf_counter() - start_time) * 1000
     content_type = response.headers.get("content-type", "")
     is_event_stream = "text/event-stream" in content_type
+    is_streaming_resp = (
+        is_event_stream or response.headers.get("x-accel-buffering", "").lower() == "no"
+    )
 
     if dump_enabled:
-        resp_text = None
-        if is_event_stream:
-            resp_text = "(streaming response in progress)"
+        active_acc = (
+            runtime_state.account_service.get_active_account()
+            if runtime_state.account_service
+            else None
+        )
+        req_acc_id = active_acc.id if active_acc else None
+        req_auth_user = active_acc.auth_user if active_acc else None
+
+        if is_streaming_resp:
+            orig_iterator = response.body_iterator
+            captured_chunks: list[bytes] = []
+            captured_size = 0
+            max_capture_bytes = 512 * 1024
+
+            async def _tee_stream():
+                nonlocal captured_size
+                stream_err: str | None = None
+                try:
+                    async for chunk in orig_iterator:
+                        raw_chunk = (
+                            chunk
+                            if isinstance(chunk, bytes)
+                            else str(chunk).encode("utf-8")
+                        )
+                        if captured_size < max_capture_bytes:
+                            remaining = max_capture_bytes - captured_size
+                            captured_chunks.append(raw_chunk[:remaining])
+                            captured_size += len(raw_chunk[:remaining])
+                        yield chunk
+                except Exception as stream_exc:
+                    stream_err = str(stream_exc)
+                    raise
+                finally:
+                    total_ms = (time.perf_counter() - start_time) * 1000
+                    resp_text = b"".join(captured_chunks).decode(
+                        "utf-8", errors="replace"
+                    )
+                    dump_request_exchange(
+                        req_id=req_id,
+                        method=request.method,
+                        url=str(request.url),
+                        client=client_str,
+                        headers=headers_dict or {},
+                        query_params=query_dict or {},
+                        body_text=body_text,
+                        status_code=response.status_code,
+                        elapsed_ms=total_ms,
+                        response_headers=dict(response.headers),
+                        response_text=resp_text or "(empty stream)",
+                        is_stream=is_event_stream,
+                        model=req_model,
+                        account_id=req_acc_id,
+                        auth_user=req_auth_user,
+                        error_detail=stream_err,
+                        emit_console=console_dump,
+                    )
+
+            response.body_iterator = _tee_stream()
+            if not console_dump:
+                logger.info(
+                    "HTTP %s %s -> %d (%.1fms)",
+                    request.method,
+                    path,
+                    response.status_code,
+                    elapsed_ms,
+                )
         else:
             try:
                 # 读取非流式响应体并重构 iterator 以便正常返回给客户端
@@ -418,20 +519,32 @@ async def logging_and_dump_middleware(request, call_next):
             except Exception:
                 resp_text = "(failed to read response body)"
 
-        dump_request_exchange(
-            req_id=req_id,
-            method=request.method,
-            url=str(request.url),
-            client=client_str,
-            headers=headers_dict or {},
-            query_params=query_dict or {},
-            body_text=body_text,
-            status_code=response.status_code,
-            elapsed_ms=elapsed_ms,
-            response_headers=dict(response.headers),
-            response_text=resp_text,
-            is_stream=is_event_stream,
-        )
+            dump_request_exchange(
+                req_id=req_id,
+                method=request.method,
+                url=str(request.url),
+                client=client_str,
+                headers=headers_dict or {},
+                query_params=query_dict or {},
+                body_text=body_text,
+                status_code=response.status_code,
+                elapsed_ms=elapsed_ms,
+                response_headers=dict(response.headers),
+                response_text=resp_text,
+                is_stream=False,
+                model=req_model,
+                account_id=req_acc_id,
+                auth_user=req_auth_user,
+                emit_console=console_dump,
+            )
+            if not console_dump:
+                logger.info(
+                    "HTTP %s %s -> %d (%.1fms)",
+                    request.method,
+                    path,
+                    response.status_code,
+                    elapsed_ms,
+                )
     elif not is_static:
         logger.info(
             "HTTP %s %s -> %d (%.1fms)",
@@ -533,5 +646,12 @@ def main():
 
     import uvicorn
 
-    logger.info("启动服务: 监听端口=%d", args.port)
-    uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info")
+    logger.info("启动服务: 监听端口=%d, 日志级别=%s", args.port, get_log_level())
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=args.port,
+        log_level=get_log_level().lower(),
+        log_config=None,
+        access_log=False,
+    )

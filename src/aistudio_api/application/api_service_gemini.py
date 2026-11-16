@@ -486,7 +486,7 @@ async def handle_attempt_exception(
 
     if isinstance(exc, UsageLimitExceeded):
         runtime_state.record(target_model, "rate_limited")
-        record_rotator_event("rate_limited", model=target_model)
+        record_rotator_event("rate_limited", model=target_model, account_id=failed_id)
         upstream_detail = clean_upstream_error_message(str(exc))
         logger.warning(
             "账号触发 429 限流: model=%s, detail=%s", target_model, upstream_detail
@@ -569,7 +569,7 @@ async def handle_attempt_exception(
             return True
         if isinstance(exc, TransportError):
             runtime_state.record(target_model, "errors")
-            record_rotator_event("error", model=target_model)
+            record_rotator_event("error", model=target_model, account_id=failed_id)
             logger.warning("上游传输中断 (502): %s", exc)
             raise HTTPException(
                 502, detail={"message": str(exc), "type": "upstream_error"}
@@ -593,14 +593,14 @@ async def handle_attempt_exception(
 
     if isinstance(exc, AistudioError):
         runtime_state.record(target_model, "errors")
-        record_rotator_event("error", model=target_model)
+        record_rotator_event("error", model=target_model, account_id=failed_id)
         logger.warning("服务端处理异常: %s", exc)
         raise HTTPException(
             500, detail={"message": str(exc), "type": "server_error"}
         ) from exc
 
     runtime_state.record(target_model, "errors")
-    record_rotator_event("error", model=target_model)
+    record_rotator_event("error", model=target_model, account_id=failed_id)
     logger.error("请求处理发生未捕获异常: %s", exc)
     logger.debug("异常堆栈详情:", exc_info=True)
     raise HTTPException(
@@ -648,7 +648,13 @@ async def _do_generate_content(
             final_fr = to_gemini_finish_reason(
                 output.candidates[0].finish_reason if output.candidates else None
             )
-            record_rotator_event("success", model=normalized.model, usage=output.usage)
+            _, req_account_id = _request_account(request_ctx)
+            record_rotator_event(
+                "success",
+                model=normalized.model,
+                usage=output.usage,
+                account_id=req_account_id,
+            )
             runtime_state.record(
                 normalized.model,
                 "success",
@@ -914,6 +920,7 @@ def _build_gemini_streaming_response(
             stream_completed = False
             last_stream_error: Exception | None = None
             auth_manager = Auth403RetryManager()
+            last_request_ctx: SessionContext | None = None
             total_attempts = MAX_RETRIES + AUTH_403_MAX_RETRIES
             for stream_attempt in range(total_attempts):
                 has_yielded_data = False
@@ -935,6 +942,7 @@ def _build_gemini_streaming_response(
                         force_recreate_signer=force_recreate,
                     )
                     request_ctx = prepared.ctx
+                    last_request_ctx = request_ctx
                     auth_manager.current_prepared = prepared
                     async for event_type, text in client.stream_generate_content(
                         model=normalized.model, prepared=prepared
@@ -1020,7 +1028,13 @@ def _build_gemini_streaming_response(
             if not stream_completed and last_stream_error is not None:
                 raise last_stream_error
             target_model = normalized.model if normalized else model_path
-            record_rotator_event("success", model=target_model, usage=final_usage)
+            _, req_account_id = _request_account(last_request_ctx)
+            record_rotator_event(
+                "success",
+                model=target_model,
+                usage=final_usage,
+                account_id=req_account_id,
+            )
             if normalized is not None:
                 runtime_state.record(
                     normalized.model,
@@ -1109,7 +1123,13 @@ async def handle_gemini_decisions(
                 "completion_tokens": 0,
                 "total_tokens": total_tokens,
             }
-            record_rotator_event("success", model=norm_model, usage=rotator_usage)
+            _, req_account_id = _request_account(request_ctx)
+            record_rotator_event(
+                "success",
+                model=norm_model,
+                usage=rotator_usage,
+                account_id=req_account_id,
+            )
             runtime_state.record(
                 norm_model,
                 "success",

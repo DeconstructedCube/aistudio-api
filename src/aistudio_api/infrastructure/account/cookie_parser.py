@@ -554,7 +554,8 @@ async def probe_account_benefit_tier(
     auth_user: str = "0",
     *,
     client: httpx.AsyncClient | None = None,
-) -> str:
+    default: str | None = "Free",
+) -> str | None:
     """通过 GetAiStudioBenefitTier RPC 探测指定子账号的订阅权益等级。"""
     cookie_dict = (
         raw_or_dict
@@ -563,7 +564,7 @@ async def probe_account_benefit_tier(
         else parse_raw_cookies(raw_or_dict)
     )
     if not cookie_dict:
-        return "Free"
+        return default
 
     import httpx
 
@@ -581,14 +582,20 @@ async def probe_account_benefit_tier(
             resp = await client.post(tier_url, headers=headers, content="[]")
             if resp.status_code == 200:
                 return parse_benefit_tier_response(resp.text)
-            return "Free"
+            logger.debug(
+                "探测子账号 u/%s 权益等级返回 HTTP %d", u_index, resp.status_code
+            )
+            return default
         async with httpx.AsyncClient(timeout=8.0, proxy=settings.proxy_url) as new_cli:
             resp = await new_cli.post(tier_url, headers=headers, content="[]")
             if resp.status_code == 200:
                 return parse_benefit_tier_response(resp.text)
+            logger.debug(
+                "探测子账号 u/%s 权益等级返回 HTTP %d", u_index, resp.status_code
+            )
     except Exception as e:
         logger.debug("探测子账号 u/%s 权益等级失败: %s", u_index, e)
-    return "Free"
+    return default
 
 
 async def probe_aistudio_session(

@@ -69,7 +69,7 @@ class AccountService:
         self._store.set_active_account(account_id)
         await session.switch_auth(str(auth_path))
         await session.ensure_ready()
-        logger.info("切换活跃账号: %s (%s)", account_id, account.name)
+        logger.debug("激活账号会话: %s (%s)", account_id, account.name)
         return account
 
     def delete_account(self, account_id: str) -> bool:
