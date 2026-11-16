@@ -103,10 +103,27 @@ async def _prepare_content_request(
     prepared: PreparedRequest | None,
     *,
     force_recreate_signer: bool = False,
+    ctx: SessionContext | None = None,
 ) -> PreparedRequest:
     """显式持有本次签名快照，普通与流式请求共用相同的上下文绑定。"""
     if prepared is not None:
         return prepared
+    if isinstance(ctx, SessionContext):
+        return await client.prepare_request(
+            model=normalized.model,
+            contents=normalized.contents,
+            system_instruction_content=normalized.system_instruction,
+            tools=normalized.tools,
+            tool_config=normalized.tool_config,
+            safety_settings=normalized.safety_settings,
+            temperature=normalized.temperature,
+            top_p=normalized.top_p,
+            top_k=normalized.top_k,
+            max_tokens=normalized.max_tokens,
+            generation_config_overrides=normalized.generation_config_overrides,
+            force_recreate_signer=force_recreate_signer,
+            ctx=ctx,
+        )
     return await client.prepare_request(
         model=normalized.model,
         contents=normalized.contents,
@@ -142,6 +159,7 @@ class Auth403RetryManager:
         self.count: int = 0
         self.max_retries: int = max_retries
         self.current_prepared: PreparedRequest | None = None
+        self.pinned_ctx: SessionContext | None = None
         self.force_recreate_signer: bool = False
 
     async def handle_403(
@@ -155,6 +173,7 @@ class Auth403RetryManager:
         request_ctx = self.current_prepared.ctx if self.current_prepared else None
         if not _is_request_generation_current(request_ctx):
             self.current_prepared = None
+            self.pinned_ctx = None
             if not has_yielded_data:
                 return True
             raise HTTPException(
@@ -182,6 +201,7 @@ class Auth403RetryManager:
         # 2. 后 2 次 403: 尝试轮换 Cookie 并重新生成签名
         if self.count <= 4:
             self.current_prepared = None
+            self.pinned_ctx = request_ctx
             if self.count == 3:
                 account_svc = runtime_state.account_service
                 active_acc, _ = _request_account(request_ctx)
@@ -198,6 +218,7 @@ class Auth403RetryManager:
                         if result.get(
                             "stale"
                         ) is True or not _is_request_generation_current(request_ctx):
+                            self.pinned_ctx = None
                             return True
                     except Exception:
                         pass
@@ -213,6 +234,7 @@ class Auth403RetryManager:
         # 3. 第 5 次 403: 切换备用账号
         if self.count == 5:
             self.current_prepared = None
+            self.pinned_ctx = None
             self.force_recreate_signer = True
             _, failed_id = _request_account(request_ctx)
             if await try_switch_account(
@@ -618,9 +640,12 @@ async def _do_generate_content(
     total_attempts = MAX_RETRIES + AUTH_403_MAX_RETRIES
 
     for attempt in range(total_attempts):
-        await ensure_active_account(attempt, model=model_path)
+        ensured_ctx = await ensure_active_account(attempt, model=model_path)
+        effective_ctx = auth_manager.pinned_ctx or (
+            ensured_ctx if isinstance(ensured_ctx, SessionContext) else None
+        )
         normalized = None
-        request_ctx: SessionContext | None = None
+        request_ctx: SessionContext | None = effective_ctx
         try:
             normalized = normalize_gemini_request(req, model_path)
             logger.info(
@@ -637,8 +662,9 @@ async def _do_generate_content(
                 normalized,
                 auth_manager.current_prepared,
                 force_recreate_signer=force_recreate,
+                ctx=effective_ctx,
             )
-            request_ctx = prepared.ctx
+            request_ctx = prepared.ctx or effective_ctx
             auth_manager.current_prepared = prepared
             output = await client.generate_content(
                 model=normalized.model, prepared=prepared
@@ -714,8 +740,8 @@ async def _do_generate_content(
                 request_ctx=request_ctx,
             ):
                 auth_manager.current_prepared = None
+                auth_manager.pinned_ctx = None
                 continue
-            raise
 
     raise HTTPException(
         429,
@@ -929,9 +955,14 @@ def _build_gemini_streaming_response(
                 final_finish_reason = "STOP"
                 latest_response_id = None
                 buffered_thought_sig = None
-                await ensure_active_account(stream_attempt, model=model_path)
+                ensured_ctx = await ensure_active_account(
+                    stream_attempt, model=model_path
+                )
+                effective_ctx = auth_manager.pinned_ctx or (
+                    ensured_ctx if isinstance(ensured_ctx, SessionContext) else None
+                )
                 normalized = normalize_gemini_request(req, model_path)
-                request_ctx = None
+                request_ctx = effective_ctx
                 try:
                     force_recreate = auth_manager.force_recreate_signer
                     auth_manager.force_recreate_signer = False
@@ -940,8 +971,9 @@ def _build_gemini_streaming_response(
                         normalized,
                         auth_manager.current_prepared,
                         force_recreate_signer=force_recreate,
+                        ctx=effective_ctx,
                     )
-                    request_ctx = prepared.ctx
+                    request_ctx = prepared.ctx or effective_ctx
                     last_request_ctx = request_ctx
                     auth_manager.current_prepared = prepared
                     async for event_type, text in client.stream_generate_content(
@@ -1022,8 +1054,8 @@ def _build_gemini_streaming_response(
                         has_yielded_data=has_yielded_data,
                     ):
                         auth_manager.current_prepared = None
+                        auth_manager.pinned_ctx = None
                         continue
-                    raise
 
             if not stream_completed and last_stream_error is not None:
                 raise last_stream_error
@@ -1085,8 +1117,11 @@ async def handle_gemini_decisions(
     }
 
     for attempt in range(total_attempts):
-        await ensure_active_account(attempt, model=norm_model)
-        request_ctx: SessionContext | None = None
+        ensured_ctx = await ensure_active_account(attempt, model=norm_model)
+        effective_ctx = auth_manager.pinned_ctx or (
+            ensured_ctx if isinstance(ensured_ctx, SessionContext) else None
+        )
+        request_ctx: SessionContext | None = effective_ctx
         try:
             logger.info(
                 "Decisions 请求: model=%s, questions=%d, 尝试=%d/%d",
@@ -1099,14 +1134,24 @@ async def handle_gemini_decisions(
             auth_manager.force_recreate_signer = False
             prepared = auth_manager.current_prepared
             if prepared is None:
-                prepared = await client.prepare_decision_request(
-                    model=norm_model,
-                    raw_input=req.input,
-                    questions=questions_dict,
-                    temperature=req.temperature,
-                    force_recreate_signer=force_recreate,
-                )
-            request_ctx = prepared.ctx
+                if isinstance(effective_ctx, SessionContext):
+                    prepared = await client.prepare_decision_request(
+                        model=norm_model,
+                        raw_input=req.input,
+                        questions=questions_dict,
+                        temperature=req.temperature,
+                        force_recreate_signer=force_recreate,
+                        ctx=effective_ctx,
+                    )
+                else:
+                    prepared = await client.prepare_decision_request(
+                        model=norm_model,
+                        raw_input=req.input,
+                        questions=questions_dict,
+                        temperature=req.temperature,
+                        force_recreate_signer=force_recreate,
+                    )
+            request_ctx = prepared.ctx or effective_ctx
             auth_manager.current_prepared = prepared
             result = await client.create_decision(
                 model=norm_model,
@@ -1170,8 +1215,8 @@ async def handle_gemini_decisions(
                 request_ctx=request_ctx,
             ):
                 auth_manager.current_prepared = None
+                auth_manager.pinned_ctx = None
                 continue
-            raise
 
     raise HTTPException(
         429,
@@ -1207,12 +1252,20 @@ async def handle_gemini_count_tokens(
     normalized = normalize_gemini_request(effective_req, model_path)
     last_error: Exception | None = None
     for attempt in range(MAX_RETRIES):
-        await ensure_active_account(attempt, model=normalized.model)
+        ensured_ctx = await ensure_active_account(attempt, model=normalized.model)
+        effective_ctx = ensured_ctx if isinstance(ensured_ctx, SessionContext) else None
         try:
-            res = await client.count_tokens(
-                model=normalized.model,
-                contents=normalized.contents,
-            )
+            if isinstance(effective_ctx, SessionContext):
+                res = await client.count_tokens(
+                    model=normalized.model,
+                    contents=normalized.contents,
+                    ctx=effective_ctx,
+                )
+            else:
+                res = await client.count_tokens(
+                    model=normalized.model,
+                    contents=normalized.contents,
+                )
             raw_cached = res.get("cachedContentTokenCount")
             cached_count = (
                 int(str(raw_cached))
@@ -1232,7 +1285,7 @@ async def handle_gemini_count_tokens(
             )
         except Exception as exc:
             last_error = exc
-            request_ctx = getattr(
+            request_ctx = effective_ctx or getattr(
                 getattr(client, "session", None), "active_context", None
             )
             if await handle_attempt_exception(

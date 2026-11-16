@@ -265,3 +265,111 @@ async def test_detect_account_tier_preserves_paid_tier_on_probe_failure(tmp_path
     ):
         res = await detect_account_tier(acc.id, account_service=svc)
         assert res.tier == "Ultra_20X"
+
+
+@pytest.mark.asyncio
+async def test_paid_model_retry_preempts_back_when_concurrent_free_model_switched_active_account(
+    tmp_path,
+):
+    """When a concurrent free-model request switches the active account to Free mid-retry,
+    ensure_active_account on attempt >= 1 must still preempt back to a Pro/Ultra account
+    and return a pinned SessionContext for the request.
+    """
+    from aistudio_api.infrastructure.account.account_store import AccountStore
+    from aistudio_api.infrastructure.gateway.session import GatewaySession
+
+    store = AccountStore(accounts_dir=tmp_path / "accounts_mixed_retry")
+    free_acc = store.save_account(
+        name="Free Account",
+        email="free@gmail.com",
+        storage_state={"cookies": [{"name": "SAPISID", "value": "sap_free"}]},
+        auth_user="0",
+        tier="Free",
+    )
+    pro_acc = store.save_account(
+        name="Pro Account",
+        email="pro@gmail.com",
+        storage_state={"cookies": [{"name": "SAPISID", "value": "sap_pro"}]},
+        auth_user="1",
+        tier="Pro",
+    )
+    svc = AccountService(store)
+    rotator = AccountRotator(store)
+    session = GatewaySession()
+    mock_client = MagicMock()
+    mock_client.session = session
+
+    # Simulate concurrent free model having switched active account to free_acc before attempt=1
+    svc.set_active_account(free_acc.id)
+    await svc.activate_account(free_acc.id, session)
+
+    with (
+        patch.object(runtime_state, "rotator", rotator),
+        patch.object(runtime_state, "account_service", svc),
+        patch.object(runtime_state, "client", mock_client),
+    ):
+        pinned_ctx = await ensure_active_account(
+            attempt=1, model="models/gemini-4-argon"
+        )
+        assert pinned_ctx is not None
+        assert pinned_ctx.tier == "Pro"
+        assert pinned_ctx.auth_user == "1"
+        assert svc.get_active_account() is not None
+        assert svc.get_active_account().id == pro_acc.id  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_session_signer_headers_isolated_per_account_context():
+    """Dynamic signer headers (Visit-Id / Ext-Bin) must be isolated per SessionContext."""
+    from aistudio_api.infrastructure.gateway.client import AIStudioClient
+    from aistudio_api.infrastructure.gateway.session import (
+        GatewaySession,
+        SessionContext,
+    )
+    from aistudio_api.infrastructure.gateway.wire_types import (
+        AistudioContent,
+        AistudioPart,
+    )
+
+    session = GatewaySession()
+    ctx_a = SessionContext(
+        auth_user="0",
+        auth_file="/virtual/acc_a/auth.json",
+        tier="Pro",
+        cookies={"SAPISID": "sap_a"},
+    )
+    ctx_b = SessionContext(
+        auth_user="1",
+        auth_file="/virtual/acc_b/auth.json",
+        tier="Free",
+        cookies={"SAPISID": "sap_b"},
+    )
+
+    async def fake_sign(**kwargs):
+        u = kwargs.get("auth_user")
+        session._signer._remote_signer.last_headers = {
+            "X-AIStudio-Visit-Id": f"visit_u{u}",
+            "X-Goog-Ext-519733851-Bin": f"ext_u{u}",
+        }
+        session._signer._remote_signer.last_pool_state = "hot"
+        return f"!proof_u{u}"
+
+    session._signer.generate_snapshot = AsyncMock(side_effect=fake_sign)
+    contents = [AistudioContent(role="user", parts=[AistudioPart(text="hi")])]
+
+    await session.generate_snapshot(contents, ctx=ctx_a, model="models/gemini-4-argon")
+    await session.generate_snapshot(
+        contents, ctx=ctx_b, model="models/gemini-3.8-flash"
+    )
+
+    client = AIStudioClient()
+    client._session = session
+    headers_a = client._build_upstream_headers(ctx_a)
+    headers_b = client._build_upstream_headers(ctx_b)
+
+    assert headers_a["X-AIStudio-Visit-Id"] == "visit_u0"
+    assert headers_a["X-Goog-Ext-519733851-Bin"] == "ext_u0"
+    assert headers_a["X-Goog-AuthUser"] == "0"
+    assert headers_b["X-AIStudio-Visit-Id"] == "visit_u1"
+    assert headers_b["X-Goog-Ext-519733851-Bin"] == "ext_u1"
+    assert headers_b["X-Goog-AuthUser"] == "1"

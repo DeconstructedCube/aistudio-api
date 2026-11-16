@@ -6,6 +6,7 @@ import asyncio
 import time
 
 from aistudio_api.api.state import runtime_state
+from aistudio_api.infrastructure.gateway.session import GatewaySession, SessionContext
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("orchestrator")
@@ -224,15 +225,35 @@ async def try_switch_account(
         )
 
 
-async def ensure_active_account(attempt: int, model: str | None = None) -> None:
-    """确保在初次尝试时存在活跃账号，且若请求付费模型而当前账号权益不足时主动抢切。"""
-    if attempt != 0:
-        return
+async def _resolve_active_session_context() -> SessionContext | None:
+    """解析并返回当前活跃账号对应的内存 SessionContext 快照。"""
+    client = runtime_state.client
+    session = getattr(client, "session", None) if client is not None else None
+    if not isinstance(session, GatewaySession):
+        return None
+    account_svc = runtime_state.account_service
+    if account_svc is not None:
+        active_acc = account_svc.get_active_account()
+        if active_acc is not None:
+            auth_path = account_svc.get_account_auth_path(active_acc.id)
+            if auth_path is not None:
+                return await session.transition_to_account(
+                    str(auth_path), force_refresh=False
+                )
+    if session.is_ready:
+        return session.active_context
+    return None
+
+
+async def ensure_active_account(
+    attempt: int, model: str | None = None
+) -> SessionContext | None:
+    """确保存在对目标模型合规的活跃账号并返回绑定的 SessionContext 快照。"""
     account_svc = runtime_state.account_service
     rotator = runtime_state.rotator
     current = account_svc.get_active_account() if account_svc else None
 
-    # 核心拦截：检测目标模型是否为 Paid 模型且当前账号层级不满足要求
+    # 核心拦截：检测目标模型是否为 Paid 模型且当前账号层级不满足要求（含重试期间被并发请求切到 Free 的场景）
     if model:
         from fastapi import HTTPException
 
@@ -282,7 +303,10 @@ async def ensure_active_account(attempt: int, model: str | None = None) -> None:
                             "type": "permission_denied",
                         },
                     )
-                return
+                return await _resolve_active_session_context()
+
+    if attempt != 0:
+        return await _resolve_active_session_context()
 
     if not current:
         await try_switch_account(model=model)
@@ -290,6 +314,7 @@ async def ensure_active_account(attempt: int, model: str | None = None) -> None:
         rotator and model and not rotator.is_account_available(current.id, model=model)
     ):
         await try_switch_account(model=model, failed_account_id=current.id)
+    return await _resolve_active_session_context()
 
 
 def record_rotator_event(

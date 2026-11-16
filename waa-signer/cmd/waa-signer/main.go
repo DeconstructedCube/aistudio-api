@@ -249,6 +249,12 @@ func cookieMetadataExplicit(rawCookies string) bool {
 	return strings.HasPrefix(text, "[") || strings.HasPrefix(text, "{") || strings.Contains(text, "\t")
 }
 
+var perResponseRollingCookieNames = map[string]bool{
+	"SIDCC":            true,
+	"__Secure-1PSIDCC": true,
+	"__Secure-3PSIDCC": true,
+}
+
 // matchesCurrentCredentials 比较真实凭据；只有明确改变的导出标志才约束当前 Worker 元数据。
 func matchesCurrentCredentials(input, previous, current []fingerprintCookie, explicitMetadata bool) bool {
 	if len(input) != len(current) {
@@ -256,7 +262,10 @@ func matchesCurrentCredentials(input, previous, current []fingerprintCookie, exp
 	}
 	for index, cookie := range input {
 		active := current[index]
-		if cookie.Name != active.Name || cookie.Value != active.Value || cookie.Domain != active.Domain || cookie.Path != active.Path {
+		if cookie.Name != active.Name || cookie.Domain != active.Domain || cookie.Path != active.Path {
+			return false
+		}
+		if cookie.Value != active.Value && !perResponseRollingCookieNames[cookie.Name] {
 			return false
 		}
 		if !explicitMetadata {

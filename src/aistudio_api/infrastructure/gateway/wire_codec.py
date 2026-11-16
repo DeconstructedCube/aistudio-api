@@ -28,6 +28,7 @@ from .wire_types import (
     AistudioGenerationConfig,
     AistudioPart,
     AistudioRequest,
+    _normalize_standard_base64,
 )
 
 TOOLS_TEMPLATES: dict[str, list[object]] = {
@@ -557,10 +558,13 @@ def _encode_interactions_block(block: dict[str, object]) -> list[object]:
     mime_type = (
         str(block.get("mime_type") or block.get("mimeType") or "").strip().lower()
     )
-    data = block.get("data")
+    raw_data = block.get("data")
+    data = (
+        _normalize_standard_base64(raw_data)
+        if isinstance(raw_data, str) and raw_data
+        else None
+    )
     uri = block.get("uri")
-    if not isinstance(data, str) or not data:
-        data = None
     if not isinstance(uri, str) or not uri:
         uri = None
     if data is None and uri is None:

@@ -115,7 +115,7 @@ async def test_generate_snapshot_hash_complex_tools_and_multimodal():
 
     expected_parts = [
         "analyze this image",
-        "BASE64_IMAGE_DATA_SAMPLE",
+        "BASE64/IMAGE/DATA/SAMPLE",
         "files/sample_uploaded_file_id",
         "Thinking...",
         "continue",
@@ -123,6 +123,10 @@ async def test_generate_snapshot_hash_complex_tools_and_multimodal():
     expected_prompt = " ".join(expected_parts)
     expected_hash = sha256(expected_prompt.encode("utf-8")).hexdigest()
 
+    assert contents[0].parts[1].to_wire()[2] == [
+        "image/png",
+        "BASE64/IMAGE/DATA/SAMPLE",
+    ]
     prompt, digest = extract_content_digest(contents)
     assert prompt == expected_prompt
     assert digest == expected_hash

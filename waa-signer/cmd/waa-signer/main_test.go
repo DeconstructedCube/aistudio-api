@@ -512,3 +512,25 @@ func TestWorkerPoolExplicitMetadataChangeRebuildsThenHeaderReuses(t *testing.T) 
 		t.Fatal("inferred header metadata reversed the explicit worker metadata")
 	}
 }
+
+// Python httpx 直接发送 GenerateContent 时收到上游 Set-Cookie 轮换的 SIDCC/1PSIDCC/3PSIDCC 不应触发热 Worker 冷重建。
+func TestWorkerPoolExternalSIDCCRotationRemainsHot(t *testing.T) {
+	pool, factory := newOfflinePool()
+	base := offlineCookies + "; __Secure-1PSIDCC=fixture-old-1cc; __Secure-3PSIDCC=fixture-old-3cc"
+	first := acquireOffline(t, pool, base)
+	worker := first.worker.(*fakePoolWorker)
+	first.Release()
+	for index := range 4 {
+		rotated := strings.Replace(base, "fixture-old-cc", fmt.Sprintf("fixture-httpx-cc-%d", index), 1)
+		rotated = strings.Replace(rotated, "fixture-old-1cc", fmt.Sprintf("fixture-httpx-1cc-%d", index), 1)
+		rotated = strings.Replace(rotated, "fixture-old-3cc", fmt.Sprintf("fixture-httpx-3cc-%d", index), 1)
+		lease := acquireOffline(t, pool, rotated)
+		if lease.poolState != "hot" || lease.worker != worker {
+			t.Fatal("external GenerateContent SIDCC rotation forced a cold rebuild")
+		}
+		lease.Release()
+	}
+	if factory.calls() != 1 || worker.closeCount() != 0 {
+		t.Fatal("SIDCC rotation recreated or closed the hot worker")
+	}
+}

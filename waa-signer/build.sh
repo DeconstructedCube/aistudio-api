@@ -14,9 +14,11 @@ HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "$ARCH" in
   x86_64|amd64)
     GO_ARCH="amd64"
+    ZIG_ARCH="x86_64"
     ;;
   aarch64|arm64)
     GO_ARCH="arm64"
+    ZIG_ARCH="aarch64"
     ;;
   *)
     echo "不支持的架构: $ARCH" >&2
@@ -113,15 +115,15 @@ fi
 if command -v zig >/dev/null 2>&1; then
   case "$TARGET_GOOS" in
     linux)
-      ZIG_TARGET="${GO_ARCH}-linux-musl"
+      ZIG_TARGET="${ZIG_ARCH}-linux-musl"
       EXTLDFLAGS="-static -Wl,--strip-all"
       ;;
     darwin)
-      ZIG_TARGET="${GO_ARCH}-macos-none"
+      ZIG_TARGET="${ZIG_ARCH}-macos-none"
       EXTLDFLAGS="-Wl,-S,-x"
       ;;
     windows)
-      ZIG_TARGET="${GO_ARCH}-windows-gnu"
+      ZIG_TARGET="${ZIG_ARCH}-windows-gnu"
       EXTLDFLAGS="-static -Wl,--strip-all"
       ;;
   esac
@@ -162,7 +164,7 @@ CGO_ENABLED=1 GOOS="${TARGET_GOOS}" GOARCH="${GO_ARCH}" \
   CGO_LDFLAGS="-L${DEPS_DIR}/lib" \
   go build -trimpath -tags netgo,osusergo \
   -ldflags="-s -w -linkmode external -extldflags '${EXTLDFLAGS}'" \
-  -o "bin/${BIN_NAME}" ./cmd/waa-signer
-
+  -o "bin/${BIN_NAME}.tmp" ./cmd/waa-signer
+mv -f "bin/${BIN_NAME}.tmp" "bin/${BIN_NAME}"
 echo ">>> 编译成功: ${SCRIPT_DIR}/bin/${BIN_NAME}"
 ls -lh "bin/${BIN_NAME}"

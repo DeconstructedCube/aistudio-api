@@ -19,7 +19,10 @@ from aistudio_api.infrastructure.account.cookie_parser import (
     filter_minimal_cookies,
     get_tier_header_value,
 )
-from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
+from aistudio_api.infrastructure.gateway.wire_types import (
+    AistudioContent,
+    _normalize_standard_base64,
+)
 from aistudio_api.infrastructure.utils.logger import get_logger
 
 logger = get_logger("waa.signer")
@@ -39,12 +42,20 @@ def extract_content_digest(contents: list[AistudioContent]) -> tuple[str, str]:
     hash_parts: list[str] = []
     for content in contents:
         for part in content.parts:
-            if part.text is not None:
-                hash_parts.append(str(part.text))
-            elif part.inline_data is not None:
-                hash_parts.append(str(part.inline_data[1]))
-            elif part.file_id is not None:
+            if part.file_id is not None:
                 hash_parts.append(str(part.file_id))
+            elif part.inline_data is not None:
+                hash_parts.append(_normalize_standard_base64(str(part.inline_data[1])))
+            elif (
+                part.function_call is not None
+                or part.function_response is not None
+                or part.executable_code is not None
+                or part.code_execution_result is not None
+                or part.video_metadata is not None
+            ):
+                hash_parts.append("")
+            elif part.text is not None:
+                hash_parts.append(str(part.text))
             else:
                 hash_parts.append("")
     prompt = " ".join(hash_parts)

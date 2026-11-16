@@ -222,6 +222,14 @@ def test_urlsafe_base64_tool_role_and_argon_slot45_cleanup():
     gc = wire[3]
     assert len(gc) <= GenerationConfigIndex.ARGON_CAPABILITY_FLAG
 
+    from hashlib import sha256
+
+    from aistudio_api.infrastructure.waa.signer import extract_content_digest
+
+    prompt, digest = extract_content_digest(normalized.contents)
+    assert prompt == std_b64
+    assert digest == sha256(std_b64.encode("utf-8")).hexdigest()
+
 
 def test_prompt_feedback_and_trailing_zero_or_22_finish_reason():
     """PromptFeedback chunk[1] blockReason and trailing 0/22 chunks must not become FINISH_REASON_UNSPECIFIED."""
