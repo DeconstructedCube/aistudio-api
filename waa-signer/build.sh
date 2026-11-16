@@ -112,21 +112,37 @@ fi
 # 检查编译器
 if command -v zig >/dev/null 2>&1; then
   case "$TARGET_GOOS" in
-    linux)   ZIG_TARGET="${GO_ARCH}-linux-musl" ;;
-    darwin)  ZIG_TARGET="${GO_ARCH}-macos-none" ;;
-    windows) ZIG_TARGET="${GO_ARCH}-windows-gnu" ;;
+    linux)
+      ZIG_TARGET="${GO_ARCH}-linux-musl"
+      EXTLDFLAGS="-static -Wl,--strip-all"
+      ;;
+    darwin)
+      ZIG_TARGET="${GO_ARCH}-macos-none"
+      EXTLDFLAGS="-Wl,-S,-x"
+      ;;
+    windows)
+      ZIG_TARGET="${GO_ARCH}-windows-gnu"
+      EXTLDFLAGS="-static -Wl,--strip-all"
+      ;;
   esac
   CC_CMD="zig cc -target ${ZIG_TARGET}"
   CXX_CMD="zig c++ -target ${ZIG_TARGET}"
-  EXTLDFLAGS="-static -Wl,--strip-all"
 elif command -v clang >/dev/null 2>&1; then
   CC_CMD="clang"
   CXX_CMD="clang++"
-  EXTLDFLAGS="-Wl,--strip-all"
+  if [ "$TARGET_GOOS" = "darwin" ]; then
+    EXTLDFLAGS="-Wl,-S,-x"
+  else
+    EXTLDFLAGS="-Wl,--strip-all"
+  fi
 elif command -v gcc >/dev/null 2>&1; then
   CC_CMD="gcc"
   CXX_CMD="g++"
-  EXTLDFLAGS="-Wl,--strip-all"
+  if [ "$TARGET_GOOS" = "darwin" ]; then
+    EXTLDFLAGS="-Wl,-S,-x"
+  else
+    EXTLDFLAGS="-Wl,--strip-all"
+  fi
 else
   echo "错误: 未找到 zig, clang 或 gcc 编译器。请先安装 (例如: pkg install zig 或 apt install clang)" >&2
   exit 1
