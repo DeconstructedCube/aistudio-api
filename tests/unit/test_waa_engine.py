@@ -9,7 +9,11 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from aistudio_api.domain.errors import TransportError
+from aistudio_api.domain.errors import (
+    AccountRestrictedError,
+    SessionExpiredError,
+    TransportError,
+)
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
 from aistudio_api.infrastructure.waa.signer import (
     RemoteProofSigner,
@@ -138,4 +142,45 @@ async def test_waa_signer_facade():
         )
 
     assert token == "!facade_token"
+    await signer.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("err_msg", "expected_exc"),
+    [
+        (
+            "AI Studio 账号服务受限 (servicerestricted): url=https://myaccount.google.com/restrictions/200",
+            AccountRestrictedError,
+        ),
+        (
+            "隔离登录态失效 url=https://accounts.google.com/v3/signin",
+            SessionExpiredError,
+        ),
+        (
+            "AI Studio 页面缺少 WIu0Nc (url=https://aistudio.google.com/prompts/new_chat)",
+            TransportError,
+        ),
+    ],
+)
+async def test_remote_proof_signer_classifies_loadpage_errors(
+    err_msg: str, expected_exc: type[Exception]
+):
+    """RemoteProofSigner surfaces diagnostic loadPage failures as typed errors."""
+    calls = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(502, json={"ok": False, "error": err_msg})
+
+    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    signer = RemoteProofSigner(server_url="http://127.0.0.1:8081")
+
+    with (
+        patch("httpx.AsyncClient", return_value=mock_client),
+        pytest.raises(expected_exc, match=r"AI Studio|登录态失效"),
+    ):
+        await signer.mint_proof(cookies={"SAPISID": "sap"}, auth_user="0", prompt="hi")
+    assert calls == 1
     await signer.close()

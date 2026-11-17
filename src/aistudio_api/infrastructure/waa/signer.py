@@ -14,7 +14,14 @@ from typing import Any
 
 import httpx
 
-from aistudio_api.domain.errors import TransportError
+from aistudio_api.domain.errors import (
+    AccountRestrictedError,
+    AistudioError,
+    SessionExpiredError,
+    TransportError,
+    is_account_restricted_payload,
+    is_login_redirect_payload,
+)
 from aistudio_api.infrastructure.account.cookie_parser import (
     filter_minimal_cookies,
     get_tier_header_value,
@@ -146,14 +153,38 @@ class RemoteProofSigner:
                 )
                 elapsed_ms = (time.perf_counter() - t0) * 1000
 
-                if resp.status_code != 200:
-                    raise TransportError(
-                        f"Remote proof server returned HTTP {resp.status_code}: {resp.text[:300]}"
-                    )
+                data: dict[str, Any] = {}
+                try:
+                    parsed_json = resp.json()
+                    if isinstance(parsed_json, dict):
+                        data = parsed_json
+                except Exception:
+                    data = {}
 
-                data = resp.json()
-                if not data.get("ok") or not data.get("proof"):
-                    err_msg = data.get("error") or "unknown proof server error"
+                if (
+                    resp.status_code != 200
+                    or not data.get("ok")
+                    or not data.get("proof")
+                ):
+                    err_msg = str(
+                        data.get("error")
+                        or resp.text[:300]
+                        or "unknown proof server error"
+                    )
+                    if (
+                        "隔离登录态失效" in err_msg
+                        or "accounts.google.com" in err_msg.lower()
+                        or is_login_redirect_payload(err_msg)
+                    ):
+                        raise SessionExpiredError(f"WAA 签名检测登录态失效: {err_msg}")
+                    if is_account_restricted_payload(err_msg):
+                        raise AccountRestrictedError(
+                            f"AI Studio 账号服务受限: {err_msg}"
+                        )
+                    if resp.status_code != 200:
+                        raise TransportError(
+                            f"Remote proof server returned HTTP {resp.status_code}: {err_msg}"
+                        )
                     raise TransportError(f"Remote proof minting failed: {err_msg}")
 
                 proof = str(data["proof"])
@@ -185,7 +216,7 @@ class RemoteProofSigner:
                 await self.close()
                 if attempt < max_attempts:
                     await asyncio.sleep(0.5)
-            except TransportError:
+            except (TransportError, AistudioError):
                 raise
             except Exception as e:
                 last_error = e

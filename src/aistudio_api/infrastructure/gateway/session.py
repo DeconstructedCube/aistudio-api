@@ -7,6 +7,7 @@ import inspect
 import itertools
 import time
 from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from dataclasses import dataclass, field
 
 from aistudio_api.config import settings
@@ -396,17 +397,20 @@ class GatewaySession:
         req_headers = self.build_request_headers(
             headers, auth_user=active_ctx.auth_user
         )
-        async for event in self._transport.send_streaming_request(
-            url=target_url,
-            headers=req_headers,
-            body=body,
-            auth_user=active_ctx.auth_user,
-            tier=active_ctx.tier,
-            auth_file=active_ctx.auth_file,
-            cookies=active_ctx.cookies,
-            expected_cookie_id=active_ctx.cookie_id,
-        ):
-            yield event
+        async with aclosing(
+            self._transport.send_streaming_request(
+                url=target_url,
+                headers=req_headers,
+                body=body,
+                auth_user=active_ctx.auth_user,
+                tier=active_ctx.tier,
+                auth_file=active_ctx.auth_file,
+                cookies=active_ctx.cookies,
+                expected_cookie_id=active_ctx.cookie_id,
+            )
+        ) as events:
+            async for event in events:
+                yield event
 
     async def close(self) -> None:
         """Close transport, signer, and reset active context."""

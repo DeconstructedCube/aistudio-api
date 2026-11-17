@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -17,6 +17,7 @@ from aistudio_api.application.account_rotator import (
     AccountStats,
     get_seconds_until_pacific_midnight,
 )
+from aistudio_api.application.account_service import AccountService
 from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
 from aistudio_api.infrastructure.gateway.client import (
     AIStudioClient,
@@ -27,6 +28,37 @@ from aistudio_api.infrastructure.gateway.session import (
     GatewaySession,
     SessionContext,
 )
+
+
+async def _rotation_runtime(tmp_path, monkeypatch, *, account_count=2):
+    """建立真实注册表、凭据文件和网关会话，保留并发切号的绑定检查。"""
+    from aistudio_api.api.state import runtime_state
+    from aistudio_api.application import account_orchestrator
+
+    store = AccountStore(accounts_dir=tmp_path / "rotation_accounts")
+    service = AccountService(store)
+    accounts = [
+        service.save_account_from_cookies(
+            name=f"并发账号 {index}",
+            email=f"rotation-{index}@example.test",
+            storage_state={
+                "cookies": [{"name": "SID", "value": f"synthetic_sid_{index}"}]
+            },
+            cookie_id=f"generation-{index}",
+            tier="Pro",
+        )
+        for index in range(account_count)
+    ]
+    session = GatewaySession()
+    await service.activate_account(accounts[0].id, session)
+    client = MagicMock(spec=AIStudioClient)
+    client.session = session
+    rotator = AccountRotator(store)
+    monkeypatch.setattr(runtime_state, "account_service", service)
+    monkeypatch.setattr(runtime_state, "rotator", rotator)
+    monkeypatch.setattr(runtime_state, "client", client)
+    monkeypatch.setattr(account_orchestrator, "_last_switch_time", 0.0)
+    return service, session, rotator, accounts
 
 
 @pytest.mark.asyncio
@@ -228,58 +260,42 @@ async def test_rotator_auth_error_failover():
 
 
 @pytest.mark.asyncio
-async def test_try_switch_account_avalanche_protection():
-    """测试并发多个 429 时，_switch_lock 防止级联切号。"""
-    from aistudio_api.api.state import runtime_state
+async def test_try_switch_account_avalanche_protection(tmp_path, monkeypatch):
+    """并发故障转移只激活一次，并实际绑定备用账号的凭据。"""
+    service, session, _, accounts = await _rotation_runtime(tmp_path, monkeypatch)
+    first, second = accounts
+    started, finish = asyncio.Event(), asyncio.Event()
+    original_activate = service.activate_account
 
-    mock_rotator = MagicMock(spec=AccountRotator)
-    mock_acc_service = MagicMock()
-    mock_client = MagicMock()
-    mock_client.session = MagicMock()
+    async def activate(account_id, gateway_session):
+        started.set()
+        await finish.wait()
+        return await original_activate(account_id, gateway_session)
 
-    acc1 = AccountMeta(
-        id="acc_1", name="Acc 1", email="acc1@test.com", created_at="2026-01-01"
-    )
-    acc2 = AccountMeta(
-        id="acc_2", name="Acc 2", email="acc2@test.com", created_at="2026-01-01"
-    )
-
-    active_acc = acc1
-    mock_acc_service.get_active_account.side_effect = lambda: active_acc
-
-    stats_map = {
-        "acc_1": AccountStats(account_id="acc_1"),
-        "acc_2": AccountStats(account_id="acc_2"),
-    }
-    mock_rotator._stats = stats_map
-
-    activate_count = 0
-
-    async def fake_activate(acc_id, *args, **kwargs):
-        nonlocal active_acc, activate_count
-        activate_count += 1
-        await asyncio.sleep(0.001)
-        active_acc = acc2 if acc_id == "acc_2" else acc1
-        return active_acc
-
-    mock_acc_service.activate_account = AsyncMock(side_effect=fake_activate)
-    mock_rotator.get_next_account = AsyncMock(return_value=acc2)
-
-    with (
-        patch.object(runtime_state, "rotator", mock_rotator),
-        patch.object(runtime_state, "account_service", mock_acc_service),
-        patch.object(runtime_state, "client", mock_client),
-    ):
-        # 3 个并发协程同时遇到 429 并尝试切号
-        tasks = [
-            try_switch_account(model="gemini-2.5-pro", failed_account_id="acc_1")
-            for _ in range(3)
-        ]
-        results = await asyncio.gather(*tasks)
-
-        assert all(results)
-        # 只应该发生 1 次实质性的 activate_account 调用
-        assert activate_count == 1
+    activation = AsyncMock(side_effect=activate)
+    monkeypatch.setattr(service, "activate_account", activation)
+    tasks = [
+        asyncio.create_task(
+            try_switch_account(model="gemini-2.5-pro", failed_account_id=first.id)
+        )
+        for _ in range(3)
+    ]
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2.0)
+        assert all(not task.done() for task in tasks)
+        finish.set()
+        assert all(await asyncio.gather(*tasks))
+        activation.assert_awaited_once_with(second.id, session)
+        assert session.active_context is not None
+        assert session.active_context.auth_file == str(
+            service.get_account_auth_path(second.id)
+        )
+        assert session.active_context.cookie_id == second.cookie_id
+    finally:
+        finish.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def test_get_seconds_until_pacific_midnight():
@@ -403,58 +419,47 @@ async def test_ensure_authorization_header_concurrency_and_fallback():
 
 
 @pytest.mark.asyncio
-async def test_try_switch_account_concurrent_403_avalanche_and_in_place_recovery():
-    """并发多个协程遭遇 403 时，在位自愈仅执行 1 次，自愈后立即重置错误状态避免连锁 403。"""
-    from aistudio_api.api.state import runtime_state
-
-    mock_rotator = MagicMock(spec=AccountRotator)
-    mock_acc_service = MagicMock()
-    mock_client = MagicMock()
-    mock_client.session = MagicMock()
-    acc1 = AccountMeta(
-        id="acc_1", name="Account 1", email="acc1@test.com", created_at="2026-01-01"
+async def test_try_switch_account_concurrent_403_avalanche_and_in_place_recovery(
+    tmp_path, monkeypatch
+):
+    """并发 403 只刷新一次真实会话，刷新后清除实际账号的认证处罚。"""
+    service, session, rotator, accounts = await _rotation_runtime(
+        tmp_path, monkeypatch, account_count=1
     )
-    active_acc = acc1
-    mock_acc_service.get_active_account.side_effect = lambda: active_acc
+    account = accounts[0]
+    old_context = session.active_context
+    rotator.record_auth_error(account.id, model="gemini-3.8-flash")
+    stats = rotator.get_account_stats(account.id)
+    assert stats is not None and stats.auth_errors == 1
+    started, finish = asyncio.Event(), asyncio.Event()
+    original_activate = service.activate_account
 
-    stats = AccountStats(account_id="acc_1")
-    mock_rotator._stats = {"acc_1": stats}
-    mock_rotator.is_account_available.side_effect = lambda acc_id, model=None: (
-        stats.is_available(model) if acc_id == "acc_1" else False
-    )
-    mock_rotator.record_auth_error.side_effect = lambda acc_id, model=None: (
-        stats.record_auth_error(model)
-    )
-    mock_rotator.clear_cooldown.side_effect = lambda acc_id, model=None: (
-        stats.clear_cooldown(model)
-    )
+    async def activate(account_id, gateway_session):
+        started.set()
+        await finish.wait()
+        return await original_activate(account_id, gateway_session)
 
-    activate_count = 0
-
-    async def fake_activate(acc_id, *args, **kwargs):
-        nonlocal activate_count
-        activate_count += 1
-        await asyncio.sleep(0.01)
-        return active_acc
-
-    mock_acc_service.activate_account = AsyncMock(side_effect=fake_activate)
-    mock_rotator.get_next_account = AsyncMock(return_value=acc1)
-
-    with (
-        patch.object(runtime_state, "rotator", mock_rotator),
-        patch.object(runtime_state, "account_service", mock_acc_service),
-        patch.object(runtime_state, "client", mock_client),
-    ):
-        # 3 个并发协程同时遇到 403 并尝试切号/自愈
-        tasks = [
-            try_switch_account(model="gemini-3.8-flash", failed_account_id="acc_1")
-            for _ in range(3)
-        ]
-        results = await asyncio.gather(*tasks)
-
-        assert all(results)
-        # 1. 防雪崩：在位自愈只应当执行 1 次实质性的 activate_account 调用
-        assert activate_count == 1
-        # 2. 自愈成功后，必须清除账号的错误状态，使账号立即恢复健康可用，杜绝并发下后续请求直接 403
+    activation = AsyncMock(side_effect=activate)
+    monkeypatch.setattr(service, "activate_account", activation)
+    tasks = [
+        asyncio.create_task(
+            try_switch_account(model="gemini-3.8-flash", failed_account_id=account.id)
+        )
+        for _ in range(3)
+    ]
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2.0)
+        assert all(not task.done() for task in tasks)
+        finish.set()
+        assert all(await asyncio.gather(*tasks))
+        activation.assert_awaited_once_with(account.id, session)
+        assert session.active_context is not old_context
+        assert session.active_context is not None
+        assert session.active_context.cookie_id == account.cookie_id
         assert stats.is_available("gemini-3.8-flash")
         assert stats.auth_errors == 0
+    finally:
+        finish.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

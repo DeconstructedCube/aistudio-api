@@ -16,12 +16,14 @@ from aistudio_api.api import app as app_module
 from aistudio_api.api.response_models import GeminiGenerateContentResponse
 from aistudio_api.api.schemas import GeminiGenerateContentRequest
 from aistudio_api.application import api_service_gemini as gemini
+from aistudio_api.application.account_rotator import AccountRotator
+from aistudio_api.application.account_service import AccountService
 from aistudio_api.application.chat_service import NormalizedGeminiRequest
 from aistudio_api.domain.errors import SessionExpiredError
 from aistudio_api.domain.models import Candidate, ModelOutput
-from aistudio_api.infrastructure.account.account_store import AccountMeta
+from aistudio_api.infrastructure.account.account_store import AccountMeta, AccountStore
 from aistudio_api.infrastructure.gateway.client import PreparedRequest
-from aistudio_api.infrastructure.gateway.session import SessionContext
+from aistudio_api.infrastructure.gateway.session import GatewaySession, SessionContext
 
 
 def _account(account_id: str, cookie_id: str) -> AccountMeta:
@@ -287,17 +289,31 @@ async def test_old_background_probe_cannot_expire_new_generation(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("old_cookie_id", ["", "cookie_old"])
 async def test_reimport_while_waiting_for_switch_lock_is_not_isolated(
-    monkeypatch, old_cookie_id
+    tmp_path, monkeypatch, old_cookie_id
 ):
     from aistudio_api.application import account_orchestrator
 
-    account = _account("acc_a", old_cookie_id)
-    service = _service([account], account.id)
-    service.activate_account = AsyncMock()
-    rotator = MagicMock()
-    rotator.is_account_available.return_value = True
-    rotator.get_next_account = AsyncMock()
+    store = AccountStore(accounts_dir=tmp_path / "generation_accounts")
+    service = AccountService(store)
+    account = service.save_account_from_cookies(
+        name="代际账号",
+        email="generation@example.test",
+        storage_state={"cookies": [{"name": "SID", "value": "synthetic_old_sid"}]},
+        cookie_id=old_cookie_id,
+        tier="Pro",
+    )
+    session = GatewaySession()
+    await service.activate_account(account.id, session)
+    old_context = session.active_context
+    activation = AsyncMock(wraps=service.activate_account)
+    monkeypatch.setattr(service, "activate_account", activation)
+    rotator = AccountRotator(store)
+    expired = MagicMock(wraps=rotator.record_session_expired)
+    next_account = AsyncMock(wraps=rotator.get_next_account)
+    monkeypatch.setattr(rotator, "record_session_expired", expired)
+    monkeypatch.setattr(rotator, "get_next_account", next_account)
     client = MagicMock()
+    client.session = session
     lock = asyncio.Lock()
     await lock.acquire()
     monkeypatch.setattr(account_orchestrator.runtime_state, "account_service", service)
@@ -316,13 +332,29 @@ async def test_reimport_while_waiting_for_switch_lock_is_not_isolated(
     try:
         await asyncio.sleep(0)
         assert not task.done()
-        # 在切号锁被占用时重新导入，锁内必须再次确认代际。
-        account.cookie_id = "cookie_new"
+        # 锁被占用期间真实重新导入，旧认证结果不能处罚新代际。
+        imported = service.save_account_from_cookies(
+            name=account.name,
+            email=account.email,
+            account_id=account.id,
+            storage_state={"cookies": [{"name": "SID", "value": "synthetic_new_sid"}]},
+            cookie_id="cookie_new",
+            tier="Pro",
+        )
         lock.release()
         assert await asyncio.wait_for(task, timeout=2.0) is True
-        rotator.record_session_expired.assert_not_called()
-        rotator.get_next_account.assert_not_awaited()
-        service.activate_account.assert_not_awaited()
+        expired.assert_not_called()
+        next_account.assert_not_awaited()
+        # 返回成功前必须将旧会话刷新到新凭据，不能只更新注册表。
+        activation.assert_awaited_once_with(account.id, session)
+        assert session.active_context is not old_context
+        assert session.active_context is not None
+        assert session.active_context.cookie_id == imported.cookie_id
+        assert session.active_context.cookies["SID"] == "synthetic_new_sid"
+        stats = rotator.get_account_stats(account.id)
+        assert (
+            stats is not None and not stats.session_expired and stats.auth_errors == 0
+        )
     finally:
         if lock.locked():
             lock.release()

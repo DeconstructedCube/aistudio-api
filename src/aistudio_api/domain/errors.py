@@ -17,6 +17,14 @@ class SessionExpiredError(AuthError):
     """明确被 Google 重定向至登录页（Cookie 真正失效）。"""
 
 
+class AccountVerificationRequiredError(AuthError):
+    """账号被 Google 要求完成身份验证 (aistudio.google.com/verify-account)。"""
+
+
+class AccountRestrictedError(AuthError):
+    """账号在 AI Studio 服务受限 (servicerestricted / 地区或账户受限)。"""
+
+
 class StaleSessionError(AistudioError):
     """请求持有的凭据代际已被重新导入替换，重试时不得惩罚当前账号。"""
 
@@ -119,6 +127,31 @@ def is_login_redirect_payload(text: str) -> bool:
     )
 
 
+def is_account_verification_required_payload(text: str) -> bool:
+    """检测上游错误是否要求账号先通过身份验证才能继续使用 Gemini API。"""
+    if not text:
+        return False
+    lower = text.lower()
+    return (
+        "must be verified" in lower
+        or "aistudio.google.com/verify-account" in lower
+        or "docs/verification#verify-account" in lower
+    )
+
+
+def is_account_restricted_payload(text: str) -> bool:
+    """检测响应或 WAA 诊断是否表明账号被 AI Studio 服务级限制拦截。"""
+    if not text:
+        return False
+    lower = text.lower()
+    return (
+        "servicerestricted" in lower
+        or "myaccount.google.com/restrictions" in lower
+        or "available-regions" in lower
+        or "不支持当前出口地区或账户" in text
+    )
+
+
 def classify_error(
     status: int, body: str, content_type: str = ""
 ) -> AistudioError | TransportError:
@@ -131,6 +164,16 @@ def classify_error(
     if grpc_code == 16 or status == 401:
         return SessionExpiredError(f"认证失效 (HTTP 401): {clean_msg}")
     if grpc_code == 7 or status == 403:
+        if is_account_verification_required_payload(
+            clean_msg
+        ) or is_account_verification_required_payload(body):
+            return AccountVerificationRequiredError(
+                f"账号需要身份验证 (HTTP 403): {clean_msg}"
+            )
+        if is_account_restricted_payload(clean_msg) or is_account_restricted_payload(
+            body
+        ):
+            return AccountRestrictedError(f"账号服务受限 (HTTP 403): {clean_msg}")
         return AuthError(f"权限被拒绝 (HTTP 403): {clean_msg}")
     if is_html_payload(body, content_type):
         return TransportError(f"上游返回 HTML 错误页 (HTTP {status})")

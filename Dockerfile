@@ -1,14 +1,17 @@
 # Stage 1: Build native Go WAA signer daemon
-FROM golang:1.23-bookworm AS signer-builder
+FROM golang:1.27-bookworm AS signer-builder
 
 WORKDIR /build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
-    clang \
+    xz-utils \
     build-essential \
     file \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL https://ziglang.org/download/0.16.0/zig-$(uname -m)-linux-0.16.0.tar.xz | tar -xJ -C /opt \
+    && mv /opt/zig-* /opt/zig \
+    && ln -s /opt/zig/zig /usr/local/bin/zig
 
 COPY waa-signer/ waa-signer/
 WORKDIR /build/waa-signer

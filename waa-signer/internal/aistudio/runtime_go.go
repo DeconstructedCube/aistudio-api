@@ -99,6 +99,19 @@ var pageTogglesPattern = regexp.MustCompile(`window\["_F_toggles_default_MakerSu
 
 // pageStringGlobalPattern 匹配官网页面内联脚本以 var 声明的构建字符串
 var pageStringGlobalPattern = regexp.MustCompile(`var (_F_cssRowKey|_F_combinedSignature) = '([^']*)'`)
+var htmlTitlePattern = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+
+func extractHTMLTitle(body []byte) string {
+	match := htmlTitlePattern.FindSubmatch(body)
+	if len(match) != 2 {
+		return ""
+	}
+	title := strings.Join(strings.Fields(string(match[1])), " ")
+	if len(title) > 120 {
+		return title[:120]
+	}
+	return title
+}
 
 // pageGlobals 返回官网页面内联脚本声明的当前构建全局值
 func pageGlobals(body []byte) map[string]any {
@@ -459,15 +472,30 @@ func (runtime *goWAARuntime) loadPage(ctx context.Context) (string, error) {
 			if location.Hostname() == "accounts.google.com" {
 				return "", fmt.Errorf("%w url=%s", camoufoxnative.ErrAuthenticationRequired, location.String())
 			}
+			if strings.Contains(location.Hostname(), "myaccount.google.com") && strings.Contains(location.Path, "/restrictions") {
+				return "", fmt.Errorf("AI Studio 账号服务受限 (servicerestricted): url=%s", location.String())
+			}
+			if location.Hostname() == "aistudio.google.com" && strings.HasPrefix(location.Path, "/docs/available-regions") {
+				return "", fmt.Errorf("%w: url=%s", camoufoxnative.ErrRegionNotSupported, location.String())
+			}
 			target = location.String()
 			continue
 		}
 		if response.StatusCode != http.StatusOK {
-			return "", fmt.Errorf("AI Studio 页面返回 HTTP %d", response.StatusCode)
+			if bytes.Contains(body, []byte("servicerestricted")) || bytes.Contains(body, []byte("/restrictions/")) {
+				return "", fmt.Errorf("AI Studio 账号服务受限 (servicerestricted, HTTP %d): url=%s", response.StatusCode, target)
+			}
+			return "", fmt.Errorf("AI Studio 页面返回 HTTP %d (url=%s)", response.StatusCode, target)
 		}
 		match := makerSuiteAPIKeyPattern.FindSubmatch(body)
 		if len(match) != 2 || len(match[1]) == 0 {
-			return "", fmt.Errorf("AI Studio 页面缺少 WIu0Nc")
+			if bytes.Contains(body, []byte("servicerestricted")) || bytes.Contains(body, []byte("/restrictions/")) {
+				return "", fmt.Errorf("AI Studio 账号服务受限 (servicerestricted): url=%s", target)
+			}
+			if title := extractHTMLTitle(body); title != "" {
+				return "", fmt.Errorf("AI Studio 页面缺少 WIu0Nc (url=%s, title=%q)", target, title)
+			}
+			return "", fmt.Errorf("AI Studio 页面缺少 WIu0Nc (url=%s)", target)
 		}
 		runtime.pageLoaded = time.Now()
 		runtime.profile.Globals = pageGlobals(body)
