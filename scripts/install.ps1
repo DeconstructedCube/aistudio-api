@@ -11,7 +11,7 @@ param(
     [int]$Port = 8080
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
 try {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -21,6 +21,16 @@ try {
 $ScriptDir = if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) { $PSScriptRoot } else { (Get-Location).Path }
 $ProjectRoot = [System.IO.Path]::GetFullPath("$ScriptDir\..")
 Set-Location $ProjectRoot
+
+$probeFile = Join-Path $ProjectRoot ".write_probe.tmp"
+try {
+    [System.IO.File]::WriteAllText($probeFile, "ok")
+    Remove-Item $probeFile -Force -ErrorAction SilentlyContinue
+} catch {
+    Write-Host "错误: 当前目录无写入权限 ($ProjectRoot)。" -ForegroundColor Red
+    Write-Host "请右键 install.bat 选择「以管理员身份运行」，或将项目移至非系统保护目录（如 D:\aistudio-api）后重试。" -ForegroundColor Yellow
+    exit 1
+}
 
 Write-Host ""
 Write-Host "==================================================================" -ForegroundColor Cyan

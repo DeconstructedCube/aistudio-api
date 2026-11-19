@@ -62,7 +62,7 @@ def extract_content_digest(contents: list[AistudioContent]) -> tuple[str, str]:
             else:
                 hash_parts.append("")
     prompt = " ".join(hash_parts)
-    content_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    content_hash = hashlib.sha256(prompt.encode("utf-8", errors="replace")).hexdigest()
     return prompt, content_hash
 
 

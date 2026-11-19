@@ -124,3 +124,24 @@ async def test_streaming_gateway_split_utf8_chunks():
         == "嗨！我是你的酒馆工程搭档。平时在这套工作区里，一起搞的事情挺多的：🎉🚀"
     )
     assert "\ufffd" not in joined
+
+
+@pytest.mark.asyncio
+async def test_transport_sanitizes_lone_utf16_surrogates():
+    """Verify lone UTF-16 surrogates in request body never raise UnicodeEncodeError."""
+    transport = HTTPStreamTransport()
+    captured: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request.content)
+        return httpx.Response(200, content=b"ok")
+
+    transport._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    status, _ = await transport.send_request(
+        url="https://example.com/api",
+        headers={},
+        body='{"text":"broken \ud83d emoji"}',
+    )
+    assert status == 200
+    assert len(captured) == 1
+    assert captured[0] == b'{"text":"broken ? emoji"}'

@@ -598,7 +598,7 @@ if [ "$TARGET_GOOS" = "windows" ]; then
 fi
 
 log "开始编译 waa-signer (GOOS=${TARGET_GOOS} GOARCH=${GO_ARCH}, CC=${CC_CMD})..."
-go build -trimpath -tags netgo,osusergo \
+go build -buildvcs=false -trimpath -tags netgo,osusergo \
   -ldflags="-s -w -linkmode external -extldflags '${EXTLDFLAGS}'" \
   -o "bin/${BIN_NAME}.tmp" ./cmd/waa-signer
 chmod +x "bin/${BIN_NAME}.tmp"

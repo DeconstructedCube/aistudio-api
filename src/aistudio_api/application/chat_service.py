@@ -440,9 +440,15 @@ def _normalize_gemini_video_config(
 
 _REASONING_EFFORT_TO_LEVEL: dict[str, ThinkingLevel] = {
     "MINIMAL": ThinkingLevel.MINIMAL,
+    "MIN": ThinkingLevel.MINIMAL,
+    "MINIMUM": ThinkingLevel.MINIMAL,
     "LOW": ThinkingLevel.LOW,
     "MEDIUM": ThinkingLevel.MEDIUM,
     "HIGH": ThinkingLevel.HIGH,
+    "MAX": ThinkingLevel.HIGH,
+    "MAXIMUM": ThinkingLevel.HIGH,
+    "XHIGH": ThinkingLevel.HIGH,
+    "EXTRA_HIGH": ThinkingLevel.HIGH,
 }
 
 
@@ -454,11 +460,25 @@ def _parse_thinking_level(raw_level: object) -> ThinkingLevel | None:
     if isinstance(raw_level, int) and not isinstance(raw_level, bool):
         return ThinkingLevel(raw_level)
     label = str(raw_level).strip().upper()
-    if not label or label in ("NONE", "OFF", "DISABLE", "DISABLED", "0"):
+    if not label or label in (
+        "NONE",
+        "OFF",
+        "DISABLE",
+        "DISABLED",
+        "0",
+        "AUTO",
+        "DEFAULT",
+        "UNSPECIFIED",
+        "THINKING_LEVEL_UNSPECIFIED",
+    ):
         return None
+    if label.isdigit():
+        return ThinkingLevel(int(label))
     if label in _REASONING_EFFORT_TO_LEVEL:
         return _REASONING_EFFORT_TO_LEVEL[label]
-    return ThinkingLevel[label]
+    if label in ThinkingLevel.__members__:
+        return ThinkingLevel[label]
+    raise ValueError(f"Unsupported thinkingLevel: {raw_level!r}")
 
 
 def _normalize_gemini_thinking_config(

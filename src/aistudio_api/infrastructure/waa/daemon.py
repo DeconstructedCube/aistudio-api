@@ -283,7 +283,9 @@ class LocalSignerProcess:
         payload: dict[str, object] = {"id": req_id, "method": method}
         if params is not None:
             payload["params"] = params
-        encoded = (json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")
+        encoded = (json.dumps(payload, separators=(",", ":")) + "\n").encode(
+            "utf-8", errors="replace"
+        )
 
         try:
             async with self._write_lock:

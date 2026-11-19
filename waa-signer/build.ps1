@@ -14,7 +14,7 @@ param(
     [switch]$Test
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
 try {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -157,7 +157,10 @@ function Test-ZipArchive([string]$path, [long]$minBytes) {
 
 function Get-GoMajorMinor {
     if (-not (Get-Command "go" -ErrorAction SilentlyContinue)) { return $null }
-    $v = (go version 2>$null)
+    $prevToolchain = $env:GOTOOLCHAIN
+    $env:GOTOOLCHAIN = "local"
+    $v = (& go version 2>&1 | Out-String)
+    if ($null -eq $prevToolchain) { Remove-Item Env:GOTOOLCHAIN -ErrorAction SilentlyContinue } else { $env:GOTOOLCHAIN = $prevToolchain }
     if ($v -match "go(\d+)\.(\d+)") {
         return @([int]$matches[1], [int]$matches[2])
     }
@@ -229,7 +232,8 @@ if (-not $goVer -or ($goVer[0] -eq 1 -and $goVer[1] -lt 21)) {
     }
 }
 
-Write-Host ">>> 检测到 Go: $(go version)" -ForegroundColor Cyan
+$goVerDisplay = (& { $env:GOTOOLCHAIN = "local"; (& go version 2>&1 | Out-String).Trim() })
+Write-Host ">>> 检测到 Go: $goVerDisplay" -ForegroundColor Cyan
 if ($goVer[0] -eq 1 -and $goVer[1] -lt 27) {
     $env:GOTOOLCHAIN = "auto"
 }
@@ -458,7 +462,7 @@ if (-not [string]::IsNullOrWhiteSpace($ExtLdFlags)) {
 
 $TmpExe = "$OutExe.tmp"
 Remove-Item $TmpExe -Force -ErrorAction SilentlyContinue
-go build -trimpath -tags "netgo,osusergo" -ldflags "$ldflags" -o $TmpExe ./cmd/waa-signer
+& go build -buildvcs=false -trimpath -tags "netgo,osusergo" -ldflags "$ldflags" -o $TmpExe ./cmd/waa-signer
 if ($LASTEXITCODE -ne 0) {
     Remove-Item $TmpExe -Force -ErrorAction SilentlyContinue
     Write-Host "错误: 编译 waa-signer.exe 失败！" -ForegroundColor Red

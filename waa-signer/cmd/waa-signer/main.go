@@ -851,6 +851,7 @@ func discoverProxy() string {
 }
 
 func main() {
+	aistudio.EnsureFallbackDNS()
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	defaultStateDir := os.Getenv("WAA_STATE_DIR")

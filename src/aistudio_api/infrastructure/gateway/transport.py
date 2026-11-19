@@ -226,7 +226,9 @@ class HTTPStreamTransport:
         client = await self._get_client()
         try:
             resp = await client.post(
-                url, headers=clean_headers, content=body.encode("utf-8")
+                url,
+                headers=clean_headers,
+                content=body.encode("utf-8", errors="replace"),
             )
             _sync_response_cookies(
                 resp,
@@ -285,7 +287,10 @@ class HTTPStreamTransport:
         resp = None
         try:
             req = client.build_request(
-                "POST", url, headers=clean_headers, content=body.encode("utf-8")
+                "POST",
+                url,
+                headers=clean_headers,
+                content=body.encode("utf-8", errors="replace"),
             )
             resp = await client.send(req, stream=True)
             _sync_response_cookies(

@@ -900,3 +900,28 @@ def test_normalize_gemini_request_deduplicates_and_covers_builtin_tools():
     assert len(normalized.tools) == 2
     assert [[]] in normalized.tools
     assert [None, None, None, [None, [[]]]] in normalized.tools
+
+
+def test_normalize_gemini_request_maps_max_and_unspecified_thinking_level():
+    """Verify thinkingLevel MAX maps to HIGH and UNSPECIFIED/AUTO map cleanly."""
+    req_max = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "Hello"}]}],
+            "generationConfig": {"thinkingConfig": {"thinkingLevel": "MAX"}},
+        }
+    )
+    normalized_max = normalize_gemini_request(req_max, "gemini-4-hydrogen")
+    assert normalized_max.generation_config_overrides is not None
+    thinking_wire = normalized_max.generation_config_overrides.get("thinking_config")
+    assert isinstance(thinking_wire, list)
+    assert thinking_wire[3] == 3
+
+    req_auto = GeminiGenerateContentRequest.model_validate(
+        {
+            "contents": [{"role": "user", "parts": [{"text": "Hello"}]}],
+            "generationConfig": {"thinkingConfig": {"thinkingLevel": "AUTO"}},
+        }
+    )
+    normalized_auto = normalize_gemini_request(req_auto, "gemini-4-hydrogen")
+    overrides_auto = normalized_auto.generation_config_overrides
+    assert overrides_auto is None or "thinking_config" not in overrides_auto

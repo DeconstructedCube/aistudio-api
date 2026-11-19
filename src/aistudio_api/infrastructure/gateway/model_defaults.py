@@ -143,9 +143,24 @@ _normalize_model_name = normalize_model_name
 def _coerce_thinking_level(value: object) -> ThinkingLevel:
     if isinstance(value, ThinkingLevel):
         return value
-    if isinstance(value, int):
+    if isinstance(value, int) and not isinstance(value, bool):
         return ThinkingLevel(value)
-    return ThinkingLevel[str(value).strip().upper()]
+    label = str(value).strip().upper()
+    aliases = {
+        "MIN": ThinkingLevel.MINIMAL,
+        "MINIMUM": ThinkingLevel.MINIMAL,
+        "MAX": ThinkingLevel.HIGH,
+        "MAXIMUM": ThinkingLevel.HIGH,
+        "XHIGH": ThinkingLevel.HIGH,
+        "EXTRA_HIGH": ThinkingLevel.HIGH,
+    }
+    if label in aliases:
+        return aliases[label]
+    if label.isdigit():
+        return ThinkingLevel(int(label))
+    if label in ThinkingLevel.__members__:
+        return ThinkingLevel[label]
+    raise ValueError(f"Unsupported thinking_level: {value!r}")
 
 
 def _coerce_media_resolution(value: object) -> int:

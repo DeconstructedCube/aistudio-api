@@ -10,7 +10,8 @@ param(
     [string]$Proxy = ""
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
+if ([string]::IsNullOrWhiteSpace($env:UV_LINK_MODE)) { $env:UV_LINK_MODE = "copy" }
 
 try {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
