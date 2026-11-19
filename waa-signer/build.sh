@@ -583,9 +583,8 @@ export GOOS="${TARGET_GOOS}"
 export GOARCH="${GO_ARCH}"
 export CC="${CC_CMD}"
 export CXX="${CXX_CMD}"
-export CGO_CXXFLAGS="-I${DEPS_DIR}/include"
-export CGO_LDFLAGS="-L${DEPS_DIR}/lib"
-
+export CGO_CXXFLAGS="'-I${DEPS_DIR}/include'"
+export CGO_LDFLAGS="'-L${DEPS_DIR}/lib'"
 if [ "$RUN_TESTS" -eq 1 ]; then
   log "运行 Go 单元测试 (GOOS=${GOOS} GOARCH=${GOARCH})..."
   go test -tags netgo,osusergo ./cmd/waa-signer ./internal/aistudio

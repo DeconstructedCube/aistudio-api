@@ -3,16 +3,16 @@ package mozjs
 
 /*
 #cgo CXXFLAGS: -std=c++20 -fno-rtti -fno-exceptions -DSTATIC_JS_API -DJS_STANDALONE -Wno-invalid-offsetof -Wno-attributes
-#cgo windows,amd64 CXXFLAGS: -DXP_WIN -I${SRCDIR}/../../../.deps/spidermonkey/windows-amd64/include
-#cgo windows,amd64 LDFLAGS: -L${SRCDIR}/../../../.deps/spidermonkey/windows-amd64/lib -ljs_static -ljsrust -Wl,-Bstatic -lc++ -lunwind -Wl,-Bdynamic -lws2_32 -lwinmm -lpsapi -ldbghelp -lntdll -luserenv -lbcrypt -ladvapi32 -lshell32 -lole32 -loleaut32 -luuid
-#cgo linux,amd64 CXXFLAGS: -DXP_UNIX -DXP_LINUX -I${SRCDIR}/../../../.deps/spidermonkey/linux-amd64/include
-#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/../../../.deps/spidermonkey/linux-amd64/lib -ljs_static -ljsrust -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm -ldl -lpthread
-#cgo linux,arm64 CXXFLAGS: -DXP_UNIX -DXP_LINUX -I${SRCDIR}/../../../.deps/spidermonkey/linux-arm64/include
-#cgo linux,arm64 LDFLAGS: -L${SRCDIR}/../../../.deps/spidermonkey/linux-arm64/lib -ljs_static -ljsrust -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm -ldl -lpthread
-#cgo darwin,amd64 CXXFLAGS: -DXP_UNIX -DXP_DARWIN -DXP_MACOSX -I${SRCDIR}/../../../.deps/spidermonkey/darwin-amd64/include
-#cgo darwin,amd64 LDFLAGS: -L${SRCDIR}/../../../.deps/spidermonkey/darwin-amd64/lib -ljs_static -ljsrust -lc++ -framework CoreFoundation -framework Security
-#cgo darwin,arm64 CXXFLAGS: -DXP_UNIX -DXP_DARWIN -DXP_MACOSX -I${SRCDIR}/../../../.deps/spidermonkey/darwin-arm64/include
-#cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/../../../.deps/spidermonkey/darwin-arm64/lib -ljs_static -ljsrust -lc++ -framework CoreFoundation -framework Security
+#cgo windows,amd64 CXXFLAGS: -DXP_WIN
+#cgo windows,amd64 LDFLAGS: -ljs_static -ljsrust -Wl,-Bstatic -lc++ -lunwind -Wl,-Bdynamic -lws2_32 -lwinmm -lpsapi -ldbghelp -lntdll -luserenv -lbcrypt -ladvapi32 -lshell32 -lole32 -loleaut32 -luuid
+#cgo linux,amd64 CXXFLAGS: -DXP_UNIX -DXP_LINUX
+#cgo linux,amd64 LDFLAGS: -ljs_static -ljsrust -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm -ldl -lpthread
+#cgo linux,arm64 CXXFLAGS: -DXP_UNIX -DXP_LINUX
+#cgo linux,arm64 LDFLAGS: -ljs_static -ljsrust -Wl,-Bstatic -lstdc++ -Wl,-Bdynamic -lm -ldl -lpthread
+#cgo darwin,amd64 CXXFLAGS: -DXP_UNIX -DXP_DARWIN -DXP_MACOSX
+#cgo darwin,amd64 LDFLAGS: -ljs_static -ljsrust -lc++ -framework CoreFoundation -framework Security
+#cgo darwin,arm64 CXXFLAGS: -DXP_UNIX -DXP_DARWIN -DXP_MACOSX
+#cgo darwin,arm64 LDFLAGS: -ljs_static -ljsrust -lc++ -framework CoreFoundation -framework Security
 #include <stdlib.h>
 #include "mozjs.h"
 */

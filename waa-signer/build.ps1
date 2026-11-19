@@ -392,20 +392,22 @@ if ($ForceDownload -or -not (Test-Path $LibStatic) -or -not (Test-Path $HeaderAp
         tar -xzf $TempTar -C $DepsDir
     }
     Remove-Item $TempTar -Force -ErrorAction SilentlyContinue
-
     if (-not (Test-Path $LibStatic) -or -not (Test-Path $HeaderApi)) {
         Write-Host "错误: 解压后未找到关键静态库或头文件: $DepsDir" -ForegroundColor Red
         exit 1
     }
+}
 
-    $LibJsRust = "$DepsDir\lib\libjsrust.a"
-    if ($zigExe -and (Test-Path $LibJsRust)) {
+$LibJsRust = "$DepsDir\lib\libjsrust.a"
+if ($zigExe -and (Test-Path $LibJsRust)) {
+    $arList = & zig ar t $LibJsRust 2>$null
+    if ($arList -match "compiler_builtins-37a08fb9d355cb46\.compiler_builtins\.7e37c3da72dd266-cgu\.150\.rcgu\.o") {
         Write-Host ">>> 清理 libjsrust.a 中与 Zig compiler_rt 冲突的符号..." -ForegroundColor Cyan
         & zig ar d $LibJsRust compiler_builtins-37a08fb9d355cb46.compiler_builtins.7e37c3da72dd266-cgu.150.rcgu.o 2>$null
     }
 }
 
-# 4. 配置 CGO 并执行测试或构建
+# 4. 配置 CGO 并执行测试或构建 (单引号包裹路径以兼容含空格目录)
 $env:CGO_ENABLED = "1"
 $env:GOOS = "windows"
 $env:GOARCH = "amd64"
@@ -413,8 +415,8 @@ $env:CC = $CC
 $env:CXX = $CXX
 $IncludePath = "$DepsDir\include" -replace '\\', '/'
 $LibPath = "$DepsDir\lib" -replace '\\', '/'
-$env:CGO_CXXFLAGS = "-I$IncludePath"
-$env:CGO_LDFLAGS = "-L$LibPath"
+$env:CGO_CXXFLAGS = "'-I$IncludePath'"
+$env:CGO_LDFLAGS = "'-L$LibPath'"
 
 if ($Test) {
     Write-Host ">>> 正在运行 Go 单元测试..." -ForegroundColor Cyan
