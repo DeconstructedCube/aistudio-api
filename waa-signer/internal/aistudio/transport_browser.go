@@ -2,18 +2,20 @@ package aistudio
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net"
 	stdhttp "net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
 	"github.com/Mag1cFall/AIStudio2API/internal/proxydial"
 	fhttp "github.com/Mag1cFall/fhttp"
 	"github.com/Mag1cFall/fhttp/http2"
@@ -395,6 +397,39 @@ func (pool *firefoxConnPool) shutdown() {
 	}
 }
 
+var (
+	rootCAsOnce sync.Once
+	rootCAsPool *x509.CertPool
+)
+
+func loadRootCAs() *x509.CertPool {
+	rootCAsOnce.Do(func() {
+		pool, err := x509.SystemCertPool()
+		if err != nil || pool == nil {
+			pool = x509.NewCertPool()
+		}
+		candidates := []string{
+			strings.TrimSpace(os.Getenv("SSL_CERT_FILE")),
+			"/data/data/com.termux/files/usr/etc/tls/cert.pem",
+			"/etc/ssl/certs/ca-certificates.crt",
+			"/etc/ssl/cert.pem",
+		}
+		if prefix := strings.TrimSpace(os.Getenv("PREFIX")); prefix != "" {
+			candidates = append(candidates, filepath.Join(prefix, "etc", "tls", "cert.pem"))
+		}
+		for _, cand := range candidates {
+			if cand == "" {
+				continue
+			}
+			if pemBytes, readErr := os.ReadFile(cand); readErr == nil && len(pemBytes) > 0 {
+				pool.AppendCertsFromPEM(pemBytes)
+			}
+		}
+		rootCAsPool = pool
+	})
+	return rootCAsPool
+}
+
 // dialBrowserTLS 以 Firefox ClientHello 建立 TLS 连接并要求协商 HTTP/2
 func dialBrowserTLS(dialer proxy.ContextDialer, hello tls.ClientHelloID, address string) (net.Conn, error) {
 	raw, err := dialer.DialContext(context.Background(), "tcp", address)
@@ -402,7 +437,7 @@ func dialBrowserTLS(dialer proxy.ContextDialer, hello tls.ClientHelloID, address
 		return nil, err
 	}
 	host, _, _ := net.SplitHostPort(address)
-	connection := tls.UClient(raw, &tls.Config{ServerName: host, OmitEmptyPsk: true}, hello, false, false, false)
+	connection := tls.UClient(raw, &tls.Config{ServerName: host, OmitEmptyPsk: true, RootCAs: loadRootCAs()}, hello, false, false, false)
 	ctx, cancel := context.WithTimeout(context.Background(), firefoxTLSHandshakeTimeout)
 	defer cancel()
 	if err := connection.HandshakeContext(ctx); err != nil {

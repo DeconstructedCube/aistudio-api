@@ -135,11 +135,33 @@ class LocalSignerProcess:
                 raise TransportError(_missing_binary_message(bin_path))
 
             cmd = self._build_command(bin_path)
+            child_env = os.environ.copy()
+            if sys.platform != "win32":
+                if not child_env.get("SSL_CERT_FILE"):
+                    prefix = child_env.get("PREFIX", "").strip()
+                    for cert_cand in (
+                        Path(prefix) / "etc" / "tls" / "cert.pem" if prefix else None,
+                        Path("/data/data/com.termux/files/usr/etc/tls/cert.pem"),
+                    ):
+                        if cert_cand is not None and cert_cand.is_file():
+                            child_env["SSL_CERT_FILE"] = str(cert_cand)
+                            break
+                if not child_env.get("SSL_CERT_DIR"):
+                    prefix = child_env.get("PREFIX", "").strip()
+                    for dir_cand in (
+                        Path(prefix) / "etc" / "tls" / "certs" if prefix else None,
+                        Path("/data/data/com.termux/files/usr/etc/tls/certs"),
+                        Path("/system/etc/security/cacerts"),
+                    ):
+                        if dir_cand is not None and dir_cand.is_dir():
+                            child_env["SSL_CERT_DIR"] = str(dir_cand)
+                            break
             popen_kwargs: dict[str, object] = {
                 "stdin": asyncio.subprocess.PIPE,
                 "stdout": asyncio.subprocess.PIPE,
                 "stderr": asyncio.subprocess.PIPE,
                 "cwd": str(bin_path.parent.parent),
+                "env": child_env,
                 "limit": _MAX_IPC_LINE_BYTES,
             }
             if sys.platform == "win32":

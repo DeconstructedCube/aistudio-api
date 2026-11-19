@@ -32,7 +32,7 @@ $ScriptDir = if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) { $PSScriptRo
 Set-Location $ScriptDir
 
 $SM_VERSION = "v152.0.4-aistudio2api.1"
-$ZIG_VERSION = "0.16.0"
+$ZIG_VERSION = "0.17.1"
 $ARCH = "windows-amd64"
 $Tarball = "spidermonkey-$SM_VERSION-$ARCH.tar.gz"
 
@@ -275,9 +275,28 @@ function Find-ZigExecutable {
     return ""
 }
 
+function Test-ZigMeetsMin([string]$zigPath) {
+    if ([string]::IsNullOrWhiteSpace($zigPath) -or -not (Test-Path $zigPath)) { return $false }
+    try {
+        $verStr = (& $zigPath version 2>$null | Out-String).Trim()
+        if ($verStr -match "^(\d+)\.(\d+)\.(\d+)") {
+            $maj = [int]$matches[1]; $min = [int]$matches[2]; $pat = [int]$matches[3]
+            return ($maj -gt 0) -or ($min -gt 17) -or ($min -eq 17 -and $pat -ge 1)
+        }
+    } catch {}
+    return $false
+}
+
+$mingwClang = Get-Command "x86_64-w64-mingw32-clang" -ErrorAction SilentlyContinue
 $zigExe = Find-ZigExecutable
-if (-not $zigExe) {
-    Write-Host ">>> 未检测到 Zig 编译器，正在自动下载官方免配置 Zig $ZIG_VERSION..." -ForegroundColor Cyan
+if ($zigExe -and -not (Test-ZigMeetsMin $zigExe)) {
+    $oldZigVer = (& $zigExe version 2>$null | Out-String).Trim()
+    Write-Host ">>> 检测到 Zig $oldZigVer 低于 0.17.1（Windows 静态链接 ICU 需要 0.17.1+ 提供的 _vsnwprintf 导入符号），正在自动准备 Zig $ZIG_VERSION..." -ForegroundColor Yellow
+    $zigExe = ""
+}
+
+if (-not $zigExe -and -not $mingwClang) {
+    Write-Host ">>> 正在自动下载官方免配置 Zig $ZIG_VERSION..." -ForegroundColor Cyan
     New-Item -ItemType Directory -Path $ToolsDir -Force | Out-Null
     $zigZipName = "zig-x86_64-windows-$ZIG_VERSION.zip"
     $zigZipPath = "$ToolsDir\$zigZipName"
@@ -298,33 +317,36 @@ if (-not $zigExe) {
                 Move-Item -Path $innerDir.FullName -Destination $zigTarget -Force
             }
             Remove-Item $zigTemp -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path "$zigTarget\zig.exe") {
+                $zigExe = "$zigTarget\zig.exe"
+            }
             break
         }
         Remove-Item $zigZipPath -Force -ErrorAction SilentlyContinue
     }
-    $zigExe = Find-ZigExecutable
     if (-not $zigExe -and (Get-Command "winget" -ErrorAction SilentlyContinue)) {
-        Write-Host ">>> 回退通过 winget 安装 zig.zig..." -ForegroundColor Cyan
+        Write-Host ">>> 回退尝试通过 winget 安装/升级 zig.zig..." -ForegroundColor Cyan
         & winget install -e --id zig.zig --accept-source-agreements --accept-package-agreements
         Sync-SessionPath
-        $zigExe = Find-ZigExecutable
+        $cand = Find-ZigExecutable
+        if (Test-ZigMeetsMin $cand) { $zigExe = $cand }
     }
 }
 
 if ($zigExe) {
     $zigDir = Split-Path -Parent $zigExe
     $env:Path = "$zigDir;$env:Path"
-    Write-Host ">>> 检测到 Zig 编译器: $zigExe" -ForegroundColor Green
+    Write-Host ">>> 检测到 Zig 编译器: $zigExe ($(& $zigExe version))" -ForegroundColor Green
     $CC = "zig cc -target x86_64-windows-gnu"
     $CXX = "zig c++ -target x86_64-windows-gnu"
     $ExtLdFlags = "-Wl,--strip-all"
-} elseif (Get-Command "clang" -ErrorAction SilentlyContinue) {
-    Write-Host ">>> 检测到 Clang 编译器" -ForegroundColor Green
-    $CC = "clang"
-    $CXX = "clang++"
+} elseif ($mingwClang) {
+    Write-Host ">>> 检测到 llvm-mingw 编译器: $($mingwClang.Source)" -ForegroundColor Green
+    $CC = "x86_64-w64-mingw32-clang"
+    $CXX = "x86_64-w64-mingw32-clang++"
     $ExtLdFlags = "-Wl,--strip-all"
 } else {
-    Write-Host "错误: 未能自动就绪 Zig 或 Clang 编译器。请手动安装 zig: winget install zig.zig" -ForegroundColor Red
+    Write-Host "错误: 未能自动就绪 Zig $ZIG_VERSION+ 或 llvm-mingw 编译器。" -ForegroundColor Red
     exit 1
 }
 

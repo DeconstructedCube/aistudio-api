@@ -25,6 +25,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      signer: ${{ steps.filter.outputs.signer }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -38,10 +39,15 @@ jobs:
               - 'src/aistudio_api/**'
               - 'tests/**'
               - 'pyproject.toml'
-              - 'uv.lock'
               - '.github/workflows/ci.yml'
             frontend:
               - 'web/**'
+              - '.github/workflows/ci.yml'
+            signer:
+              - 'waa-signer/**'
+              - 'scripts/**'
+              - 'install.sh'
+              - 'start.sh'
               - '.github/workflows/ci.yml'
 
   backend-check:
@@ -67,15 +73,37 @@ jobs:
           uv venv
           uv pip install -e ".[dev]"
 
-      - name: Run Ruff Lint
-        run: uv run --no-sync ruff check .
+      - name: Run Ruff Lint & Format Check
+        run: |
+          uv run --no-sync ruff check .
+          uv run --no-sync ruff format --check src
 
       - name: Run Pyright Type Check
-        run: uv run --no-sync pyright
+        run: uv run --no-sync pyright src tests
 
       - name: Run Pytest Suite
         run: uv run --no-sync pytest
 
+  signer-check:
+    name: WAA Signer Go Tests & Scripts
+    needs: changes
+    if: ${{ needs.changes.outputs.signer == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: waa-signer/go.mod
+          cache-dependency-path: waa-signer/go.sum
+
+      - name: Check Shell Scripts Syntax
+        run: bash -n install.sh start.sh scripts/setup-env.sh waa-signer/build.sh
+
+      - name: Run Go WAA Signer Tests
+        run: bash waa-signer/build.sh --test
   frontend-check:
     name: Frontend Quality & Build
     needs: changes

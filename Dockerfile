@@ -66,7 +66,7 @@ EXPOSE 8080
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/v1beta/models || exit 1
+    CMD curl -f http://localhost:8080/health || exit 1
 
 # Container entrypoint and default command
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

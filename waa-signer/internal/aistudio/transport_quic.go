@@ -126,6 +126,7 @@ func dialFirefoxQUIC(ctx context.Context, host string, resumption *quicResumptio
 		MinVersion:         utls.VersionTLS13,
 		ClientSessionCache: resumption.sessions,
 		OmitEmptyPsk:       true,
+		RootCAs:            loadRootCAs(),
 	}, firefoxQUICConfig(datagram, resumption.tokens))
 	if err != nil {
 		_ = transport.Close()
