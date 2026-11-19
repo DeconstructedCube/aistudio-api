@@ -146,18 +146,6 @@ def _coerce_thinking_level(value: object) -> ThinkingLevel:
     if isinstance(value, int) and not isinstance(value, bool):
         return ThinkingLevel(value)
     label = str(value).strip().upper()
-    aliases = {
-        "MIN": ThinkingLevel.MINIMAL,
-        "MINIMUM": ThinkingLevel.MINIMAL,
-        "MAX": ThinkingLevel.HIGH,
-        "MAXIMUM": ThinkingLevel.HIGH,
-        "XHIGH": ThinkingLevel.HIGH,
-        "EXTRA_HIGH": ThinkingLevel.HIGH,
-    }
-    if label in aliases:
-        return aliases[label]
-    if label.isdigit():
-        return ThinkingLevel(int(label))
     if label in ThinkingLevel.__members__:
         return ThinkingLevel[label]
     raise ValueError(f"Unsupported thinking_level: {value!r}")
