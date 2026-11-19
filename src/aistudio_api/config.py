@@ -196,9 +196,6 @@ def resolve_timezone() -> str:
 @dataclass(slots=True)
 class Settings:
     port: int = int(os.getenv("AISTUDIO_PORT", "8080"))
-    proof_server_url: str = os.getenv(
-        "AISTUDIO_PROOF_SERVER_URL", "https://waa.spinsnow.fun"
-    )
     auth_file: str | None = discover_auth_file()
     tmp_dir: str = os.getenv("AISTUDIO_TMP_DIR", tempfile.gettempdir())
     proxy_url: str | None = discover_proxy_url()

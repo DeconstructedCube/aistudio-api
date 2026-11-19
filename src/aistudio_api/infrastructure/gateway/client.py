@@ -250,20 +250,7 @@ class AIStudioClient:
         return output
 
     def _build_upstream_headers(self, ctx: SessionContext) -> dict[str, str]:
-        from aistudio_api.infrastructure.gateway.model_defaults import (
-            get_active_waa_server,
-        )
-
-        active_waa = get_active_waa_server()
         headers = dict(DEFAULT_UPSTREAM_HEADERS)
-        if active_waa.get("user_agent"):
-            merge_header_case_insensitive(
-                headers, "User-Agent", str(active_waa["user_agent"])
-            )
-        server_hdrs = active_waa.get("headers")
-        if isinstance(server_hdrs, dict):
-            for k, v in server_hdrs.items():
-                merge_header_case_insensitive(headers, str(k), str(v))
         dyn_headers: object = None
         get_ctx_headers = getattr(self._session, "get_signer_headers", None)
         if callable(get_ctx_headers):

@@ -228,7 +228,7 @@ _.l(requestProto, 5, t);             // 3. 将 Token 注入 Protobuf 字段 5 (W
    > 2. `_.jn` 仅对文本 (tag 2)、内联数据 (tag 3)、文件 (tag 6) 提取字符串，其余非文本 Part（函数调用、执行结果等）**统一返回空字符串 `""`**。
    > 3. 数组所有元素以单空格 `" "` 进行 `join`，**不作过滤**，随后计算 SHA-256 Hex 摘要。
    >
-   > **符号混淆与动态匹配**：Google 构建版本更新时会重置混淆名（如类名 `_.QC`/`_.nC`、签名函数 `_.Pn`/`_.jp`、参数键 `BFc`/`Bcc` 等），远程 WAA 签名服务（`aistudio-pg-bridge`）会在握手阶段动态适配对应方法。
+   > **符号混淆与动态匹配**：Google 构建版本更新时会重置混淆名（如类名 `_.QC`/`_.nC`、签名函数 `_.Pn`/`_.jp`、参数键 `BFc`/`Bcc` 等），本地 `waa-signer` 会在页面加载握手阶段动态适配对应方法。
    >
    > **生命周期与状态**：
    > - 快照 Token 与单次请求内容及时间戳绑定，不跨请求复用。
@@ -342,13 +342,11 @@ BotGuard 在前端或签名服务沙箱执行时，会调用 `navigator.userAgen
 
 **不同底层签名方案的特征环境差异**：
 1. **SpiderMonkey 152 原生方案 (`waa-signer`)**：底层基于 SpiderMonkey 152 纯 C++ 引擎与 Firefox 152 宿主环境，Token 内部加密绑定的是 Firefox 152 的 User-Agent 与特征指纹；
-2. **NodeVM 沙箱方案 (`spinsnow` / `aistudio-pg-bridge`)**：底层基于 Node.js VM 模拟环境，Token 内部加密绑定的是特定版本的 Chromium / Chrome User-Agent。
+2. **NodeVM 沙箱方案 (`aistudio-pg-bridge` 等历史方案)**：底层基于 Node.js VM 模拟环境，Token 内部加密绑定的是特定版本的 Chromium / Chrome User-Agent。
 
 **一致性校验约束**：
 当客户端向上游发送 `GenerateContent` 时，Google 上游会解密 Token 并严格比对外层 HTTP 头的 `User-Agent` 与 Token 内部声明的客户端特征。若外层为 Chrome UA 而 Token 内绑定为 Firefox（或反之），上游将判定为环境篡改并直接返回 **HTTP 403 `The caller does not have permission`**。
-因此网关层实现了**签名服务特征动态绑定与纯手动切换机制**，严格保证外层请求头与签名服务底层环境事实一致。
----
-
+因此网关层统一使用本地 `waa-signer`（SpiderMonkey 152）并通过 stdio IPC 动态同步会话头，确保外层请求头与签名引擎底层环境始终一致。
 ## 7. 生命周期与会话约束
 
 1. **时效性与内容绑定**：快照 Token 内包含时间戳与挑战 Nonce，且与特定请求的内容哈希强绑定。内容修改后需重新计算哈希并生成新快照。

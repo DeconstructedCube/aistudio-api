@@ -315,11 +315,11 @@ async def test_session_signer_headers_isolated_per_account_context():
 
     async def fake_sign(**kwargs):
         u = kwargs.get("auth_user")
-        session._signer._remote_signer.last_headers = {
+        session._signer._ipc_signer.last_headers = {
             "X-AIStudio-Visit-Id": f"visit_u{u}",
             "X-Goog-Ext-519733851-Bin": f"ext_u{u}",
         }
-        session._signer._remote_signer.last_pool_state = "hot"
+        session._signer._ipc_signer.last_pool_state = "hot"
         return f"!proof_u{u}"
 
     session._signer.generate_snapshot = AsyncMock(side_effect=fake_sign)

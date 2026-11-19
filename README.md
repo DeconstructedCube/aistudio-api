@@ -54,8 +54,8 @@
 | **下游参数容错与丢弃** | 支持配置 `drop_unsupported_params` 自动过滤下游传入的非标准安全分类（如 `HARM_CATEGORY_CIVIC_INTEGRITY`）与不兼容工具，避免 400 阻断 |
 | **批量子账号探活** | 导入单个包含多个 Google 身份的 Cookie 后，自动探测子账号（`u/0`, `u/1`...）并分别建档 |
 | **内置搜索与工具** | 支持 Google Search 联网搜索、Google Maps、代码执行沙箱、URL 上下文提取等官方扩展能力 |
-| **双轨签名与特征对齐** | 脱离重型浏览器，支持本地 Go 签名服务 (SpiderMonkey 152) 与远程 NodeVM 签名节点，自动绑定匹配的 User-Agent 与请求头特征，并支持 5 级 403 自愈重试 |
-| **Web 管理面板** | 提供 Web 管理控制台，支持账号分组与预设方案、文本/JSON 批量导入、调用量监控、WAA 节点切换、日志转储控制及在线热重载 `config.yaml` |
+| **本地 WAA 签名与特征对齐** | 脱离重型浏览器，通过本地 Go 进程 (SpiderMonkey 152) 经 `stdin`/`stdout` 多路复用 IPC 生成证明，严格对齐 Firefox 152 User-Agent 与请求头特征，并支持 5 级 403 自愈重试 |
+| **Web 管理面板** | 提供 Web 管理控制台，支持账号分组与预设方案、文本/JSON 批量导入、调用量监控、日志转储控制及在线热重载 `config.yaml` |
 > [!NOTE]
 > **内存占用参考**：脱离重型浏览器后，服务常驻物理内存仅约 35 - 50 MB，冷启动毫秒级，即使在入门级 Android 手机（Termux）或轻量服务器上亦可稳定高效常驻。
 ## 技术架构与文档
@@ -73,8 +73,7 @@
 └───────────────────────────┼────────────────────────────┘
                             │ Proof Mint & HTTP/2 Stream
 ┌───────────────────────────▼────────────────────────────┐
-│       Browserless WAA Engine (waa-signer / Remote NodeVM)     │
-│       Async Connection Pooling (HTTPStreamTransport)   │
+│       Browserless WAA Engine (waa-signer via stdio IPC)│
 └───────────────────────────┬────────────────────────────┘
                             │ HTTPS / RPC
 ┌───────────────────────────▼────────────────────────────┐
@@ -94,82 +93,42 @@
 
 ## 快速开始
 
-> [!NOTE]
-> **开箱即用提示**：服务默认内置远程 WAA 证明签名节点，无需额外编译，安装依赖后**直接启动即可开箱即用**！若追求极致的毫秒级本地性能与离线化运行，可在运行后随时按需编译本地原生引擎（各平台步骤见下方进阶可选说明）。
+除了 Docker 容器外，所有原生平台均提供统一的一键安装与启动入口，自动处理环境依赖、`uv`、Python 3.11+、Go、Zig 与本地 WAA 签名引擎编译。
+
 ### Android (Termux)
 
 > [!TIP]
 > **下载提示**：请务必从 [F-Droid](https://f-droid.org/packages/com.termux/) 或 [GitHub Releases](https://github.com/termux/termux-app/releases) 安装 Termux。**切勿使用 Google Play 商店版本**（Play 商店版本已停止维护，更新环境会报错）。
 
-打开 Termux，依次复制执行以下命令：
+打开 Termux，依次执行：
 
 ```bash
-# 步骤 1：更新 Termux 基础环境并安装 git
 pkg update -y && pkg install -y git
-
-# 步骤 2：克隆代码仓库并进入目录
 git clone https://github.com/DeconstructedCube/aistudio-api.git
 cd aistudio-api
-
-# 步骤 3：初始化依赖环境并同步安装
-bash scripts/setup-env.sh
-uv sync
-
-# 步骤 4：直接启动服务（开箱即用）
-uv run python main.py server --port 8080
+bash install.sh
+bash start.sh
 ```
-
-<details>
-<summary><b>【进阶可选】编译本地原生高性能签名服务 (waa-signer)</b></summary>
-
-若需脱离外部网络节点、获得 10~30 毫秒本地极速签名体验：
-```bash
-pkg install -y golang zig
-bash waa-signer/build.sh
-```
-编译完成后重启服务，系统将自动识别并切换至本地原生引擎。
-</details>
 
 启动成功后：
-1. 打开手机自带浏览器，访问 **`http://localhost:8080`** 即可进入 Web 管理控制台；
-2. 参考下方 [账号凭据获取指引](#账号凭据-cookie-获取与导入指引) 导入 Google Cookie 即可开始调用；
-3. **后台保活提示**：下拉手机通知栏，点击 Termux 通知项上的 `Acquire Wakelock`，并在手机系统设置中为 Termux 开启“无限制后台运行/电池优化白名单”，防止锁屏休眠被系统杀后台。
+1. 手机浏览器访问 **`http://localhost:8080`** 进入 Web 管理控制台；
+2. 参考下方 [账号凭据获取指引](#账号凭据-cookie-获取与导入指引) 导入 Google Cookie；
+3. **后台保活提示**：下拉手机通知栏点击 Termux 通知上的 `Acquire Wakelock`，并在系统设置中关闭 Termux 电池优化。
+
 ---
 
 ### Windows
 
-推荐前置：电脑已安装 [Git](https://git-scm.com/)。Python 环境可由 `uv` 全自动管理。
+前置：已安装 [Git](https://git-scm.com/)（可直接下载项目 ZIP 解压使用）。
 
-打开 PowerShell 或终端，依次执行：
+双击根目录 **`install.bat`**（或在终端执行 `.\install.bat`）即可全自动完成依赖与本地 `waa-signer.exe` 编译；完成后双击 **`start.bat`**（或执行 `.\start.bat`）启动服务。
 
 ```bat
-# 步骤 1：安装 uv 包管理工具
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-
-# 步骤 2：克隆代码仓库并进入目录
 git clone https://github.com/DeconstructedCube/aistudio-api.git
 cd aistudio-api
-
-# 步骤 3：同步安装项目依赖（uv 会自动安装所需 Python 环境）
-uv sync
-
-# 步骤 4：直接启动服务（开箱即用）
-uv run python main.py server --port 8080
+.\install.bat
+.\start.bat
 ```
-
-<details>
-<summary><b>【进阶可选】一键编译本地高性能签名服务 (waa-signer.exe)</b></summary>
-
-若需启用毫秒级本地原生签名引擎：
-```powershell
-# 推荐安装编译器（脚本亦支持自动检测与提示安装）：
-winget install GoLang.Go zig.zig
-
-# 执行一键构建脚本
-.\waa-signer\build.bat
-```
-编译完成后重启服务即可生效。
-</details>
 
 服务启动后，浏览器访问 **`http://localhost:8080`** 进入管理控制台。
 
@@ -177,33 +136,17 @@ winget install GoLang.Go zig.zig
 
 ### Linux / macOS
 
-打开终端，依次执行：
-
 ```bash
-# 步骤 1：安装 uv 包管理工具
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 步骤 2：克隆代码仓库并进入目录
 git clone https://github.com/DeconstructedCube/aistudio-api.git
 cd aistudio-api
-
-# 步骤 3：同步安装项目依赖
-uv sync
-
-# 步骤 4：直接启动服务（开箱即用）
-uv run python3 main.py server --port 8080
+bash install.sh
+bash start.sh
 ```
 
-<details>
-<summary><b>【进阶可选】编译本地高性能签名服务</b></summary>
-
-前置要求：已安装 Go 1.22+ 与 zig（或 clang / gcc）：
-```bash
-bash waa-signer/build.sh
-```
-</details>
+> 支持常用参数：`bash install.sh --start`（安装后直接启动）、`bash install.sh --proxy http://127.0.0.1:7890`（指定代理）、`bash install.sh --rebuild`（强制重新下载依赖并重编）。
 
 服务启动后，浏览器访问 **`http://localhost:8080`** 进入管理控制台。
+
 ---
 
 ### Docker 部署
@@ -280,7 +223,6 @@ docker compose up -d
 | `AISTUDIO_CONFIG_FILE` | string | `config.yaml` | 模型规则与默认工具配置文件路径 |
 | `AISTUDIO_PERSIST_STATS` | bool | `true` | 是否持久化模型调用与 Token 统计（1=开启，0=关闭） |
 | `AISTUDIO_PERSIST_ROTATOR` | bool | `true` | 是否持久化账号 429 冷却与调度状态（1=开启，0=关闭） |
-| `AISTUDIO_PROOF_SERVER_URL` | string | `https://waa.spinsnow.fun` | 签名服务兜底地址；默认优先使用 `config.yaml` 中 `waa.active_server` 指定的节点及其绑定的特征 User-Agent（无本地二进制时自动切换为 `remote_spinsnow`） |
 | `AISTUDIO_DEFAULT_TEXT_MODEL` | string | `gemini-3.7-flash` | 默认文本模型 |
 | `AISTUDIO_TIMEZONE` | string | 自动探测 | Wire 协议交互时区（默认 `America/Los_Angeles`） |
 | `AISTUDIO_DUMP_REQUESTS` | bool | `false` | 是否在终端转储每次 API 交互报文详情（支持 `DEBUG=1` 触发） |
@@ -435,7 +377,7 @@ if response.function_calls:
 
 - **仪表盘 (Dashboard)**：实时展示服务健康状况、各模型请求量、成功率及 429 冷却指标。
 - **账号管理 (Accounts)**：支持 Cookie 单条与凭据包批量导入、自动探测多账号、业务分组与预设方案一键切换、手动切换活跃账号或重置冷却状态。
-- **系统设置 (Settings)**：在线编辑与热重载 `config.yaml`、手动切换 WAA 签名服务节点、管理 API Key 以及动态调整日志级别与请求转储开关。
+- **系统设置 (Settings)**：在线编辑与热重载 `config.yaml`、查看本地 WAA IPC 引擎状态、管理 API Key 以及动态调整日志级别与请求转储开关。
 - **访问鉴权**：设置环境变量 `AISTUDIO_WEB_PASSWORD` 后自动开启登录鉴权守卫。
 
 ---
@@ -460,10 +402,11 @@ Python 端质量检查与测试：
 # 执行代码风格与 Lint 检查
 uv run ruff check .
 # 执行静态类型检查
-bun x pyright src tests
-
-# 执行单元测试套件
+uv tool run pyright src tests
+# 执行 Python 单元测试套件
 uv run pytest
+# 执行 Go WAA 签名器单元测试
+bash waa-signer/build.sh --test
 ```
 
 ---

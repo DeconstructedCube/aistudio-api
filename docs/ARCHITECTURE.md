@@ -58,8 +58,8 @@ flowchart TD
             WireTypes["wire_types.py<br/>对话内容与 Part 实体契约"]
         end
         subgraph WaaSub ["WAA 签名子系统 (waa/)"]
-            WaaSigner["signer.py<br/>WaaSigner 与 RemoteProofSigner 证明生成"]
-            WaaDaemon["daemon.py<br/>本地 waa-signer 自动拉起与生命周期绑定"]
+            WaaSigner["signer.py<br/>WaaSigner 与 LocalIpcProofSigner 证明生成"]
+            WaaDaemon["daemon.py<br/>LocalSignerProcess stdio IPC 子进程管理"]
         end
         subgraph AccountSub ["账号凭据与持久化 (account/)"]
             AccountStore["account_store.py<br/>原子紧凑 JSON 文件凭据库"]
@@ -69,7 +69,7 @@ flowchart TD
 
     subgraph Upstream ["5. 外部与 Google 上游服务"]
         AIStudio["Google AI Studio<br/>alkalimakersuite-pa"]
-        ProofSvc["WAA 签名服务<br/>waa-signer (本地) / 远程 NodeVM"]
+        ProofSvc["本地 WAA IPC 签名进程<br/>waa-signer (SpiderMonkey 152)"]
     end
 
     Client --> APILayer
@@ -91,7 +91,7 @@ flowchart TD
 | `routes_gemini.py` | 对外暴露 `/v1beta/models/{model}:generateContent` 和 `:streamGenerateContent` 端点 |
 | `routes_models.py` | 动态向上游拉取并缓存可用模型列表（如 `gemini-3.7-flash`、`gemini-3.8-flash` 等） |
 | `routes_accounts.py` | 提供 Cookie 单条/Bundle文件导入、多账号递归探活（`u/0`, `u/1`...）、分组与预设方案、Cookie 轮换续期、手动激活与删除接口 |
-| `routes_system.py` | `/health` 探活、调用统计、调度冷却管理、WAA 签名节点切换、API Key 管理与 `config.yaml` 热重载 |
+| `routes_system.py` | `/health` 探活、调用统计、调度冷却管理、API Key 管理与 `config.yaml` 热重载 |
 | `dependencies.py` | 统一 API 鉴权拦截（`require_api_key` 支持 `?key=`、`x-goog-api-key`、`x-api-key` 或 `Bearer`）与 Web 控制台密码守卫（`require_web_auth`） |
 
 ### 2.2 应用服务层 (`src/aistudio_api/application/`)
@@ -114,8 +114,8 @@ flowchart TD
 ### 2.4 基础设施层 (`src/aistudio_api/infrastructure/`)
 
 - **WAA 签名子系统 (`waa/`)**：
-  - `signer.py`：提供 `extract_content_digest` 内容哈希计算、`RemoteProofSigner` 证明请求客户端以及 `WaaSigner` 门面。支持在 `config.yaml` 中配置多签名服务节点（本地 Go 原生引擎 `waa-signer` 或远程 NodeVM 签名服务），纯手动切换，并自动将签名服务绑定的特征 `User-Agent` 与特征请求头同步到外层 HTTP 传输中。
-  - `daemon.py`：在服务启动时自动检测本地 `waa-signer` 二进制，若不存在健壮运行实例则自动拉起并通过 Linux `prctl(PR_SET_PDEATHSIG, SIGTERM)` 与 `atexit` 绑定主进程生命周期；若未编译本地二进制则自动降级切换至 `remote_spinsnow`。
+  - `signer.py`：提供 `extract_content_digest` 内容哈希计算、`LocalIpcProofSigner` stdio IPC 证明请求客户端以及 `WaaSigner` 门面，固定对齐本地 SpiderMonkey 152 (Firefox 152) 环境特征。
+  - `daemon.py`：`LocalSignerProcess` 在服务启动时拉起本地 `waa-signer` 子进程，通过多路复用 NDJSON `stdin`/`stdout` 管道通信，由 OS 管道 EOF、`PR_SET_PDEATHSIG` 与 `atexit` 严格绑定主进程生命周期，无本地端口与孤儿进程风险。
 - **网关与编解码子系统 (`gateway/`)**：
   - `client.py`：`AIStudioClient` 统一门面，组装请求签名、HTTP 发送、流式生成与会话生命周期。
   - `headers.py`：`merge_header_case_insensitive` 请求头大小写不敏感合并工具，避免 HTTP/2 传输层因大小写差异重复发送同名头（如 `X-Goog-Ext-519733851-Bin`）触发上游 403。
@@ -158,7 +158,7 @@ sequenceDiagram
     Facade->>Session: ensure_ready()
     Session-->>Facade: 返回当前活跃 SessionContext
     Facade->>Session: generate_snapshot(contents, ctx, model)
-    Session->>Signer: 计算 SHA-256 内容摘要并请求 /v1/proof/mint
+    Session->>Signer: 计算 SHA-256 内容摘要并通过 stdio IPC 发送 proof.mint
     Signer-->>Session: 返回 !dXaldhL... (WAA 证明 Token)
     Session-->>Facade: 返回 snapshot
     Facade->>Codec: encode_request_body(model, contents, snapshot...)
@@ -202,9 +202,9 @@ sequenceDiagram
 
 | 平台 | 运行模式 | 传输与签名后端 | 内存基准 |
 |---|---|---|---|
-| **Android (Termux)** | Termux 原生宿主运行 | `httpx` (HTTP/2) + `WaaSigner` (本地 Go 或远程 NodeVM) | 约 35 - 50 MB |
-| **Linux (x86_64 / arm64)** | 原生宿主运行 | `httpx` (HTTP/2) + `WaaSigner` (本地 Go 或远程 NodeVM) | 约 35 - 50 MB |
-| **macOS (Apple Silicon / Intel)** | 原生宿主运行 | `httpx` (HTTP/2) + `WaaSigner` (本地 Go 或远程 NodeVM) | 约 35 - 50 MB |
-| **Windows (x64)** | 原生宿主运行 | `httpx` (HTTP/2) + `WaaSigner` (本地 Go 或远程 NodeVM) | 约 40 - 60 MB |
-| **Docker 容器** | `python:3.11-slim-bookworm` (amd64 / arm64) | `httpx` (HTTP/2) + `WaaSigner` (本地 Go 或远程 NodeVM) | 约 35 - 50 MB |
+| **Android (Termux)** | Termux 原生宿主运行 | `httpx` (HTTP/2) + 本地 `waa-signer` (stdio IPC) | 约 35 - 50 MB |
+| **Linux (x86_64 / arm64)** | 原生宿主运行 | `httpx` (HTTP/2) + 本地 `waa-signer` (stdio IPC) | 约 35 - 50 MB |
+| **macOS (Apple Silicon / Intel)** | 原生宿主运行 | `httpx` (HTTP/2) + 本地 `waa-signer` (stdio IPC) | 约 35 - 50 MB |
+| **Windows (x64 / ARM64)** | 原生宿主运行 | `httpx` (HTTP/2) + 本地 `waa-signer` (stdio IPC) | 约 40 - 60 MB |
+| **Docker 容器** | `python:3.11-slim-bookworm` (amd64 / arm64) | `httpx` (HTTP/2) + 本地 `waa-signer` (stdio IPC) | 约 35 - 50 MB |
 > 依赖管理使用 `uv`。由于 PyPI 官方未提供 Android 预编译 wheel，而 Termux 的 TUR 源缺少桌面端 wheel，因此 `uv.lock` 不纳入版本控制：桌面端直接从 PyPI 安装对应 wheel；Termux 环境通过本地 `uv.toml` 使用 TUR 源，避免不同平台的 wheel 源锁定冲突。

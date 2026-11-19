@@ -206,7 +206,7 @@ SHORT_RATE_LIMIT_COOLDOWN_SECONDS = 600
 class Auth403RetryManager:
     """403 阶梯重试管理器：前 2 次重放，后 2 次重新签名，最后 1 次切号。
 
-    force_recreate_signer 用于通知本地/远程签名服务销毁僵死热 Worker 冷重建，
+    force_recreate_signer 用于通知本地 WAA IPC 签名器销毁僵死热 Worker 冷重建，
     由处理入口在当次请求中消费后立即归零，避免重复触发昂贵的冷启动。
     """
 
@@ -223,19 +223,12 @@ class Auth403RetryManager:
         prepared: PreparedRequest | None,
         request_ctx: SessionContext | None,
     ) -> str:
-        signer_id = "unknown"
-        outer_ua = ""
-        pool_state = ""
-        try:
-            from aistudio_api.infrastructure.gateway.model_defaults import (
-                get_active_waa_server,
-            )
+        from aistudio_api.infrastructure.account.cookie_parser import (
+            DEFAULT_BROWSER_USER_AGENT,
+        )
 
-            waa_cfg = get_active_waa_server()
-            signer_id = str(waa_cfg.get("id") or "unknown")
-            outer_ua = str(waa_cfg.get("user_agent") or "")
-        except Exception:
-            pass
+        outer_ua = DEFAULT_BROWSER_USER_AGENT
+        pool_state = ""
         if prepared is not None and isinstance(prepared.headers, dict):
             outer_ua = str(prepared.headers.get("User-Agent") or outer_ua)
         session = getattr(client, "session", None)
@@ -250,7 +243,7 @@ class Auth403RetryManager:
         )
         return (
             f"account={acc_id or 'unknown'}(u/{auth_user}), "
-            f"signer={signer_id}, pool={pool_state or 'unknown'}, "
+            f"signer=local_ipc, pool={pool_state or 'unknown'}, "
             f"ua={outer_ua[:48] or 'default'}"
         )
 

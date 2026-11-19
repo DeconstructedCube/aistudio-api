@@ -1,12 +1,12 @@
-"""Unit tests for WAA engine proof signing client (aistudio-pg-bridge / spinsnow)."""
+"""Unit tests for local stdio IPC WAA proof signing client."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 
 from aistudio_api.domain.errors import (
@@ -15,8 +15,9 @@ from aistudio_api.domain.errors import (
     TransportError,
 )
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
+from aistudio_api.infrastructure.waa.daemon import LocalSignerProcess
 from aistudio_api.infrastructure.waa.signer import (
-    RemoteProofSigner,
+    LocalIpcProofSigner,
     WaaSigner,
     extract_content_digest,
 )
@@ -34,112 +35,104 @@ def test_extract_content_digest_exact_alignment():
 
 
 @pytest.mark.asyncio
-async def test_remote_proof_signer_success():
-    """Verify RemoteProofSigner sends payload and parses proof token."""
+async def test_local_ipc_proof_signer_success():
+    """Verify LocalIpcProofSigner sends proof.mint IPC payload and parses proof token."""
+    fake_proc = MagicMock(spec=LocalSignerProcess)
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        data = json.loads(request.content)
-        assert data["cookies"] == "SAPISID=test_cookie"
-        assert data["authUser"] == 0
-        assert data["prompt"] == "hello"
-        assert data["wireContents"] == [[[[None, "hello"]], "user"]]
-        return httpx.Response(
-            200,
-            json={"ok": True, "proof": "!mock_minted_proof", "poolState": "hot"},
-        )
+    async def fake_request(method: str, params=None, **_kwargs):
+        assert method == "proof.mint"
+        assert isinstance(params, dict)
+        assert params["cookies"] == "SAPISID=test_cookie"
+        assert params["authUser"] == 0
+        assert params["prompt"] == "hello"
+        assert params["wireContents"] == [[[[None, "hello"]], "user"]]
+        return {
+            "id": 1,
+            "ok": True,
+            "proof": "!mock_minted_proof",
+            "poolState": "hot",
+            "headers": {"X-Aistudio-Visit-Id": "v1_test"},
+        }
 
-    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    signer = RemoteProofSigner(server_url="https://mock.proof.server")
+    fake_proc.request = AsyncMock(side_effect=fake_request)
+    signer = LocalIpcProofSigner(process=fake_proc)
 
-    with patch("httpx.AsyncClient", return_value=mock_client):
-        proof = await signer.mint_proof(
-            cookies={"SAPISID": "test_cookie"},
-            auth_user="0",
-            tier="Free",
-            model="models/gemini-3.7-flash",
-            prompt="hello",
-            wire_contents=[[[[None, "hello"]], "user"]],
-        )
+    proof = await signer.mint_proof(
+        cookies={"SAPISID": "test_cookie"},
+        auth_user="0",
+        tier="Free",
+        model="models/gemini-3.7-flash",
+        prompt="hello",
+        wire_contents=[[[[None, "hello"]], "user"]],
+    )
 
     assert proof == "!mock_minted_proof"
+    assert signer.last_pool_state == "hot"
+    assert signer.last_headers == {"X-Aistudio-Visit-Id": "v1_test"}
     await signer.close()
 
 
 @pytest.mark.asyncio
-async def test_remote_proof_signer_error():
-    """Verify RemoteProofSigner raises TransportError on upstream failure."""
+async def test_local_ipc_proof_signer_logical_error_no_retry():
+    """Verify LocalIpcProofSigner raises TransportError immediately on logical WAA failure."""
+    fake_proc = MagicMock(spec=LocalSignerProcess)
+    fake_proc.request = AsyncMock(
+        return_value={"id": 1, "ok": False, "error": "Cookie expired or invalid"}
+    )
+    signer = LocalIpcProofSigner(process=fake_proc)
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            500,
-            json={"ok": False, "error": "Cookie expired or invalid"},
-        )
-
-    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    signer = RemoteProofSigner(server_url="https://mock.proof.server")
-
-    with (
-        patch("httpx.AsyncClient", return_value=mock_client),
-        pytest.raises(TransportError, match="Cookie expired or invalid"),
-    ):
+    with pytest.raises(TransportError, match="Cookie expired or invalid"):
         await signer.mint_proof(
             cookies={"SAPISID": "expired"},
             auth_user="0",
             prompt="test",
         )
+    assert fake_proc.request.await_count == 1
     await signer.close()
 
 
 @pytest.mark.asyncio
-async def test_remote_proof_signer_retry_on_network_error():
-    """Verify RemoteProofSigner retries on transient connection error."""
-    attempts = 0
+async def test_local_ipc_proof_signer_retries_on_pipe_error():
+    """Verify LocalIpcProofSigner retries once on transient IPC pipe failure."""
+    fake_proc = MagicMock(spec=LocalSignerProcess)
+    fake_proc.request = AsyncMock(
+        side_effect=[
+            TransportError("waa-signer IPC 管道中断: Broken pipe"),
+            {
+                "id": 2,
+                "ok": True,
+                "proof": "!mock_recovered_proof",
+                "poolState": "cold",
+            },
+        ]
+    )
+    signer = LocalIpcProofSigner(process=fake_proc)
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        nonlocal attempts
-        attempts += 1
-        if attempts == 1:
-            raise httpx.ConnectError("Network unreachable")
-        return httpx.Response(
-            200,
-            json={"ok": True, "proof": "!mock_recovered_proof", "poolState": "cold"},
-        )
-
-    signer = RemoteProofSigner(server_url="https://mock.proof.server")
-
-    orig_client = httpx.AsyncClient
-    with patch(
-        "aistudio_api.infrastructure.waa.signer.httpx.AsyncClient",
-        side_effect=lambda **kwargs: orig_client(
-            transport=httpx.MockTransport(handler), **kwargs
-        ),
-    ):
-        proof = await signer.mint_proof(
-            cookies={"SAPISID": "valid_cookie"},
-            prompt="retry test",
-        )
+    proof = await signer.mint_proof(
+        cookies={"SAPISID": "valid_cookie"},
+        prompt="retry test",
+    )
     assert proof == "!mock_recovered_proof"
+    assert fake_proc.request.await_count == 2
     await signer.close()
 
 
 @pytest.mark.asyncio
 async def test_waa_signer_facade():
-    """Verify WaaSigner delegates generate_snapshot to RemoteProofSigner."""
-    signer = WaaSigner(proof_server_url="https://mock.proof.server")
+    """Verify WaaSigner delegates generate_snapshot to LocalIpcProofSigner."""
+    fake_proc = MagicMock(spec=LocalSignerProcess)
+    fake_proc.request = AsyncMock(
+        return_value={"id": 1, "ok": True, "proof": "!facade_token", "poolState": "hot"}
+    )
+    signer = WaaSigner(process=fake_proc)
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"ok": True, "proof": "!facade_token"})
-
-    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-
-    with patch("httpx.AsyncClient", return_value=mock_client):
-        token = await signer.generate_snapshot(
-            contents=[AistudioContent(role="user", parts=[AistudioPart(text="ping")])],
-            cookies={"SAPISID": "session_cookie"},
-            auth_user="0",
-            tier="Free",
-            model="models/gemini-3.7-flash",
-        )
+    token = await signer.generate_snapshot(
+        contents=[AistudioContent(role="user", parts=[AistudioPart(text="ping")])],
+        cookies={"SAPISID": "session_cookie"},
+        auth_user="0",
+        tier="Free",
+        model="models/gemini-3.7-flash",
+    )
 
     assert token == "!facade_token"
     await signer.close()
@@ -163,24 +156,89 @@ async def test_waa_signer_facade():
         ),
     ],
 )
-async def test_remote_proof_signer_classifies_loadpage_errors(
+async def test_local_ipc_proof_signer_classifies_loadpage_errors(
     err_msg: str, expected_exc: type[Exception]
 ):
-    """RemoteProofSigner surfaces diagnostic loadPage failures as typed errors."""
-    calls = 0
+    """LocalIpcProofSigner surfaces diagnostic loadPage failures as typed errors."""
+    fake_proc = MagicMock(spec=LocalSignerProcess)
+    fake_proc.request = AsyncMock(return_value={"id": 1, "ok": False, "error": err_msg})
+    signer = LocalIpcProofSigner(process=fake_proc)
 
-    def handler(_request: httpx.Request) -> httpx.Response:
-        nonlocal calls
-        calls += 1
-        return httpx.Response(502, json={"ok": False, "error": err_msg})
-
-    mock_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    signer = RemoteProofSigner(server_url="http://127.0.0.1:8081")
-
-    with (
-        patch("httpx.AsyncClient", return_value=mock_client),
-        pytest.raises(expected_exc, match=r"AI Studio|登录态失效"),
-    ):
+    with pytest.raises(expected_exc, match=r"AI Studio|登录态失效"):
         await signer.mint_proof(cookies={"SAPISID": "sap"}, auth_user="0", prompt="hi")
-    assert calls == 1
+    assert fake_proc.request.await_count == 1
     await signer.close()
+
+
+@pytest.mark.asyncio
+async def test_local_signer_process_stdio_roundtrip(tmp_path):
+    """Verify LocalSignerProcess exchanges NDJSON messages over stdio pipes."""
+    fake_bin = tmp_path / "waa-signer"
+    fake_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake_bin.chmod(0o755)
+
+    stdout_reader = asyncio.StreamReader()
+    stderr_reader = asyncio.StreamReader()
+    stdout_reader.feed_data(
+        b'{"id":0,"event":"ready","ok":true,"engine":"spidermonkey-152"}\n'
+    )
+
+    written: list[bytes] = []
+
+    class FakeStdin:
+        def write(self, data: bytes) -> None:
+            written.append(data)
+            req = json.loads(data.decode("utf-8"))
+            method = req.get("method")
+            req_id = req.get("id")
+            if method == "health":
+                resp = {
+                    "id": req_id,
+                    "ok": True,
+                    "engine": "spidermonkey-152",
+                    "workers": 0,
+                }
+            elif method == "shutdown":
+                resp = {"id": req_id, "ok": True}
+            else:
+                resp = {
+                    "id": req_id,
+                    "ok": True,
+                    "proof": "!ipc_proof",
+                    "poolState": "cold",
+                }
+            stdout_reader.feed_data((json.dumps(resp) + "\n").encode("utf-8"))
+            if method == "shutdown":
+                stdout_reader.feed_eof()
+                stderr_reader.feed_eof()
+
+        async def drain(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    fake_subproc = MagicMock()
+    fake_subproc.pid = 42424
+    fake_subproc.returncode = None
+    fake_subproc.stdin = FakeStdin()
+    fake_subproc.stdout = stdout_reader
+    fake_subproc.stderr = stderr_reader
+
+    async def fake_wait() -> int:
+        fake_subproc.returncode = 0
+        return 0
+
+    fake_subproc.wait = fake_wait
+
+    proc = LocalSignerProcess(binary_path=fake_bin)
+    with patch(
+        "asyncio.create_subprocess_exec", new=AsyncMock(return_value=fake_subproc)
+    ):
+        health = await proc.health()
+        assert health["ok"] is True
+        assert health["engine"] == "spidermonkey-152"
+        mint = await proc.request("proof.mint", {"cookies": "SAPISID=x"})
+        assert mint["proof"] == "!ipc_proof"
+        await proc.stop()
+    assert len(written) == 3

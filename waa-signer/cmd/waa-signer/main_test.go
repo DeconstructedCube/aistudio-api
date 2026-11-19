@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -532,5 +533,88 @@ func TestWorkerPoolExternalSIDCCRotationRemainsHot(t *testing.T) {
 	}
 	if factory.calls() != 1 || worker.closeCount() != 0 {
 		t.Fatal("SIDCC rotation recreated or closed the hot worker")
+	}
+}
+
+func TestServeIPCHealthMintLargePayloadAndEOFShutdown(t *testing.T) {
+	pool, factory := newOfflinePool()
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serveIPC(context.Background(), inR, outW, pool)
+		_ = outW.Close()
+	}()
+
+	scanner := bufio.NewReader(outR)
+	readResp := func() ipcResponse {
+		t.Helper()
+		line, err := scanner.ReadBytes('\n')
+		if err != nil {
+			t.Fatalf("read IPC line: %v", err)
+		}
+		var resp ipcResponse
+		if err := json.Unmarshal(line, &resp); err != nil {
+			t.Fatalf("decode IPC response: %v", err)
+		}
+		return resp
+	}
+
+	ready := readResp()
+	if !ready.OK || ready.Event != "ready" || ready.Engine != "spidermonkey-152" {
+		t.Fatalf("unexpected ready banner: %+v", ready)
+	}
+
+	writeReq := func(req any) {
+		t.Helper()
+		b, err := json.Marshal(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := inW.Write(append(b, '\n')); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Large prompt >128KB verifies no 64KB scanner truncation
+	largePrompt := strings.Repeat("A", 140*1024)
+	writeReq(map[string]any{
+		"id":     1,
+		"method": "proof.mint",
+		"params": map[string]any{
+			"cookies":  offlineCookies,
+			"authUser": 0,
+			"g1Tier":   "TIER1",
+			"model":    "models/gemini-3.7-flash",
+			"prompt":   largePrompt,
+		},
+	})
+	mintResp := readResp()
+	if mintResp.ID != 1 || !mintResp.OK || mintResp.Proof != "offline-proof" || mintResp.PoolState != "cold" {
+		t.Fatalf("unexpected mint response: %+v", mintResp)
+	}
+	if mintResp.Headers["X-AIStudio-G1-Tier"] != "TIER1" {
+		t.Fatalf("missing tier header: %+v", mintResp.Headers)
+	}
+
+	writeReq(map[string]any{"id": 2, "method": "health"})
+	healthResp := readResp()
+	if healthResp.ID != 2 || !healthResp.OK || healthResp.Workers != 1 {
+		t.Fatalf("unexpected health response: %+v", healthResp)
+	}
+
+	// Closing stdin simulates parent crash/exit -> must close workers and exit cleanly
+	_ = inW.Close()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("serveIPC returned error on EOF: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("serveIPC did not exit after stdin EOF")
+	}
+	if factory.calls() != 1 || pool.ActiveCount() != 0 {
+		t.Fatalf("expected clean worker shutdown after EOF, active=%d", pool.ActiveCount())
 	}
 }

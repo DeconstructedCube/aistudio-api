@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -633,22 +637,200 @@ func buildSessionHeaders(ctx context.Context, worker poolWorker, protoHeaders ht
 	return out
 }
 
-func writeJSON(w http.ResponseWriter, status int, payload any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(payload)
+type ipcRequest struct {
+	ID     uint64          `json:"id"`
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params,omitempty"`
 }
 
-type SendRPCRequest struct {
-	Cookies    string            `json:"cookies"`
-	AuthUser   any               `json:"authUser"`
-	G1Tier     string            `json:"g1Tier"`
-	Model      string            `json:"model"`
-	URL        string            `json:"url"`
-	Headers    map[string]string `json:"headers"`
-	Body       string            `json:"body"`
-	PagePrompt string            `json:"pagePrompt"`
-	Proxy      string            `json:"proxy"`
+type ipcResponse struct {
+	ID        uint64            `json:"id"`
+	Event     string            `json:"event,omitempty"`
+	OK        bool              `json:"ok"`
+	Engine    string            `json:"engine,omitempty"`
+	Workers   int               `json:"workers,omitempty"`
+	Proof     string            `json:"proof,omitempty"`
+	Digest    string            `json:"digest,omitempty"`
+	PoolState string            `json:"poolState,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	Error     string            `json:"error,omitempty"`
+}
+
+func handleMintProof(ctx context.Context, pool *WorkerPool, req MintRequest) ipcResponse {
+	if strings.TrimSpace(req.Cookies) == "" {
+		return ipcResponse{OK: false, Error: "cookies are required"}
+	}
+
+	authUser := parseAuthUser(req.AuthUser)
+	bindingPrompt, pagePrompt := extractPromptsFromWire(req.WireContents, req.Prompt)
+	if req.PagePrompt != "" {
+		pagePrompt = req.PagePrompt
+	}
+
+	digest := strings.TrimSpace(req.Digest)
+	if digest == "" {
+		sum := sha256.Sum256([]byte(bindingPrompt))
+		digest = hex.EncodeToString(sum[:])
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+
+	lease, err := pool.AcquireWorker(reqCtx, req.Cookies, authUser, req.Model, req.Proxy)
+	if err != nil {
+		slog.Warn("获取 WAA Worker 失败", "auth_user", authUser, "error", err)
+		return ipcResponse{OK: false, Error: err.Error()}
+	}
+	defer lease.Release()
+
+	worker, poolState := lease.worker, lease.poolState
+	if req.ForceRecreate && poolState == "hot" {
+		slog.Warn("收到 forceRecreate 请求，强制销毁热 Worker 并冷重建", "auth_user", authUser, "pool_state", poolState)
+		if recreateErr := lease.Recreate(reqCtx); recreateErr != nil {
+			slog.Warn("强制重建 WAA Worker 失败", "auth_user", authUser, "error", recreateErr)
+			return ipcResponse{OK: false, Error: recreateErr.Error()}
+		}
+		worker, poolState = lease.worker, lease.poolState
+	}
+
+	t0 := time.Now()
+	proof, protoHeaders, err := worker.ProofByDigest(reqCtx, digest, pagePrompt)
+	if err != nil && reqCtx.Err() == nil && poolState == "hot" {
+		slog.Warn("热 Worker 签名失败，正在重建 Worker 重试", "auth_user", authUser, "error", err)
+		if err = lease.Recreate(reqCtx); err == nil {
+			worker, poolState = lease.worker, lease.poolState
+			proof, protoHeaders, err = worker.ProofByDigest(reqCtx, digest, pagePrompt)
+		}
+	}
+	if err != nil {
+		slog.Warn("生成 WAA Proof 失败", "auth_user", authUser, "error", err)
+		return ipcResponse{OK: false, Error: err.Error()}
+	}
+
+	headers := buildSessionHeaders(reqCtx, worker, protoHeaders, req.G1Tier)
+	lease.Release()
+	slog.Info(
+		"生成 WAA Proof 成功",
+		"auth_user", authUser,
+		"pool_state", poolState,
+		"digest", digest[:min(8, len(digest))],
+		"page_prompt_len", len(pagePrompt),
+		"proof_len", len(proof),
+		"elapsed_ms", time.Since(t0).Milliseconds(),
+	)
+
+	return ipcResponse{
+		OK:        true,
+		Proof:     proof,
+		Digest:    digest,
+		PoolState: poolState,
+		Headers:   headers,
+	}
+}
+
+func serveIPC(ctx context.Context, in io.Reader, out io.Writer, pool *WorkerPool) error {
+	ipcCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var writeMu sync.Mutex
+	writeLine := func(resp ipcResponse) error {
+		payload, err := json.Marshal(resp)
+		if err != nil {
+			return err
+		}
+		payload = append(payload, '\n')
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		_, err = out.Write(payload)
+		return err
+	}
+
+	if err := writeLine(ipcResponse{
+		ID:     0,
+		Event:  "ready",
+		OK:     true,
+		Engine: "spidermonkey-152",
+	}); err != nil {
+		return err
+	}
+
+	reader := bufio.NewReaderSize(in, 64*1024)
+	var wg sync.WaitGroup
+
+	for {
+		line, err := reader.ReadBytes('\n')
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) > 0 {
+			var req ipcRequest
+			if unmarshalErr := json.Unmarshal(trimmed, &req); unmarshalErr != nil {
+				_ = writeLine(ipcResponse{
+					OK:    false,
+					Error: "invalid IPC JSON request: " + unmarshalErr.Error(),
+				})
+			} else if req.Method == "shutdown" {
+				_ = writeLine(ipcResponse{
+					ID:     req.ID,
+					OK:     true,
+					Engine: "spidermonkey-152",
+				})
+				cancel()
+				break
+			} else {
+				wg.Add(1)
+				go func(r ipcRequest) {
+					defer wg.Done()
+					var resp ipcResponse
+					switch r.Method {
+					case "health":
+						resp = ipcResponse{
+							ID:      r.ID,
+							OK:      true,
+							Engine:  "spidermonkey-152",
+							Workers: pool.ActiveCount(),
+						}
+					case "proof.mint":
+						var mintReq MintRequest
+						if len(r.Params) == 0 {
+							resp = ipcResponse{ID: r.ID, OK: false, Error: "params are required"}
+						} else if paramErr := json.Unmarshal(r.Params, &mintReq); paramErr != nil {
+							resp = ipcResponse{ID: r.ID, OK: false, Error: "invalid mint params: " + paramErr.Error()}
+						} else {
+							resp = handleMintProof(ipcCtx, pool, mintReq)
+							resp.ID = r.ID
+						}
+					default:
+						resp = ipcResponse{
+							ID:    r.ID,
+							OK:    false,
+							Error: "unknown IPC method: " + r.Method,
+						}
+					}
+					if ipcCtx.Err() == nil {
+						_ = writeLine(resp)
+					}
+				}(req)
+			}
+		}
+
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return err
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+	}
+	pool.CloseAll()
+	return nil
 }
 
 func discoverProxy() string {
@@ -657,7 +839,7 @@ func discoverProxy() string {
 			return val
 		}
 	}
-	for _, port := range []int{7890, 10808} {
+	for _, port := range []int{7890, 7897, 10808, 10809} {
 		addr := fmt.Sprintf("127.0.0.1:%d", port)
 		conn, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
 		if err == nil {
@@ -669,14 +851,8 @@ func discoverProxy() string {
 }
 
 func main() {
-	defaultListen := os.Getenv("LISTEN_ADDR")
-	if defaultListen == "" {
-		if port := os.Getenv("PORT"); port != "" {
-			defaultListen = "0.0.0.0:" + port
-		} else {
-			defaultListen = "127.0.0.1:8081"
-		}
-	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
+
 	defaultStateDir := os.Getenv("WAA_STATE_DIR")
 	if defaultStateDir == "" {
 		defaultStateDir = filepath.Join(os.TempDir(), "aistudio_waa_workers")
@@ -690,216 +866,31 @@ func main() {
 		defaultTZ = "America/Los_Angeles"
 	}
 
-	listenAddr := flag.String("listen", defaultListen, "HTTP listen address")
+	checkMode := flag.Bool("check", false, "Verify runtime binary and exit")
 	proxyURL := flag.String("proxy", discoverProxy(), "Upstream HTTP/HTTPS/SOCKS5 proxy URL")
 	stateDir := flag.String("state-dir", defaultStateDir, "Directory for worker fingerprints and interpreter cache")
 	locale := flag.String("locale", defaultLocale, "Browser profile locale")
 	timezone := flag.String("timezone", defaultTZ, "Browser profile IANA timezone")
 	flag.Parse()
 
+	if *checkMode {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"ok":     true,
+			"engine": "spidermonkey-152",
+			"mode":   "ipc",
+		})
+		return
+	}
+
 	pool := NewWorkerPool(*stateDir, *proxyURL, *locale, *timezone)
 	defer pool.CloseAll()
 
-	mux := http.NewServeMux()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok":      true,
-			"status":  "ok",
-			"engine":  "spidermonkey-152",
-			"workers": pool.ActiveCount(),
-		})
-	})
-
-	mux.HandleFunc("POST /v1/proof/mint", func(w http.ResponseWriter, r *http.Request) {
-		var req MintRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, MintResponse{OK: false, Error: "invalid JSON body: " + err.Error()})
-			return
-		}
-		if strings.TrimSpace(req.Cookies) == "" {
-			writeJSON(w, http.StatusBadRequest, MintResponse{OK: false, Error: "cookies are required"})
-			return
-		}
-
-		authUser := parseAuthUser(req.AuthUser)
-		bindingPrompt, pagePrompt := extractPromptsFromWire(req.WireContents, req.Prompt)
-		if req.PagePrompt != "" {
-			pagePrompt = req.PagePrompt
-		}
-
-		digest := strings.TrimSpace(req.Digest)
-		if digest == "" {
-			sum := sha256.Sum256([]byte(bindingPrompt))
-			digest = hex.EncodeToString(sum[:])
-		}
-
-		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
-		defer cancel()
-
-		lease, err := pool.AcquireWorker(ctx, req.Cookies, authUser, req.Model, req.Proxy)
-		if err != nil {
-			slog.Warn("获取 WAA Worker 失败", "auth_user", authUser, "error", err)
-			writeJSON(w, http.StatusBadGateway, MintResponse{OK: false, Error: err.Error()})
-			return
-		}
-		defer lease.Release()
-		worker, poolState := lease.worker, lease.poolState
-		if req.ForceRecreate && poolState == "hot" {
-			slog.Warn("收到 forceRecreate 请求，强制销毁热 Worker 并冷重建", "auth_user", authUser, "pool_state", poolState)
-			if recreateErr := lease.Recreate(ctx); recreateErr != nil {
-				slog.Warn("强制重建 WAA Worker 失败", "auth_user", authUser, "error", recreateErr)
-				writeJSON(w, http.StatusBadGateway, MintResponse{OK: false, Error: recreateErr.Error()})
-				return
-			}
-			worker, poolState = lease.worker, lease.poolState
-		}
-
-		t0 := time.Now()
-		proof, protoHeaders, err := worker.ProofByDigest(ctx, digest, pagePrompt)
-		if err != nil && ctx.Err() == nil && poolState == "hot" {
-			slog.Warn("热 Worker 签名失败，正在重建 Worker 重试", "auth_user", authUser, "error", err)
-			if err = lease.Recreate(ctx); err == nil {
-				worker, poolState = lease.worker, lease.poolState
-				proof, protoHeaders, err = worker.ProofByDigest(ctx, digest, pagePrompt)
-			}
-		}
-		if err != nil {
-			slog.Warn("生成 WAA Proof 失败", "auth_user", authUser, "error", err)
-			writeJSON(w, http.StatusBadGateway, MintResponse{OK: false, Error: err.Error()})
-			return
-		}
-
-		headers := buildSessionHeaders(ctx, worker, protoHeaders, req.G1Tier)
-		lease.Release()
-		slog.Info(
-			"生成 WAA Proof 成功",
-			"auth_user", authUser,
-			"pool_state", poolState,
-			"digest", digest[:min(8, len(digest))],
-			"page_prompt_len", len(pagePrompt),
-			"proof_len", len(proof),
-			"elapsed_ms", time.Since(t0).Milliseconds(),
-		)
-
-		writeJSON(w, http.StatusOK, MintResponse{
-			OK:        true,
-			Proof:     proof,
-			Digest:    digest,
-			PoolState: poolState,
-			Headers:   headers,
-		})
-	})
-
-	// POST /v1/rpc/send: 使用同一个 SpiderMonkey Worker 的 Firefox 152 uTLS/HTTP2/HTTP3 连接池直接发送受保护 RPC
-	mux.HandleFunc("POST /v1/rpc/send", func(w http.ResponseWriter, r *http.Request) {
-		var req SendRPCRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid JSON body: " + err.Error()})
-			return
-		}
-		if strings.TrimSpace(req.Cookies) == "" || strings.TrimSpace(req.Body) == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "cookies and body are required"})
-			return
-		}
-		targetURL := strings.TrimSpace(req.URL)
-		if targetURL == "" {
-			targetURL = generateContentURL
-		}
-		authUser := parseAuthUser(req.AuthUser)
-
-		lease, err := pool.AcquireWorker(r.Context(), req.Cookies, authUser, req.Model, req.Proxy)
-		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": err.Error()})
-			return
-		}
-		// 响应体的 Close 在租约释放前执行，流结束前不替换账户 Worker。
-		defer lease.Release()
-		worker := lease.worker
-
-		protoHeaders, err := worker.ProtocolHeaders(r.Context(), "")
-		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": err.Error()})
-			return
-		}
-		state, err := worker.BrowserStorageState(r.Context())
-		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": err.Error()})
-			return
-		}
-		authHeader, err := aistudio.NewSigner().Authorization(state)
-		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": err.Error()})
-			return
-		}
-
-		hdrs := protoHeaders.Clone()
-		hdrs.Set("Content-Type", "application/json+protobuf")
-		hdrs.Set("Authorization", authHeader)
-		if tierVal := normalizeTierHeader(req.G1Tier); tierVal != "" {
-			hdrs.Set("X-AIStudio-G1-Tier", tierVal)
-		}
-		for k, v := range req.Headers {
-			if strings.EqualFold(k, "host") || strings.EqualFold(k, "content-length") || strings.EqualFold(k, "cookie") {
-				continue
-			}
-			hdrs.Set(k, v)
-		}
-
-		resp, err := worker.SendProtected(r.Context(), aistudio.ProtectedRequest{
-			URL:        targetURL,
-			Headers:    hdrs,
-			Body:       []byte(req.Body),
-			PagePrompt: req.PagePrompt,
-		})
-		if err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "error": err.Error()})
-			return
-		}
-		defer resp.Body.Close()
-
-		w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
-		w.Header().Set("X-Upstream-Status", strconv.Itoa(resp.StatusCode))
-		w.WriteHeader(resp.StatusCode)
-
-		flusher, canFlush := w.(http.Flusher)
-		buf := make([]byte, 16*1024)
-		for {
-			n, readErr := resp.Body.Read(buf)
-			if n > 0 {
-				if _, writeErr := w.Write(buf[:n]); writeErr != nil {
-					return
-				}
-				if canFlush {
-					flusher.Flush()
-				}
-			}
-			if readErr != nil {
-				break
-			}
-		}
-	})
-
-	server := &http.Server{
-		Addr:              *listenAddr,
-		Handler:           mux,
-		ReadHeaderTimeout: 15 * time.Second,
-	}
-
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-stop
-		slog.Info("正在关闭 WAA Signer 服务...")
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(ctx)
-		pool.CloseAll()
-	}()
-
-	slog.Info("WAA Signer 服务已启动 (Mag1cFall/AIStudio2API SpiderMonkey 152 内核)", "listen", *listenAddr, "proxy", *proxyURL, "state_dir", *stateDir)
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		slog.Error("服务异常退出", "error", err)
+	slog.Info("WAA Signer IPC 服务已启动 (SpiderMonkey 152 内核)", "proxy", *proxyURL, "state_dir", *stateDir)
+	if err := serveIPC(ctx, os.Stdin, os.Stdout, pool); err != nil && !errors.Is(err, context.Canceled) {
+		slog.Error("IPC 服务异常退出", "error", err)
 		os.Exit(1)
 	}
 }

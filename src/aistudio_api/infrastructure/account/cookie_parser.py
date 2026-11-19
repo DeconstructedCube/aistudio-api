@@ -695,20 +695,7 @@ async def rotate_google_cookies(
     if not cookie_header:
         return {"ok": False, "status": 0, "updated": []}
 
-    effective_ua = user_agent
-    if not effective_ua:
-        try:
-            from aistudio_api.infrastructure.gateway.model_defaults import (
-                get_active_waa_server,
-            )
-
-            active_waa = get_active_waa_server()
-            effective_ua = str(
-                active_waa.get("user_agent") or DEFAULT_BROWSER_USER_AGENT
-            )
-        except Exception:
-            effective_ua = DEFAULT_BROWSER_USER_AGENT
-
+    effective_ua = user_agent or DEFAULT_BROWSER_USER_AGENT
     headers = {
         "Cookie": cookie_header,
         "User-Agent": effective_ua,

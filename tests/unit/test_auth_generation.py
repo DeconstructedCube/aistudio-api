@@ -249,8 +249,8 @@ async def test_old_background_probe_cannot_expire_new_generation(
         tasks.append(task)
         return task
 
-    monkeypatch.setattr(daemon, "ensure_signer_ready", lambda: None)
-    monkeypatch.setattr(daemon, "stop_signer_daemon", lambda: None)
+    monkeypatch.setattr(daemon, "ensure_signer_ready", AsyncMock())
+    monkeypatch.setattr(daemon, "stop_signer_daemon", AsyncMock())
     monkeypatch.setattr(account_store, "AccountStore", lambda: store)
     monkeypatch.setattr(account_service, "AccountService", lambda _store: service)
     monkeypatch.setattr(account_rotator, "init_rotator", lambda _store: rotator)
@@ -498,8 +498,8 @@ async def test_background_rotation_respects_cookie_generation_groups(
         tasks.append(task)
         return task
 
-    monkeypatch.setattr(daemon, "ensure_signer_ready", lambda: None)
-    monkeypatch.setattr(daemon, "stop_signer_daemon", lambda: None)
+    monkeypatch.setattr(daemon, "ensure_signer_ready", AsyncMock())
+    monkeypatch.setattr(daemon, "stop_signer_daemon", AsyncMock())
     monkeypatch.setattr(account_store, "AccountStore", lambda: store)
     monkeypatch.setattr(account_service, "AccountService", lambda _store: service)
     monkeypatch.setattr(account_rotator, "init_rotator", lambda _store: rotator)

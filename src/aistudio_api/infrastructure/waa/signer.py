@@ -1,9 +1,4 @@
-"""WAA proof signing client powered by aistudio-pg-bridge.
-
-Connects to Lianues/aistudio-pg-bridge (https://github.com/Lianues/aistudio-pg-bridge)
-or compatible WAA proof servers (e.g. https://waa.spinsnow.fun) to mint proof tokens
-without local browser or heavy JavaScript runtime dependencies.
-"""
+"""Local WAA proof signing client over multiplexed stdio IPC."""
 
 from __future__ import annotations
 
@@ -12,8 +7,7 @@ import hashlib
 import time
 from typing import Any
 
-import httpx
-
+from aistudio_api.config import settings
 from aistudio_api.domain.errors import (
     AccountRestrictedError,
     AistudioError,
@@ -31,10 +25,12 @@ from aistudio_api.infrastructure.gateway.wire_types import (
     _normalize_standard_base64,
 )
 from aistudio_api.infrastructure.utils.logger import get_logger
+from aistudio_api.infrastructure.waa.daemon import (
+    LocalSignerProcess,
+    get_signer_process,
+)
 
 logger = get_logger("waa.signer")
-
-DEFAULT_PROOF_SERVER_URL = "https://waa.spinsnow.fun"
 
 
 def extract_content_digest(contents: list[AistudioContent]) -> tuple[str, str]:
@@ -70,43 +66,22 @@ def extract_content_digest(contents: list[AistudioContent]) -> tuple[str, str]:
     return prompt, content_hash
 
 
-class RemoteProofSigner:
-    """Signs requests using external WAA proof server (aistudio-pg-bridge / spinsnow)."""
+class LocalIpcProofSigner:
+    """Signs requests via the local SpiderMonkey 152 waa-signer stdio IPC child."""
 
     def __init__(
         self,
-        server_url: str = DEFAULT_PROOF_SERVER_URL,
-        proxy_url: str | None = None,
-        timeout: float = 30.0,
+        process: LocalSignerProcess | None = None,
+        timeout: float = 95.0,
     ) -> None:
-        self.server_url = server_url.rstrip("/")
-        self.proxy_url = proxy_url
+        self._process = process or get_signer_process()
         self.timeout = timeout
         self.last_headers: dict[str, str] = {}
         self.last_pool_state: str = ""
-        self._client: httpx.AsyncClient | None = None
-
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Get or lazily initialize shared HTTP client with connection pooling."""
-        if self._client is None or self._client.is_closed:
-            is_local = (
-                "127.0.0.1" in self.server_url
-                or "localhost" in self.server_url
-                or "::1" in self.server_url
-            )
-            effective_proxy = None if is_local else self.proxy_url
-            self._client = httpx.AsyncClient(
-                timeout=self.timeout,
-                proxy=effective_proxy,
-                limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
-            )
-        return self._client
 
     async def close(self) -> None:
-        """Close shared HTTP client."""
-        if self._client is not None and not self._client.is_closed:
-            await self._client.aclose()
-            self._client = None
+        """Close local IPC signer resources if owned exclusively."""
+        self.last_headers = {}
 
     async def mint_proof(
         self,
@@ -119,7 +94,7 @@ class RemoteProofSigner:
         wire_contents: list[Any] | None = None,
         force_recreate: bool = False,
     ) -> str:
-        """Request proof from remote proof server with automatic retry on transient failure."""
+        """Request WAA proof from local waa-signer over stdio IPC."""
         min_cookies = filter_minimal_cookies(cookies)
         cookie_header = "; ".join(f"{k}={v}" for k, v in min_cookies.items())
         if not cookie_header:
@@ -128,49 +103,35 @@ class RemoteProofSigner:
         g1_tier = get_tier_header_value(tier) or "TIER0"
         normalized_model = model if model.startswith("models/") else f"models/{model}"
 
-        payload: dict[str, Any] = {
+        payload: dict[str, object] = {
             "cookies": cookie_header,
             "authUser": int(auth_user) if auth_user.isdigit() else 0,
             "g1Tier": g1_tier,
             "model": normalized_model,
             "prompt": prompt,
         }
+        if settings.proxy_url:
+            payload["proxy"] = settings.proxy_url
         if wire_contents is not None:
             payload["wireContents"] = wire_contents
         if force_recreate:
             payload["forceRecreate"] = True
+
         max_attempts = 2
         last_error: Exception | None = None
 
         for attempt in range(1, max_attempts + 1):
             try:
                 t0 = time.perf_counter()
-                client = await self._get_client()
-                resp = await client.post(
-                    f"{self.server_url}/v1/proof/mint",
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
+                data = await self._process.request(
+                    "proof.mint",
+                    payload,
+                    timeout=self.timeout,
                 )
                 elapsed_ms = (time.perf_counter() - t0) * 1000
 
-                data: dict[str, Any] = {}
-                try:
-                    parsed_json = resp.json()
-                    if isinstance(parsed_json, dict):
-                        data = parsed_json
-                except Exception:
-                    data = {}
-
-                if (
-                    resp.status_code != 200
-                    or not data.get("ok")
-                    or not data.get("proof")
-                ):
-                    err_msg = str(
-                        data.get("error")
-                        or resp.text[:300]
-                        or "unknown proof server error"
-                    )
+                if not data.get("ok") or not data.get("proof"):
+                    err_msg = str(data.get("error") or "unknown local IPC signer error")
                     if (
                         "隔离登录态失效" in err_msg
                         or "accounts.google.com" in err_msg.lower()
@@ -181,11 +142,7 @@ class RemoteProofSigner:
                         raise AccountRestrictedError(
                             f"AI Studio 账号服务受限: {err_msg}"
                         )
-                    if resp.status_code != 200:
-                        raise TransportError(
-                            f"Remote proof server returned HTTP {resp.status_code}: {err_msg}"
-                        )
-                    raise TransportError(f"Remote proof minting failed: {err_msg}")
+                    raise TransportError(f"Local proof minting failed: {err_msg}")
 
                 proof = str(data["proof"])
                 raw_headers = data.get("headers")
@@ -196,68 +153,65 @@ class RemoteProofSigner:
                 pool_state = str(data.get("poolState") or "unknown")
                 self.last_pool_state = pool_state
                 logger.debug(
-                    "生成 WAA 签名成功: pool=%s, len=%d, headers=%d, 耗时=%.1fms",
+                    "本地 IPC 生成 WAA 签名成功: pool=%s, len=%d, headers=%d, 耗时=%.1fms",
                     pool_state,
                     len(proof),
                     len(self.last_headers),
                     elapsed_ms,
                 )
                 return proof
-
-            except (httpx.TransportError, httpx.TimeoutException) as e:
-                last_error = e
-                logger.warning(
-                    "连接签名服务失败 (%d/%d): %s",
-                    attempt,
-                    max_attempts,
-                    e,
-                )
-                # Reset client on connection errors to discard stale connections
-                await self.close()
-                if attempt < max_attempts:
-                    await asyncio.sleep(0.5)
-            except (TransportError, AistudioError):
+            except (SessionExpiredError, AccountRestrictedError):
                 raise
-            except Exception as e:
-                last_error = e
+            except TransportError as exc:
+                # Only retry transient IPC pipe/startup failures, not WAA logical errors
+                if "Local proof minting failed:" in str(exc):
+                    raise
+                last_error = exc
                 logger.warning(
-                    "请求签名服务异常 (%d/%d): %s",
+                    "本地 IPC 签名通信失败 (%d/%d): %s",
                     attempt,
                     max_attempts,
-                    e,
+                    exc,
                 )
                 if attempt < max_attempts:
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.2)
+            except AistudioError:
+                raise
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "请求本地 IPC 签名异常 (%d/%d): %s",
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
+                if attempt < max_attempts:
+                    await asyncio.sleep(0.2)
 
         raise TransportError(
-            f"Remote proof minting failed after {max_attempts} attempts: {last_error}"
+            f"Local proof minting failed after {max_attempts} attempts: {last_error}"
         )
 
 
 class WaaSigner:
-    """Unified WAA signing facade backed by RemoteProofSigner."""
+    """Unified WAA signing facade backed by LocalIpcProofSigner."""
 
-    def __init__(
-        self,
-        proof_server_url: str | None = None,
-        proxy_url: str | None = None,
-    ) -> None:
-        url = proof_server_url or DEFAULT_PROOF_SERVER_URL
-        self._remote_signer = RemoteProofSigner(server_url=url, proxy_url=proxy_url)
+    def __init__(self, process: LocalSignerProcess | None = None) -> None:
+        self._ipc_signer = LocalIpcProofSigner(process=process)
 
     async def close(self) -> None:
-        """Close underlying remote signer resources."""
-        await self._remote_signer.close()
+        """Close underlying local IPC signer resources."""
+        await self._ipc_signer.close()
 
     @property
     def last_headers(self) -> dict[str, str]:
         """Get dynamic protocol headers returned by the last successful proof minting."""
-        return self._remote_signer.last_headers
+        return self._ipc_signer.last_headers
 
     @property
     def last_pool_state(self) -> str:
         """Get worker pool state ('cold' or 'hot') from the last proof minting."""
-        return self._remote_signer.last_pool_state
+        return self._ipc_signer.last_pool_state
 
     async def generate_snapshot_with_headers(
         self,
@@ -277,7 +231,7 @@ class WaaSigner:
             model=model,
             force_recreate=force_recreate,
         )
-        return proof, dict(self._remote_signer.last_headers)
+        return proof, dict(self._ipc_signer.last_headers)
 
     async def generate_snapshot(
         self,
@@ -298,7 +252,7 @@ class WaaSigner:
             auth_user,
         )
 
-        return await self._remote_signer.mint_proof(
+        return await self._ipc_signer.mint_proof(
             cookies=cookies,
             auth_user=auth_user,
             tier=tier,
