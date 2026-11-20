@@ -292,6 +292,19 @@ export const useAccountsStore = defineStore('accounts', () => {
     }
   }
 
+  async function updateAccountTier(id: string, tier: string) {
+    const toast = useToastStore()
+    try {
+      const res = await accountsApi.updateTier(id, tier)
+      toast.success(`订阅等级已手动设为: ${res.tier || tier}`)
+      await fetchAll()
+      return res
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '更新订阅等级失败'
+      toast.error(msg)
+      return null
+    }
+  }
   return {
     accounts,
     activeAccount,
@@ -311,6 +324,7 @@ export const useAccountsStore = defineStore('accounts', () => {
     importBundle,
     detectAccountEmail,
     detectAccountTier,
+    updateAccountTier,
     presets,
     groups,
     applyingPresetId,

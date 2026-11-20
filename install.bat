@@ -1,7 +1,7 @@
 @echo off
-chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
+chcp 65001 >nul 2>&1
 
 echo [aistudio-api] Starting Windows installation and build...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\install.ps1" %*

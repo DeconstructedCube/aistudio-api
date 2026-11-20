@@ -42,10 +42,21 @@ BENEFIT_TIER_TO_HEADER: dict[str, str] = {
 
 _CANONICAL_TIERS: dict[str, str] = {
     "free": "Free",
+    "tier0": "Free",
     "plus": "Plus",
+    "ai plus": "Plus",
+    "google ai plus": "Plus",
     "pro": "Pro",
+    "tier1": "Pro",
+    "ai pro": "Pro",
+    "google ai pro": "Pro",
     "ultra": "Ultra",
+    "tier2": "Ultra",
+    "ai ultra": "Ultra",
+    "google ai ultra": "Ultra",
     "ultra_20x": "Ultra_20X",
+    "ultra 20x": "Ultra_20X",
+    "ultra20x": "Ultra_20X",
 }
 
 
@@ -54,6 +65,23 @@ def normalize_benefit_tier(tier: str | None) -> str:
     if not tier:
         return "Free"
     return _CANONICAL_TIERS.get(tier.strip().lower(), "Free")
+
+
+def _parse_tier_scalar(val: object) -> str | None:
+    if val is None or isinstance(val, bool):
+        return None
+    if isinstance(val, (int, float)):
+        return BENEFIT_TIER_TO_NAME.get(int(val))
+    if isinstance(val, str):
+        stripped = val.strip()
+        if not stripped:
+            return None
+        if stripped.isdigit():
+            return BENEFIT_TIER_TO_NAME.get(int(stripped))
+        low = stripped.lower()
+        if low in _CANONICAL_TIERS:
+            return _CANONICAL_TIERS[low]
+    return None
 
 
 def parse_benefit_tier_response(raw_data: object) -> str:
@@ -66,13 +94,27 @@ def parse_benefit_tier_response(raw_data: object) -> str:
             raw_data = json.loads(text)
         except Exception:
             return "Free"
-    if not isinstance(raw_data, list) or not raw_data or raw_data[0] is None:
+    if isinstance(raw_data, dict):
+        for key in ("benefitTier", "benefit_tier", "tier", "g1Tier"):
+            parsed = _parse_tier_scalar(raw_data.get(key))
+            if parsed is not None:
+                return parsed
         return "Free"
-    val = raw_data[0]
-    if isinstance(val, bool):
+    if not isinstance(raw_data, list) or not raw_data:
         return "Free"
-    if isinstance(val, (int, float)):
-        return BENEFIT_TIER_TO_NAME.get(int(val), "Free")
+    first = raw_data[0]
+    parsed = _parse_tier_scalar(first)
+    if parsed is not None:
+        return parsed
+    # 兼容嵌套单层数组 [[1]] 或前置 null 的稀疏数组 [null, 1]
+    if isinstance(first, list) and first:
+        nested = _parse_tier_scalar(first[0])
+        if nested is not None:
+            return nested
+    if first is None and len(raw_data) > 1:
+        second = _parse_tier_scalar(raw_data[1])
+        if second is not None:
+            return second
     return "Free"
 
 
@@ -210,11 +252,70 @@ def apply_set_cookies(
     return updated
 
 
+def _is_google_cookie_domain(domain: str) -> bool:
+    clean = domain.strip().lower().lstrip(".")
+    if not clean:
+        return True
+    return clean == "google.com" or clean.endswith(".google.com")
+
+
+def _cookie_domain_priority(name: str, domain: str) -> int:
+    """Score cookie domain specificity so .google.com / aistudio.google.com win over unrelated subdomains."""
+    clean = domain.strip().lower().lstrip(".")
+    if not clean:
+        return 2
+    if name in ACCOUNT_HOST_ONLY_COOKIES and clean == "accounts.google.com":
+        return 4
+    if clean in ("google.com", "aistudio.google.com"):
+        return 3
+    if clean == "accounts.google.com":
+        return 2
+    return 1
+
+
+def _is_cookie_item_expired(item: dict[str, object], now_ts: float) -> bool:
+    if item.get("session") is True:
+        return False
+    raw_exp = item.get("expirationDate", item.get("expires"))
+    if isinstance(raw_exp, bool) or raw_exp is None:
+        return False
+    try:
+        exp = float(str(raw_exp))
+    except (ValueError, TypeError):
+        return False
+    return exp > 0 and exp < now_ts
+
+
+def _extract_json_cookie_list(items: list[object]) -> dict[str, str]:
+    now_ts = time.time()
+    chosen: dict[str, tuple[int, str]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        raw_name = item.get("name")
+        raw_val = item.get("value")
+        if not raw_name or raw_val is None:
+            continue
+        domain = str(item.get("domain") or "").strip()
+        if domain and not _is_google_cookie_domain(domain):
+            continue
+        k = str(raw_name).strip()
+        v = str(raw_val).strip()
+        if not k or not v:
+            continue
+        fresh_bonus = 0 if _is_cookie_item_expired(item, now_ts) else 10
+        prio = _cookie_domain_priority(k, domain) + fresh_bonus
+        prev = chosen.get(k)
+        if prev is None or prio >= prev[0]:
+            chosen[k] = (prio, v)
+    return {k: v for k, (_, v) in chosen.items()}
+
+
 def parse_raw_cookies(raw: object) -> dict[str, str]:
     """万能 Cookie 解析器，支持：
     1. JSON 数组（EditThisCookie / Cookie-Editor 导出：`[{"name": "...", "value": "..."}, ...]`）
     2. JSON 对象（`{"cookies": [...]}` 或 `{"cookies": {"k": "v"}}`）
-    3. Netscape / curl 格式（7 列 Tab 分隔）
+    3. Netscape / curl 格式（7 列 Tab 分隔，含 `#HttpOnly_` 前缀）
     4. HTTP 请求头格式（`Cookie: k1=v1; k2=v2` 或带换行的多行键值对）
     """
     parsed: dict[str, str] = {}
@@ -222,6 +323,7 @@ def parse_raw_cookies(raw: object) -> dict[str, str]:
         return parsed
 
     text = raw.strip() if isinstance(raw, str) else json.dumps(raw)
+    text = text.lstrip("\ufeff")
 
     if re.match(r"^cookie:\s*", text, re.IGNORECASE):
         text = re.sub(r"^cookie:\s*", "", text, flags=re.IGNORECASE)
@@ -231,36 +333,18 @@ def parse_raw_cookies(raw: object) -> dict[str, str]:
         try:
             obj = json.loads(text)
             if isinstance(obj, list):
-                for item in obj:
-                    if (
-                        isinstance(item, dict)
-                        and item.get("name")
-                        and item.get("value") is not None
-                    ):
-                        k = str(item["name"]).strip()
-                        v = str(item["value"]).strip()
-                        if k and v:
-                            parsed[k] = v
-                if parsed:
-                    return parsed
+                extracted = _extract_json_cookie_list(obj)
+                if extracted:
+                    return extracted
             elif isinstance(obj, dict):
                 if isinstance(obj.get("cookie"), str):
                     text = obj["cookie"]
                 elif isinstance(obj.get("cookies"), str):
                     text = obj["cookies"]
                 elif isinstance(obj.get("cookies"), list):
-                    for item in obj["cookies"]:
-                        if (
-                            isinstance(item, dict)
-                            and item.get("name")
-                            and item.get("value") is not None
-                        ):
-                            k = str(item["name"]).strip()
-                            v = str(item["value"]).strip()
-                            if k and v:
-                                parsed[k] = v
-                    if parsed:
-                        return parsed
+                    extracted = _extract_json_cookie_list(obj["cookies"])
+                    if extracted:
+                        return extracted
                 elif isinstance(obj.get("cookies"), dict):
                     for k, v in obj["cookies"].items():
                         if k and v is not None:
@@ -281,22 +365,41 @@ def parse_raw_cookies(raw: object) -> dict[str, str]:
         "priority",
         "hostonly",
     }
+    now_ts = time.time()
+    chosen_netscape: dict[str, tuple[int, str]] = {}
 
     for line in lines:
         trimmed = line.strip()
-        if not trimmed or trimmed.startswith("#"):
+        if not trimmed:
+            continue
+        if trimmed.startswith("#HttpOnly_"):
+            trimmed = trimmed[len("#HttpOnly_") :]
+        elif trimmed.startswith("#"):
             continue
 
         # Netscape 7 列 Tab 分隔
         if "\t" in trimmed:
             cols = trimmed.split("\t")
             if len(cols) >= 7:
-                k = cols[5].strip() if len(cols) > 5 else ""
-                v = cols[6].strip() if len(cols) > 6 else ""
+                domain = cols[0].strip()
+                if domain and not _is_google_cookie_domain(domain):
+                    continue
+                fresh_bonus = 10
+                try:
+                    exp = float(cols[4].strip())
+                    if exp > 0 and exp < now_ts:
+                        fresh_bonus = 0
+                except ValueError:
+                    pass
+                k = cols[5].strip()
+                v = cols[6].strip()
                 if k and v and k.lower() not in ignored_keys:
-                    parsed[k] = v
+                    prio = _cookie_domain_priority(k, domain) + fresh_bonus
+                    prev = chosen_netscape.get(k)
+                    if prev is None or prio >= prev[0]:
+                        chosen_netscape[k] = (prio, v)
+                        parsed[k] = v
                 continue
-
         # 标准 KV：name=value
         if "=" in trimmed:
             k, _, v = trimmed.partition("=")
@@ -582,19 +685,27 @@ async def probe_account_benefit_tier(
             resp = await client.post(tier_url, headers=headers, content="[]")
             if resp.status_code == 200:
                 return parse_benefit_tier_response(resp.text)
-            logger.debug(
-                "探测子账号 u/%s 权益等级返回 HTTP %d", u_index, resp.status_code
+            logger.warning(
+                "探测子账号 u/%s 权益等级返回 HTTP %d: %s",
+                u_index,
+                resp.status_code,
+                resp.text[:160],
             )
             return default
-        async with httpx.AsyncClient(timeout=8.0, proxy=settings.proxy_url) as new_cli:
+        async with httpx.AsyncClient(
+            timeout=10.0, proxy=settings.proxy_url, http2=True
+        ) as new_cli:
             resp = await new_cli.post(tier_url, headers=headers, content="[]")
             if resp.status_code == 200:
                 return parse_benefit_tier_response(resp.text)
-            logger.debug(
-                "探测子账号 u/%s 权益等级返回 HTTP %d", u_index, resp.status_code
+            logger.warning(
+                "探测子账号 u/%s 权益等级返回 HTTP %d: %s",
+                u_index,
+                resp.status_code,
+                resp.text[:160],
             )
     except Exception as e:
-        logger.debug("探测子账号 u/%s 权益等级失败: %s", u_index, e)
+        logger.warning("探测子账号 u/%s 权益等级失败: %s", u_index, e)
     return default
 
 
@@ -731,6 +842,36 @@ async def rotate_google_cookies(
         return {"ok": False, "status": 0, "updated": [], "error": str(e)}
 
 
+def _infer_tier_from_list_models_body(raw_text: str) -> str | None:
+    """Fallback tier hint from ListModels response if GetAiStudioBenefitTier transiently fails."""
+    if not raw_text:
+        return None
+    try:
+        text = raw_text.strip().removeprefix(")]}'").strip()
+        data = json.loads(text)
+        if not isinstance(data, list) or not data or not isinstance(data[0], list):
+            return None
+        saw_ultra = False
+        saw_pro = False
+        for item in data[0]:
+            if not isinstance(item, list) or not item or not isinstance(item[0], str):
+                continue
+            raw_modes = (
+                item[82] if len(item) > 82 and isinstance(item[82], list) else []
+            )
+            if 4 in raw_modes and 3 not in raw_modes:
+                saw_ultra = True
+            elif 3 in raw_modes:
+                saw_pro = True
+        if saw_ultra:
+            return "Ultra"
+        if saw_pro:
+            return "Pro"
+    except Exception:
+        return None
+    return None
+
+
 async def probe_google_accounts_infinite(
     raw_or_dict: object,
     *,
@@ -744,6 +885,8 @@ async def probe_google_accounts_infinite(
     cookie_dict = parse_raw_cookies(raw_or_dict)
     if not cookie_dict:
         return []
+    min_cookies = filter_minimal_cookies(cookie_dict)
+    rpc_cookies = min_cookies or cookie_dict
 
     import httpx
 
@@ -753,14 +896,20 @@ async def probe_google_accounts_infinite(
 
     auth_user_idx = 0
     consecutive_failures = 0
-    async with httpx.AsyncClient(timeout=10.0, proxy=settings.proxy_url) as client:
+    async with httpx.AsyncClient(
+        timeout=10.0, proxy=settings.proxy_url, http2=True
+    ) as client:
         emails_map = await probe_account_emails_map(
             cookie_dict, auth_user="0", client=client
+        )
+        max_known_email_idx = max(
+            (int(k) for k in emails_map if k.isdigit()),
+            default=-1,
         )
         while True:
             u_index = str(auth_user_idx)
             headers = build_makersuite_headers(
-                cookie_dict,
+                rpc_cookies,
                 auth_user=u_index,
                 include_visit_id=True,
             )
@@ -771,16 +920,15 @@ async def probe_google_accounts_infinite(
                 # 401 表示该 auth_user 未登录或 Session 无效
                 if resp.status_code in (200, 400, 403):
                     consecutive_failures = 0
-                    detected_tier = "Free"
-                    tier_url = "https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GetAiStudioBenefitTier"
-                    try:
-                        tier_resp = await client.post(
-                            tier_url, headers=headers, content="[]"
-                        )
-                        if tier_resp.status_code == 200:
-                            detected_tier = parse_benefit_tier_response(tier_resp.text)
-                    except Exception:
-                        pass
+                    probed_tier = await probe_account_benefit_tier(
+                        rpc_cookies,
+                        auth_user=u_index,
+                        client=client,
+                        default=None,
+                    )
+                    if probed_tier is None and resp.status_code == 200:
+                        probed_tier = _infer_tier_from_list_models_body(resp.text)
+                    detected_tier = probed_tier or "Free"
                     detected_email = emails_map.get(u_index)
                     if not detected_email:
                         try:
@@ -819,7 +967,10 @@ async def probe_google_accounts_infinite(
                 consecutive_failures += 1
                 logger.debug("子账号 u/%s 探活请求异常: %s", u_index, e)
 
-            if consecutive_failures >= max_fails_in_a_row:
+            if (
+                consecutive_failures >= max_fails_in_a_row
+                and auth_user_idx >= max_known_email_idx
+            ):
                 break
 
             auth_user_idx += 1

@@ -37,7 +37,12 @@ export const accountsApi = {
       method: 'POST',
     })
   },
-
+  updateTier(id: string, tier: string): Promise<Account> {
+    return request<Account>(`/api/accounts/${id}/tier`, {
+      method: 'PUT',
+      body: JSON.stringify({ tier }),
+    })
+  },
   delete(id: string): Promise<{ ok: boolean }> {
     return request<{ ok: boolean }>(`/api/accounts/${id}`, {
       method: 'DELETE',

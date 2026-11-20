@@ -242,3 +242,56 @@ async def test_local_signer_process_stdio_roundtrip(tmp_path):
         assert mint["proof"] == "!ipc_proof"
         await proc.stop()
     assert len(written) == 3
+
+
+@pytest.mark.asyncio
+async def test_local_signer_process_startup_crash_diagnostics_and_termux_env(
+    tmp_path, monkeypatch
+):
+    """Verify LocalSignerProcess strips Termux LD_PRELOAD, stages noexec binaries, and reports exit signal + stderr tail."""
+    fake_bin = tmp_path / "waa-signer"
+    fake_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake_bin.chmod(0o755)
+
+    monkeypatch.setenv("PREFIX", "/data/data/com.termux/files/usr")
+    monkeypatch.setenv(
+        "LD_PRELOAD", "/data/data/com.termux/files/usr/lib/libtermux-exec.so"
+    )
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/data/data/com.termux/files/usr/lib")
+
+    child_env = LocalSignerProcess._build_child_env()
+    assert "LD_PRELOAD" not in child_env
+    assert "LD_LIBRARY_PATH" not in child_env
+
+    stdout_reader = asyncio.StreamReader()
+    stderr_reader = asyncio.StreamReader()
+    stderr_reader.feed_data(b"SIGSYS: bad system call\n")
+    stderr_reader.feed_eof()
+    stdout_reader.feed_eof()
+
+    fake_subproc = MagicMock()
+    fake_subproc.pid = 51515
+    fake_subproc.returncode = -31
+    fake_subproc.stdin = MagicMock()
+    fake_subproc.stdout = stdout_reader
+    fake_subproc.stderr = stderr_reader
+
+    async def fake_wait() -> int:
+        return -31
+
+    fake_subproc.wait = fake_wait
+
+    proc = LocalSignerProcess(binary_path=fake_bin)
+    with (
+        patch(
+            "asyncio.create_subprocess_exec", new=AsyncMock(return_value=fake_subproc)
+        ) as mock_exec,
+        pytest.raises(TransportError) as exc_info,
+    ):
+        await proc.ensure_started()
+
+    err_text = str(exc_info.value)
+    assert "SIGSYS" in err_text
+    assert "bad system call" in err_text
+    # Ensure unsafe post-fork preexec_fn is never passed
+    assert "preexec_fn" not in mock_exec.call_args.kwargs

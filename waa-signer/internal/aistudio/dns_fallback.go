@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -54,28 +53,6 @@ func parseResolvNameservers(path string) []string {
 	return servers
 }
 
-func readAndroidPropDNS() []string {
-	const getpropPath = "/system/bin/getprop"
-	info, err := os.Stat(getpropPath)
-	if err != nil || info.IsDir() {
-		return nil
-	}
-	var servers []string
-	for _, key := range []string{"net.dns1", "net.dns2"} {
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		out, cmdErr := exec.CommandContext(ctx, getpropPath, key).Output()
-		cancel()
-		if cmdErr != nil {
-			continue
-		}
-		val := strings.TrimSpace(string(out))
-		if ip := net.ParseIP(val); ip != nil && !ip.IsLoopback() {
-			servers = append(servers, net.JoinHostPort(ip.String(), "53"))
-		}
-	}
-	return servers
-}
-
 // EnsureFallbackDNS configures net.DefaultResolver for environments like Android Termux
 // where a GOOS=linux netgo binary lacks /etc/resolv.conf and would otherwise fail on [::1]:53.
 func EnsureFallbackDNS() {
@@ -92,7 +69,6 @@ func EnsureFallbackDNS() {
 			candidates = append(candidates, parseResolvNameservers(filepath.Join(prefix, "etc", "resolv.conf"))...)
 		}
 		candidates = append(candidates, parseResolvNameservers("/data/data/com.termux/files/usr/etc/resolv.conf")...)
-		candidates = append(candidates, readAndroidPropDNS()...)
 		candidates = append(candidates, "8.8.8.8:53", "1.1.1.1:53", "223.5.5.5:53")
 
 		seen := map[string]struct{}{}

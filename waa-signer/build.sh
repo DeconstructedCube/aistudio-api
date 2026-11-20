@@ -195,6 +195,19 @@ verify_tar_xz() {
 HOST_ARCH="$(uname -m)"
 HOST_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
+if is_termux; then
+  case "$SCRIPT_DIR" in
+    /sdcard/*|/storage/*|/mnt/sdcard/*)
+      warn "检测到项目位于 Android 共享存储 (${SCRIPT_DIR})，该分区通常为 noexec，建议移至 Termux 主目录 (~) 下运行。"
+      ;;
+  esac
+  USER_BITS="$(getconf LONG_BIT 2>/dev/null || true)"
+  DPKG_ARCH="$(dpkg --print-architecture 2>/dev/null || true)"
+  if [ "$USER_BITS" = "32" ] || [ "$DPKG_ARCH" = "arm" ] || [ "$DPKG_ARCH" = "i686" ]; then
+    die "检测到 32 位 Termux 用户态 (dpkg=${DPKG_ARCH:-unknown}, LONG_BIT=${USER_BITS:-unknown})。SpiderMonkey 152 仅支持 64 位 arm64-v8a，请从 F-Droid 或 GitHub Releases 安装 64 位 arm64-v8a 版 Termux。"
+  fi
+fi
+
 case "$HOST_ARCH" in
   x86_64|amd64)
     HOST_GO_ARCH="amd64"
@@ -205,7 +218,7 @@ case "$HOST_ARCH" in
     HOST_ZIG_ARCH="aarch64"
     ;;
   *)
-    die "不支持的 CPU 架构: $HOST_ARCH"
+    die "不支持的 CPU 架构: $HOST_ARCH (仅支持 x86_64 与 arm64/aarch64)"
     ;;
 esac
 
@@ -471,6 +484,10 @@ setup_compiler() {
     return
   fi
 
+  if is_termux; then
+    die "Termux 环境必须使用 zig (aarch64-linux-musl) 进行静态链接，不可回退 Bionic clang。请执行 pkg update && pkg install -y zig 后重试。"
+  fi
+
   if command -v clang >/dev/null 2>&1; then
     warn "未检测到 zig，回退使用 clang (若缺少 libc++/libstdc++ 静态库可能会链接失败)"
     CC_CMD="clang"
@@ -605,8 +622,9 @@ chmod +x "bin/${BIN_NAME}.tmp"
 mv -f "bin/${BIN_NAME}.tmp" "bin/${BIN_NAME}"
 
 if [ "$TARGET_GOOS" = "$HOST_OS" ] || { is_termux && [ "$TARGET_GOOS" = "linux" ]; }; then
-  if ! "./bin/${BIN_NAME}" -check >/dev/null 2>&1; then
-    die "编译产物自检失败: ./bin/${BIN_NAME} -check 无法运行"
+  CHECK_OUT="$("./bin/${BIN_NAME}" -check 2>&1 || true)"
+  if [[ "$CHECK_OUT" != *'"mode":"ipc"'* ]]; then
+    die "编译产物自检失败: ./bin/${BIN_NAME} -check 输出异常: ${CHECK_OUT}"
   fi
 fi
 

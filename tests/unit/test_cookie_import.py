@@ -566,3 +566,82 @@ async def test_rotate_google_cookies_and_sibling_sync(tmp_path):
         assert session.active_context.cookies["__Secure-1PSIDTS"] == "rotated_ts_999"
     finally:
         await mock_client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_pro_account_bundle_and_cookie_import_preserves_pro_tier(
+    tmp_path, monkeypatch
+):
+    """Verify importing a Pro account via bundle, Cookie-Editor JSON array, or g1Tier=TIER1 never downgrades to Free."""
+    import json
+    from unittest.mock import AsyncMock
+
+    from aistudio_api.api import routes_accounts
+    from aistudio_api.api.routes_accounts import (
+        ImportBundleRequest,
+        UpdateTierRequest,
+        import_bundle,
+        update_account_tier_manual,
+    )
+    from aistudio_api.application.account_service import AccountService
+    from aistudio_api.infrastructure.account.account_store import AccountStore
+    from aistudio_api.infrastructure.account.cookie_parser import (
+        normalize_benefit_tier,
+        parse_benefit_tier_response,
+        parse_raw_cookies,
+    )
+    from aistudio_api.infrastructure.gateway.model_discovery import model_discovery
+
+    # 1. Tier normalization & extended response shapes
+    assert normalize_benefit_tier("TIER1") == "Pro"
+    assert normalize_benefit_tier("TIER2") == "Ultra"
+    assert normalize_benefit_tier("Google AI Pro") == "Pro"
+    assert parse_benefit_tier_response("[[1]]") == "Pro"
+    assert parse_benefit_tier_response("[null, 1]") == "Pro"
+    assert parse_benefit_tier_response('["TIER1"]') == "Pro"
+
+    # 2. Netscape #HttpOnly_ prefix and domain priority
+    netscape_httponly = (
+        "#HttpOnly_.google.com\tTRUE\t/\tTRUE\t0\t__Secure-1PSID\tgood_psid\n"
+        ".google.com\tTRUE\t/\tTRUE\t0\tSAPISID\tgood_sapisid"
+    )
+    parsed_ns = parse_raw_cookies(netscape_httponly)
+    assert parsed_ns["__Secure-1PSID"] == "good_psid"
+    assert parsed_ns["SAPISID"] == "good_sapisid"
+
+    # 3. Bundle import without explicit tier probes upstream and keeps Pro
+    monkeypatch.setattr(
+        routes_accounts, "probe_account_benefit_tier", AsyncMock(return_value="Pro")
+    )
+    monkeypatch.setattr(
+        routes_accounts,
+        "probe_account_email",
+        AsyncMock(return_value="pro_user@gmail.com"),
+    )
+    store = AccountStore(accounts_dir=tmp_path / "accounts_pro_bundle")
+    svc = AccountService(store)
+
+    cookie_editor_json = json.dumps(
+        [
+            {"name": "SAPISID", "value": "sap_pro", "domain": ".google.com"},
+            {"name": "SID", "value": "sid_pro", "domain": ".google.com"},
+        ]
+    )
+    res = await import_bundle(
+        ImportBundleRequest(content=cookie_editor_json),
+        account_service=svc,
+    )
+    assert res.imported_count == 1
+    assert res.accounts[0].tier == "Pro"
+
+    # 4. Manual tier override endpoint updates tier & invalidates model cache
+    updated = await update_account_tier_manual(
+        account_id=res.accounts[0].id,
+        req=UpdateTierRequest(tier="Ultra"),
+        account_service=svc,
+    )
+    assert updated.tier == "Ultra"
+
+    # 5. Fallback models include gemini-4-hydrogen
+    fallback = await model_discovery.get_models(force_refresh=True)
+    assert any(m.get("id") == "gemini-4-hydrogen" for m in fallback)

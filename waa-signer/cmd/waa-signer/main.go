@@ -834,12 +834,12 @@ func serveIPC(ctx context.Context, in io.Reader, out io.Writer, pool *WorkerPool
 }
 
 func discoverProxy() string {
-	for _, envName := range []string{"AISTUDIO_PROXY", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"} {
+	for _, envName := range []string{"AISTUDIO_PROXY", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"} {
 		if val := strings.TrimSpace(os.Getenv(envName)); val != "" {
 			return val
 		}
 	}
-	for _, port := range []int{7890, 7897, 10808, 10809} {
+	for _, port := range []int{7890, 7897, 10808, 10809, 2080} {
 		addr := fmt.Sprintf("127.0.0.1:%d", port)
 		conn, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
 		if err == nil {
@@ -868,7 +868,7 @@ func main() {
 	}
 
 	checkMode := flag.Bool("check", false, "Verify runtime binary and exit")
-	proxyURL := flag.String("proxy", discoverProxy(), "Upstream HTTP/HTTPS/SOCKS5 proxy URL")
+	proxyURL := flag.String("proxy", "", "Upstream HTTP/HTTPS/SOCKS5 proxy URL")
 	stateDir := flag.String("state-dir", defaultStateDir, "Directory for worker fingerprints and interpreter cache")
 	locale := flag.String("locale", defaultLocale, "Browser profile locale")
 	timezone := flag.String("timezone", defaultTZ, "Browser profile IANA timezone")
@@ -883,13 +883,18 @@ func main() {
 		return
 	}
 
-	pool := NewWorkerPool(*stateDir, *proxyURL, *locale, *timezone)
+	effectiveProxy := strings.TrimSpace(*proxyURL)
+	if effectiveProxy == "" {
+		effectiveProxy = discoverProxy()
+	}
+
+	pool := NewWorkerPool(*stateDir, effectiveProxy, *locale, *timezone)
 	defer pool.CloseAll()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	slog.Info("WAA Signer IPC 服务已启动 (SpiderMonkey 152 内核)", "proxy", *proxyURL, "state_dir", *stateDir)
+	slog.Info("WAA Signer IPC 服务已启动 (SpiderMonkey 152 内核)", "proxy", effectiveProxy, "state_dir", *stateDir)
 	if err := serveIPC(ctx, os.Stdin, os.Stdout, pool); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error("IPC 服务异常退出", "error", err)
 		os.Exit(1)

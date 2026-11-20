@@ -6,9 +6,13 @@ using connection pooling and chunk streaming.
 
 from __future__ import annotations
 
+import contextlib
+import socket
+import struct
 import time
 from collections.abc import AsyncGenerator
 
+import httpcore
 import httpx
 
 from aistudio_api.config import settings
@@ -38,6 +42,121 @@ _DROPPED_HEADER_NAMES = frozenset(
         "x-aistudio-g1-tier",
     }
 )
+
+# 上游长思考/长工具调用无数据时，每 25s 发送一次端到端 HTTP/2 PING 帧（穿透代理与 NAT），
+# 防止中间代理或 Google GFE 在 60s~120s 静默期强制断连导致 502。
+H2_PING_INTERVAL_SECONDS = 25.0
+_h2_ping_installed = False
+
+
+def _build_keepalive_socket_options() -> list[tuple[int, int, int]]:
+    """Build portable TCP SO_KEEPALIVE socket options for long-lived streams."""
+    opts: list[tuple[int, int, int]] = [(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)]
+    keepidle = getattr(socket, "TCP_KEEPIDLE", None) or getattr(
+        socket, "TCP_KEEPALIVE", None
+    )
+    if isinstance(keepidle, int):
+        opts.append((socket.IPPROTO_TCP, keepidle, 30))
+    keepintvl = getattr(socket, "TCP_KEEPINTVL", None)
+    if isinstance(keepintvl, int):
+        opts.append((socket.IPPROTO_TCP, keepintvl, 10))
+    keepcnt = getattr(socket, "TCP_KEEPCNT", None)
+    if isinstance(keepcnt, int):
+        opts.append((socket.IPPROTO_TCP, keepcnt, 6))
+    return opts
+
+
+def _install_http2_ping_keepalive() -> None:
+    """Install RFC 9113 HTTP/2 PING keepalive into httpcore.AsyncHTTP2Connection.
+
+    httpcore uses hyper-h2 but never emits HTTP/2 PING frames during long silent
+    reads (such as deep thinking or large buffered tool calls >120s), causing
+    proxies, NATs, and Google GFE to drop idle tunnels with RemoteProtocolError.
+    Slicing network reads at H2_PING_INTERVAL_SECONDS and sending a PING frame
+    through the TLS stream under `_write_lock` resets application-layer idle
+    timers end-to-end without background tasks or thread-safety hazards.
+    """
+    global _h2_ping_installed
+    if _h2_ping_installed:
+        return
+    try:
+        from httpcore._async import http2 as hc_http2
+    except Exception:
+        return
+
+    conn_cls = getattr(hc_http2, "AsyncHTTP2Connection", None)
+    if conn_cls is None or getattr(conn_cls, "_aistudio_h2_ping_installed", False):
+        _h2_ping_installed = True
+        return
+
+    async def _read_incoming_data_with_ping(
+        self: object, request: httpcore.Request
+    ) -> list[object]:
+        timeouts = request.extensions.get("timeout", {})
+        total_timeout = timeouts.get("read", None)
+        write_timeout = timeouts.get("write", 30.0)
+
+        read_exc = getattr(self, "_read_exception", None)
+        if read_exc is not None:
+            raise read_exc
+
+        deadline = (
+            time.monotonic() + float(total_timeout)
+            if total_timeout is not None
+            else None
+        )
+        ping_seq = int(getattr(self, "_aistudio_ping_seq", 0))
+
+        try:
+            while True:
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise httpcore.ReadTimeout("Timed out reading HTTP/2 stream")
+                    slice_timeout: float | None = min(
+                        remaining, H2_PING_INTERVAL_SECONDS
+                    )
+                else:
+                    slice_timeout = H2_PING_INTERVAL_SECONDS
+
+                try:
+                    data = await self._network_stream.read(  # type: ignore[attr-defined]
+                        self.READ_NUM_BYTES,  # type: ignore[attr-defined]
+                        slice_timeout,
+                    )
+                except httpcore.ReadTimeout:
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise
+                    if (
+                        getattr(self, "_connection_terminated", None) is not None
+                        or getattr(self, "_write_exception", None) is not None
+                    ):
+                        raise
+                    ping_seq += 1
+                    self._aistudio_ping_seq = ping_seq  # type: ignore[attr-defined]
+                    opaque = struct.pack("!Q", ping_seq & 0xFFFFFFFFFFFFFFFF)
+                    async with self._write_lock:  # type: ignore[attr-defined]
+                        self._h2_state.ping(opaque)  # type: ignore[attr-defined]
+                        outgoing = self._h2_state.data_to_send()  # type: ignore[attr-defined]
+                        if outgoing:
+                            await self._network_stream.write(  # type: ignore[attr-defined]
+                                outgoing, write_timeout
+                            )
+                    continue
+
+                if data == b"":
+                    raise httpcore.RemoteProtocolError("Server disconnected")
+                break
+        except Exception as exc:
+            self._read_exception = exc  # type: ignore[attr-defined]
+            self._connection_error = True  # type: ignore[attr-defined]
+            raise exc
+
+        return list(self._h2_state.receive_data(data))  # type: ignore[attr-defined]
+
+    conn_cls._read_incoming_data = _read_incoming_data_with_ping  # type: ignore[method-assign]
+    conn_cls._aistudio_h2_ping_installed = True
+    _h2_ping_installed = True
 
 
 def _get_auth_cookies(auth_file: str | None = None) -> dict[str, str] | None:
@@ -170,8 +289,29 @@ class HTTPStreamTransport:
             await self._client.aclose()
             self._client = None
 
+    async def _reset_stale_client(self, client: httpx.AsyncClient) -> None:
+        """Close and drop a real pooled transport client after connection-level failure."""
+        transport = getattr(client, "_transport", None)
+        if not isinstance(transport, httpx.AsyncHTTPTransport):
+            return
+        if self._client is client:
+            self._client = None
+        with contextlib.suppress(Exception):
+            await client.aclose()
+
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
+            _install_http2_ping_keepalive()
+            transport = httpx.AsyncHTTPTransport(
+                proxy=self.proxy_url,
+                http2=True,
+                limits=httpx.Limits(
+                    max_keepalive_connections=20,
+                    max_connections=50,
+                    keepalive_expiry=60.0,
+                ),
+                socket_options=_build_keepalive_socket_options(),
+            )
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(
                     timeout=None,
@@ -180,9 +320,7 @@ class HTTPStreamTransport:
                     write=60.0,
                     pool=20.0,
                 ),
-                proxy=self.proxy_url,
-                http2=True,
-                limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+                transport=transport,
             )
         return self._client
 
@@ -248,7 +386,22 @@ class HTTPStreamTransport:
             err_detail = (
                 f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
             )
-            logger.error("HTTP 请求失败: url=%s, error=%s", url, err_detail)
+            if isinstance(
+                exc,
+                (
+                    httpx.ConnectTimeout,
+                    httpx.ConnectError,
+                    httpx.PoolTimeout,
+                    httpx.RemoteProtocolError,
+                ),
+            ):
+                await self._reset_stale_client(client)
+            logger.error(
+                "HTTP 请求失败: url=%s, proxy=%s, error=%s",
+                url,
+                self.proxy_url or "none",
+                err_detail,
+            )
             raise TransportError(f"HTTP request failed: {err_detail}") from exc
 
     async def send_streaming_request(
@@ -314,7 +467,21 @@ class HTTPStreamTransport:
             err_detail = (
                 f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
             )
-            logger.warning("流式传输异常: %s", err_detail)
+            if isinstance(
+                exc,
+                (
+                    httpx.ConnectTimeout,
+                    httpx.ConnectError,
+                    httpx.PoolTimeout,
+                    httpx.RemoteProtocolError,
+                ),
+            ):
+                await self._reset_stale_client(client)
+            logger.warning(
+                "流式传输异常 (proxy=%s): %s",
+                self.proxy_url or "none",
+                err_detail,
+            )
             yield ("error", err_detail)
         finally:
             if resp is not None:

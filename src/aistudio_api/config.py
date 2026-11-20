@@ -151,6 +151,37 @@ def discover_auth_file() -> str | None:
     return None
 
 
+def _read_windows_system_proxy() -> str | None:
+    """Read enabled system HTTP proxy from Windows Internet Settings registry."""
+    import sys
+
+    if sys.platform != "win32":
+        return None
+    try:
+        import re
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+        ) as key:
+            enabled, _ = winreg.QueryValueEx(key, "ProxyEnable")
+            if int(enabled) != 1:
+                return None
+            server, _ = winreg.QueryValueEx(key, "ProxyServer")
+            raw = str(server or "").strip()
+            if not raw:
+                return None
+            if raw.startswith(("http://", "https://", "socks5://", "socks5h://")):
+                return raw
+            match = re.search(r"https?=([^;]+)", raw, re.IGNORECASE)
+            if match:
+                return f"http://{match.group(1).strip()}"
+            return f"http://{raw}"
+    except Exception:
+        return None
+
+
 def discover_proxy_url() -> str | None:
     env_proxy = (
         os.getenv("AISTUDIO_PROXY")
@@ -158,13 +189,18 @@ def discover_proxy_url() -> str | None:
         or os.getenv("https_proxy")
         or os.getenv("HTTP_PROXY")
         or os.getenv("http_proxy")
+        or os.getenv("ALL_PROXY")
     )
-    if env_proxy:
-        return env_proxy
-    # 尝试自动探测本地代理（如 Termux 下的 Clash / v2ray）
+    if env_proxy and env_proxy.strip():
+        return env_proxy.strip()
+    win_proxy = _read_windows_system_proxy()
+    if win_proxy:
+        return win_proxy
+
+    # 尝试自动探测本地代理（Clash / Clash Verge / v2rayN / sing-box 等常用端口）
     import socket
 
-    for port in (7890, 10808):
+    for port in (7890, 7897, 10808, 10809, 2080):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(0.05)

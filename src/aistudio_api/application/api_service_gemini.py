@@ -1131,6 +1131,47 @@ def format_sse_error(exc: Exception) -> str:
     )
 
 
+SSE_KEEPALIVE_INTERVAL = 15.0
+
+
+async def _iter_events_with_keepalive(
+    events: AsyncGenerator[tuple[str, object | None], None],
+    *,
+    interval: float = SSE_KEEPALIVE_INTERVAL,
+) -> AsyncGenerator[tuple[str, object | None], None]:
+    """Yield upstream events while emitting keepalive ticks on long silent pauses.
+
+    Prevents downstream clients and reverse proxies from timing out during deep
+    thinking or large buffered tool calls without cancelling the upstream reader.
+    """
+    it = events.__aiter__()
+
+    async def _next_event() -> tuple[str, object | None]:
+        return await it.__anext__()
+
+    next_task: asyncio.Task[tuple[str, object | None]] | None = None
+    try:
+        while True:
+            if next_task is None:
+                next_task = asyncio.create_task(_next_event())
+            try:
+                item = await asyncio.wait_for(
+                    asyncio.shield(next_task), timeout=interval
+                )
+                next_task = None
+                yield item
+            except TimeoutError:
+                yield ("_keepalive", None)
+            except StopAsyncIteration:
+                next_task = None
+                break
+    finally:
+        if next_task is not None:
+            if not next_task.done():
+                next_task.cancel()
+            await asyncio.gather(next_task, return_exceptions=True)
+
+
 def _build_gemini_streaming_response(
     *,
     client: AIStudioClient,
@@ -1192,7 +1233,12 @@ def _build_gemini_streaming_response(
                             model=normalized.model, prepared=prepared
                         )
                     ) as events:
-                        async for event_type, text in events:
+                        async for event_type, text in _iter_events_with_keepalive(
+                            events
+                        ):
+                            if event_type == "_keepalive":
+                                yield ": keepalive\n\n"
+                                continue
                             if event_type == "usage":
                                 final_usage = text if isinstance(text, dict) else None
                             elif event_type == "finish_reason":

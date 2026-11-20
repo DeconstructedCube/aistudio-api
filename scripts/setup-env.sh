@@ -109,6 +109,17 @@ check_venv_healthy() {
 if is_termux; then
     log "检测到 Android Termux 环境。"
 
+    case "${PROJECT_ROOT}" in
+        /sdcard/*|/storage/*|/mnt/sdcard/*)
+            warn "项目位于 Android 共享存储 (${PROJECT_ROOT})，该分区不支持符号链接与直接执行二进制，强烈建议克隆到 Termux 主目录 (~) 下。"
+            ;;
+    esac
+    DPKG_ARCH="$(dpkg --print-architecture 2>/dev/null || true)"
+    USER_BITS="$(getconf LONG_BIT 2>/dev/null || true)"
+    if [[ "$USER_BITS" == "32" || "$DPKG_ARCH" == "arm" || "$DPKG_ARCH" == "i686" ]]; then
+        die "检测到 32 位 Termux (${DPKG_ARCH:-unknown})，无法运行 64 位 SpiderMonkey 签名引擎。请从 F-Droid 或 GitHub Releases 安装 arm64-v8a 版 Termux。"
+    fi
+
     # 1. Prevent Play Store obsolete Termux traps & broken $TMPDIR
     if [[ -f "${PREFIX}/etc/apt/sources.list" ]] && grep -q "dl.bintray.com" "${PREFIX}/etc/apt/sources.list" 2>/dev/null; then
         die "检测到已停止维护的 Google Play 旧版 Termux（Bintray 源已失效）。请卸载后从 F-Droid 或 GitHub Releases 重新安装 Termux。"

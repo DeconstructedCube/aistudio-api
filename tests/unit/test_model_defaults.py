@@ -257,11 +257,15 @@ tier_quotas:
 """
     )
 
-    h_free = resolve_tier_quota_limits("Free", "gemini-4-hydrogen", config_path=config_path)
+    h_free = resolve_tier_quota_limits(
+        "Free", "gemini-4-hydrogen", config_path=config_path
+    )
     assert h_free.daily_limit == 50
     assert h_free.daily_token_limit == 10_000_000
 
-    f_free = resolve_tier_quota_limits("Free", "gemini-3.6-flash", config_path=config_path)
+    f_free = resolve_tier_quota_limits(
+        "Free", "gemini-3.6-flash", config_path=config_path
+    )
     assert f_free.daily_limit == 50
     assert f_free.daily_token_limit == 5_000_000
 
@@ -269,15 +273,21 @@ tier_quotas:
     assert a_pro.daily_limit == 50
     assert a_pro.daily_token_limit == 15_000_000
 
-    p_pro = resolve_tier_quota_limits("Pro", "gemini-3.1-pro-preview", config_path=config_path)
+    p_pro = resolve_tier_quota_limits(
+        "Pro", "gemini-3.1-pro-preview", config_path=config_path
+    )
     assert p_pro.daily_limit == 50
     assert p_pro.daily_token_limit == 13_000_000
 
-    ov_obj = resolve_tier_quota_limits("Free", "models/gemini-3.8-flash", config_path=config_path)
+    ov_obj = resolve_tier_quota_limits(
+        "Free", "models/gemini-3.8-flash", config_path=config_path
+    )
     assert ov_obj.daily_limit == 120
     assert ov_obj.daily_token_limit == 8_000_000
 
-    ov_scalar = resolve_tier_quota_limits("Free", "gemini-legacy", config_path=config_path)
+    ov_scalar = resolve_tier_quota_limits(
+        "Free", "gemini-legacy", config_path=config_path
+    )
     assert ov_scalar.daily_limit == 33
     assert ov_scalar.daily_token_limit is None
 
@@ -288,17 +298,61 @@ def test_repo_config_matches_playground_quotas_and_paid_tiers(monkeypatch):
 
     invalidate_config_cache()
 
-    assert resolve_tier_quota_limits("Free", "gemini-4-hydrogen", config_path=repo_config) == (
-        resolve_tier_quota_limits("Free", "models/gemini-4-hydrogen", config_path=repo_config)
+    assert resolve_tier_quota_limits(
+        "Free", "gemini-4-hydrogen", config_path=repo_config
+    ) == (
+        resolve_tier_quota_limits(
+            "Free", "models/gemini-4-hydrogen", config_path=repo_config
+        )
     )
-    assert resolve_tier_quota_limits("Free", "gemini-4-hydrogen", config_path=repo_config).daily_limit == 50
-    assert resolve_tier_quota_limits("Free", "gemini-4-hydrogen", config_path=repo_config).daily_token_limit == 10_000_000
-    assert resolve_tier_quota_limits("Pro", "gemini-4-hydrogen", config_path=repo_config).daily_limit == 100
-    assert resolve_tier_quota_limits("Pro", "gemini-4-hydrogen", config_path=repo_config).daily_token_limit == 25_000_000
-    assert resolve_tier_quota_limits("Ultra", "gemini-4-carbon", config_path=repo_config).daily_limit == 200
-    assert resolve_tier_quota_limits("Ultra_20X", "gemini-4-carbon", config_path=repo_config).daily_limit == 200
-    assert resolve_tier_quota_limits("Ultra", "gemini-3.1-pro-preview", config_path=repo_config).daily_limit == 100
-    assert resolve_tier_quota_limits("Ultra_20X", "gemini-3.1-pro-preview", config_path=repo_config).daily_limit == 100
+    assert (
+        resolve_tier_quota_limits(
+            "Free", "gemini-4-hydrogen", config_path=repo_config
+        ).daily_limit
+        == 50
+    )
+    assert (
+        resolve_tier_quota_limits(
+            "Free", "gemini-4-hydrogen", config_path=repo_config
+        ).daily_token_limit
+        == 10_000_000
+    )
+    assert (
+        resolve_tier_quota_limits(
+            "Pro", "gemini-4-hydrogen", config_path=repo_config
+        ).daily_limit
+        == 100
+    )
+    assert (
+        resolve_tier_quota_limits(
+            "Pro", "gemini-4-hydrogen", config_path=repo_config
+        ).daily_token_limit
+        == 25_000_000
+    )
+    assert (
+        resolve_tier_quota_limits(
+            "Ultra", "gemini-4-carbon", config_path=repo_config
+        ).daily_limit
+        == 200
+    )
+    assert (
+        resolve_tier_quota_limits(
+            "Ultra_20X", "gemini-4-carbon", config_path=repo_config
+        ).daily_limit
+        == 200
+    )
+    assert (
+        resolve_tier_quota_limits(
+            "Ultra", "gemini-3.1-pro-preview", config_path=repo_config
+        ).daily_limit
+        == 100
+    )
+    assert (
+        resolve_tier_quota_limits(
+            "Ultra_20X", "gemini-3.1-pro-preview", config_path=repo_config
+        ).daily_limit
+        == 100
+    )
 
     svc = ModelDiscoveryService()
     assert svc.is_paid_model("gemini-4-hydrogen") is False
@@ -321,20 +375,35 @@ def test_validate_config_sections_rejects_invalid_quota_and_rotator():
         {
             "tier_quotas": {
                 "Free": {
-                    "flash_models": {"match": {"contains": ["flash"]}, "daily_limit": 50, "daily_token_limit": 5000000},
+                    "flash_models": {
+                        "match": {"contains": ["flash"]},
+                        "daily_limit": 50,
+                        "daily_token_limit": 5000000,
+                    },
                     "default_limit": 20,
                 },
-                "overrides": {"gemini-3.8-flash": {"daily_limit": 60, "daily_token_limit": None}},
+                "overrides": {
+                    "gemini-3.8-flash": {"daily_limit": 60, "daily_token_limit": None}
+                },
             },
             "paid_model_rules": {
-                "ultra_required": {"contains": ["carbon"], "required_tiers": ["Ultra", "Ultra_20X"]}
+                "ultra_required": {
+                    "contains": ["carbon"],
+                    "required_tiers": ["Ultra", "Ultra_20X"],
+                }
             },
-            "rotator": {"strategy": "sticky", "stickiness_threshold": 0.8, "tier_weights": {"Free": 0.0}},
+            "rotator": {
+                "strategy": "sticky",
+                "stickiness_threshold": 0.8,
+                "tier_weights": {"Free": 0.0},
+            },
         }
     )
 
     with pytest.raises(ValueError, match="daily_limit"):
-        validate_config_sections({"tier_quotas": {"Free": {"flash": {"daily_limit": 0}}}})
+        validate_config_sections(
+            {"tier_quotas": {"Free": {"flash": {"daily_limit": 0}}}}
+        )
 
     with pytest.raises(ValueError, match="stickiness_threshold"):
         validate_config_sections({"rotator": {"stickiness_threshold": 1.5}})

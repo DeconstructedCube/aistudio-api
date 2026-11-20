@@ -1,7 +1,7 @@
 @echo off
-chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
+chcp 65001 >nul 2>&1
 
 echo [waa-signer] Starting Windows build...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1" %*
