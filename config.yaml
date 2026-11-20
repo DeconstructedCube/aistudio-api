@@ -33,6 +33,7 @@ paid_model_rules:
   pro_required:
     contains:
     - argon
+    - neon
     - image
     - imagen
     - gemini-3.1-pro
@@ -129,6 +130,7 @@ tier_quotas:
       match:
         contains:
         - argon
+        - neon
       daily_limit: 50
       daily_token_limit: 15000000
     image_models:
@@ -160,6 +162,7 @@ tier_quotas:
       match:
         contains:
         - argon
+        - neon
       daily_limit: 200
     carbon_models:
       match:
@@ -198,6 +201,7 @@ tier_quotas:
       match:
         contains:
         - argon
+        - neon
       daily_limit: 200
     carbon_models:
       match:

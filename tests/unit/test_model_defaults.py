@@ -360,6 +360,12 @@ def test_repo_config_matches_playground_quotas_and_paid_tiers(monkeypatch):
     assert svc.is_paid_model("gemini-4-argon") is True
     assert svc.is_model_allowed_for_tier("gemini-4-argon", "Free") is False
     assert svc.is_model_allowed_for_tier("gemini-4-argon", "Pro") is True
+    assert svc.is_paid_model("gemini-4-neon") is True
+    assert svc.is_model_allowed_for_tier("gemini-4-neon", "Free") is False
+    assert svc.is_model_allowed_for_tier("gemini-4-neon", "Pro") is True
+    assert resolve_tier_quota_limits(
+        "Pro", "gemini-4-neon", config_path=repo_config
+    ) == resolve_tier_quota_limits("Pro", "gemini-4-argon", config_path=repo_config)
     assert svc.is_paid_model("gemini-4-carbon") is True
     assert svc.is_model_allowed_for_tier("gemini-4-carbon", "Pro") is False
     assert svc.is_model_allowed_for_tier("gemini-4-carbon", "Ultra") is True

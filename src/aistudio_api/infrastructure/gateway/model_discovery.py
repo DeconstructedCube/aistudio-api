@@ -90,6 +90,20 @@ _FALLBACK_MODELS = [
         "description": "Gemini 4 Hydrogen flagship model",
     },
     {
+        "id": "gemini-4-argon",
+        "displayName": "Gemini 4 Argon",
+        "description": "Gemini 4 Argon Pro flagship model",
+        "paid": True,
+        "accessModes": [3],
+    },
+    {
+        "id": "gemini-4-neon",
+        "displayName": "Gemini 4 Neon",
+        "description": "Gemini 4 Neon Pro flagship model",
+        "paid": True,
+        "accessModes": [3],
+    },
+    {
         "id": "gemini-3.8-flash",
         "displayName": "Gemini 3.8 Flash",
         "description": "Latest Gemini 3.8 Flash model",

@@ -378,7 +378,7 @@ def _default_config() -> dict[str, object]:
                 "required_tiers": ["Ultra", "Ultra_20X"],
             },
             "pro_required": {
-                "contains": ["argon", "image", "imagen", "gemini-3.1-pro"],
+                "contains": ["argon", "neon", "image", "imagen", "gemini-3.1-pro"],
                 "required_tiers": ["Pro", "Ultra", "Ultra_20X"],
             },
         },
@@ -418,7 +418,7 @@ def _default_config() -> dict[str, object]:
                     "daily_token_limit": 25_000_000,
                 },
                 "argon_models": {
-                    "match": {"contains": ["argon"]},
+                    "match": {"contains": ["argon", "neon"]},
                     "daily_limit": 50,
                     "daily_token_limit": 15_000_000,
                 },
@@ -444,7 +444,7 @@ def _default_config() -> dict[str, object]:
                     "daily_limit": 200,
                 },
                 "argon_models": {
-                    "match": {"contains": ["argon"]},
+                    "match": {"contains": ["argon", "neon"]},
                     "daily_limit": 200,
                 },
                 "carbon_models": {
@@ -466,7 +466,7 @@ def _default_config() -> dict[str, object]:
                     "daily_limit": 200,
                 },
                 "argon_models": {
-                    "match": {"contains": ["argon"]},
+                    "match": {"contains": ["argon", "neon"]},
                     "daily_limit": 200,
                 },
                 "carbon_models": {
