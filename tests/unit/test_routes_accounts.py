@@ -237,3 +237,60 @@ async def test_disabling_inactive_account_preserves_active_context(
     current = service.get_active_account()
     assert current is not None and current.id == active.id
     assert session.active_context is original_context
+
+
+@pytest.mark.asyncio
+async def test_delete_legacy_cookie_group_with_colon_and_skip_disabled_on_delete(
+    tmp_path, monkeypatch
+):
+    """Verify legacy cookie_YYYY-MM-DDTHH:MM group IDs are accepted and deleting active account skips disabled ones."""
+    store = AccountStore(accounts_dir=tmp_path / "accounts_colon")
+    service = AccountService(store)
+    acc_legacy = service.save_account_from_cookies(
+        name="Legacy",
+        email="legacy@example.test",
+        storage_state={"cookies": [{"name": "SID", "value": "c1"}]},
+        cookie_id=None,
+    )
+    acc_disabled = service.save_account_from_cookies(
+        name="Disabled",
+        email="dis@example.test",
+        storage_state={"cookies": [{"name": "SID", "value": "c2"}]},
+        cookie_id="cookie_dis",
+        enabled=False,
+    )
+    acc_enabled = service.save_account_from_cookies(
+        name="Enabled",
+        email="en@example.test",
+        storage_state={"cookies": [{"name": "SID", "value": "c3"}]},
+        cookie_id="cookie_en",
+        enabled=True,
+    )
+    session = GatewaySession()
+    await service.activate_account(acc_legacy.id, session)
+    client = MagicMock()
+    client.session = session
+    monkeypatch.setattr(runtime_state, "account_service", service)
+    monkeypatch.setattr(runtime_state, "rotator", AccountRotator(store))
+    monkeypatch.setattr(runtime_state, "client", client)
+
+    legacy_group_id = f"cookie_{acc_legacy.created_at[:16]}"
+    assert ":" in legacy_group_id
+
+    async with _client() as http_client:
+        del_resp = await http_client.delete(f"/api/accounts/group/{legacy_group_id}")
+        assert del_resp.status_code == 200
+        assert del_resp.json()["deleted"] == 1
+
+        # Active account must skip acc_disabled and land on acc_enabled
+        active_now = service.get_active_account()
+        assert active_now is not None and active_now.id == acc_enabled.id
+        assert active_now.id != acc_disabled.id
+
+        # Reject non-.json file_path in import-bundle
+        bad_file = tmp_path / "secret.txt"
+        bad_file.write_text("not json", encoding="utf-8")
+        bundle_resp = await http_client.post(
+            "/api/accounts/import-bundle", json={"file_path": str(bad_file)}
+        )
+        assert bundle_resp.status_code == 400

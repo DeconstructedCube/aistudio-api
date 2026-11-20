@@ -24,6 +24,7 @@ interface ActiveTask {
   maxBackoffMs: number
   timer?: number
   paused: boolean
+  disposed: boolean
   running: boolean
   failureCount: number
 }
@@ -53,7 +54,7 @@ function setupGlobalVisibilityListener() {
 }
 
 async function runTask(task: ActiveTask) {
-  if (task.running || (typeof document !== 'undefined' && document.hidden)) return
+  if (task.running || task.disposed || (typeof document !== 'undefined' && document.hidden)) return
   task.running = true
   try {
     await task.fn()
@@ -67,7 +68,7 @@ async function runTask(task: ActiveTask) {
 }
 
 function scheduleNext(task: ActiveTask) {
-  if (task.timer || task.paused || (typeof document !== 'undefined' && document.hidden)) return
+  if (task.timer || task.paused || task.disposed || (typeof document !== 'undefined' && document.hidden)) return
 
   let delay = task.intervalMs
   if (task.failureCount > 1) {
@@ -111,6 +112,7 @@ export function usePolling(
     intervalMs,
     maxBackoffMs,
     paused: false,
+    disposed: false,
     running: false,
     failureCount: 0,
   }
@@ -144,6 +146,8 @@ export function usePolling(
   }
 
   onUnmounted(() => {
+    task.disposed = true
+    task.paused = true
     stopTaskTimer(task)
     activeTasks.delete(taskId)
   })

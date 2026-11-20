@@ -207,3 +207,33 @@ async def test_http2_ping_keepalive_emits_ping_frame_on_idle_read_slice(monkeypa
     assert len(ping_opaques[0]) == 8
     assert ping_opaques[0] != ping_opaques[1]
     assert written_payloads == [b"PING_FRAME", b"PING_FRAME"]
+
+
+@pytest.mark.asyncio
+async def test_reset_stale_client_defers_close_while_concurrent_request_inflight():
+    """Verify _reset_stale_client detaches the pool immediately but defers aclose() until in-flight requests drain."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    transport = HTTPStreamTransport()
+    client = MagicMock(spec=httpx.AsyncClient)
+    client._transport = MagicMock(spec=httpx.AsyncHTTPTransport)
+    client.is_closed = False
+    client.aclose = AsyncMock()
+    transport._client = client
+
+    # Two concurrent requests acquire the same pooled client
+    transport._acquire_inflight(client)
+    transport._acquire_inflight(client)
+
+    # Request 1 hits a connection error and triggers _reset_stale_client
+    await transport._reset_stale_client(client)
+    assert transport._client is None
+    client.aclose.assert_not_awaited()
+
+    # Request 1 finishes its finally block; Request 2 is still streaming
+    await transport._release_inflight(client)
+    client.aclose.assert_not_awaited()
+
+    # Request 2 finishes; stale client is now closed
+    await transport._release_inflight(client)
+    client.aclose.assert_awaited_once()

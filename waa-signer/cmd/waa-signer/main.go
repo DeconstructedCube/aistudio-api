@@ -337,6 +337,45 @@ func (p *WorkerPool) getEntry(key string) *workerEntry {
 	return entry
 }
 
+func (p *WorkerPool) evictExpiredEntries(excludeKey string) {
+	now := time.Now()
+	p.mu.RLock()
+	staleKeys := make([]string, 0, len(p.entries))
+	staleEntries := make([]*workerEntry, 0, len(p.entries))
+	for k, entry := range p.entries {
+		if k == excludeKey {
+			continue
+		}
+		staleKeys = append(staleKeys, k)
+		staleEntries = append(staleEntries, entry)
+	}
+	p.mu.RUnlock()
+
+	for i, entry := range staleEntries {
+		if !entry.mu.TryLock() {
+			continue
+		}
+		key := staleKeys[i]
+		worker := entry.workerSnapshot()
+		expired := (!entry.createdAt.IsZero() && now.Sub(entry.createdAt) >= maxWorkerAge) ||
+			(worker == nil && !entry.lastUsed.IsZero() && now.Sub(entry.lastUsed) >= maxWorkerAge)
+		if expired {
+			if worker != nil {
+				_ = worker.Close()
+				entry.setWorker(nil)
+			}
+			entry.inputFingerprint = ""
+			entry.inputCookies = nil
+			p.mu.Lock()
+			if p.entries[key] == entry && entry.workerSnapshot() == nil {
+				delete(p.entries, key)
+			}
+			p.mu.Unlock()
+		}
+		entry.mu.Unlock()
+	}
+}
+
 // workerLease 将获取、签名、取头和响应流放在同一账户租约内，避免中途关闭 Worker。
 type workerLease struct {
 	pool             *WorkerPool
@@ -421,6 +460,7 @@ func (p *WorkerPool) AcquireWorker(ctx context.Context, rawCookies string, authU
 		return nil, fmt.Errorf("规范化 Cookie 失败: %w", err)
 	}
 	key := accountKeyFromState(state, authUser)
+	p.evictExpiredEntries(key)
 	entry := p.getEntry(key)
 	entry.mu.Lock()
 	if err := ctx.Err(); err != nil {

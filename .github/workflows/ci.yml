@@ -38,6 +38,8 @@ jobs:
             backend:
               - 'src/aistudio_api/**'
               - 'tests/**'
+              - 'config.yaml'
+              - 'defaults/config.yaml'
               - 'pyproject.toml'
               - '.github/workflows/ci.yml'
             frontend:
@@ -76,8 +78,7 @@ jobs:
       - name: Run Ruff Lint & Format Check
         run: |
           uv run --no-sync ruff check .
-          uv run --no-sync ruff format --check src
-
+          uv run --no-sync ruff format --check .
       - name: Run Pyright Type Check
         run: uv run --no-sync pyright src tests
 

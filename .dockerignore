@@ -16,6 +16,8 @@ __pycache__
 dist
 build
 .pytest_cache
+.venv/
+.ruff_cache/
 
 # Environment (use .env.example as reference, mount .env at runtime)
 .env
@@ -33,6 +35,12 @@ tests/
 # Temporary files
 /tmp
 snapshot_*.log
+data/
+dumps/
+waa-signer/bin/
+waa-signer/.deps/
+web/node_modules/
+web/dist/
 
 # Documentation
 docs/

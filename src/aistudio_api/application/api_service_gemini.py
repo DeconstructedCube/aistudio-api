@@ -36,6 +36,7 @@ from aistudio_api.api.state import runtime_state
 from aistudio_api.application.account_orchestrator import (
     MAX_RETRIES,
     ensure_active_account,
+    get_max_retries,
     record_rotator_event,
     try_switch_account,
 )
@@ -63,9 +64,18 @@ from aistudio_api.infrastructure.gateway.client import (
     PreparedRequest,
 )
 from aistudio_api.infrastructure.gateway.session import SessionContext
-from aistudio_api.infrastructure.utils.logger import get_logger
+from aistudio_api.infrastructure.utils.logger import (
+    get_logger,
+    set_current_request_account,
+)
 
 logger = get_logger("api.gemini")
+
+
+def _effective_max_retries() -> int:
+    if MAX_RETRIES != 5:
+        return max(1, int(MAX_RETRIES))
+    return get_max_retries()
 
 
 def _request_context_snapshot(client: AIStudioClient) -> SessionContext:
@@ -86,9 +96,18 @@ def _request_account(
         if not request_ctx.auth_file:
             return None, None
         account_id = Path(request_ctx.auth_file).parent.name
-        return account_svc.get_account(account_id), account_id
+        acc = account_svc.get_account(account_id)
+        set_current_request_account(
+            account_id,
+            getattr(acc, "auth_user", None) if acc else request_ctx.auth_user,
+        )
+        return acc, account_id
     account = account_svc.get_active_account()
-    return account, account.id if account else None
+    if account is not None:
+        set_current_request_account(
+            getattr(account, "id", None), getattr(account, "auth_user", "0")
+        )
+    return account, getattr(account, "id", None) if account else None
 
 
 def _is_request_generation_current(request_ctx: SessionContext | None) -> bool:
@@ -585,7 +604,8 @@ async def handle_attempt_exception(
             is_session_expired=True,
             expected_cookie_id=request_ctx.cookie_id if request_ctx else None,
         ):
-            logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
+            max_retries = _effective_max_retries()
+            logger.info("已切换账号重试 (%d/%d)", attempt + 1, max_retries)
             return True
         raise HTTPException(
             401,
@@ -631,7 +651,8 @@ async def handle_attempt_exception(
             failed_account_id=failed_id,
             expected_cookie_id=request_ctx.cookie_id if request_ctx else None,
         ):
-            logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
+            max_retries = _effective_max_retries()
+            logger.info("已切换账号重试 (%d/%d)", attempt + 1, max_retries)
             return True
         raise HTTPException(
             403, detail={"message": str(exc), "type": "auth_error"}
@@ -662,7 +683,7 @@ async def handle_attempt_exception(
             logger.warning(
                 "触发 429 限流，切换账号重试 (%d/%d): model=%s",
                 attempt + 1,
-                MAX_RETRIES,
+                _effective_max_retries(),
                 target_model,
             )
             return True
@@ -708,31 +729,32 @@ async def handle_attempt_exception(
 
     # 针对 Google 上游偶发且完全随机的 RPC 路由 404 (Ambiguous request for service '' and method '/GenerativeService.*')：
     # 此报错为上游端点偶发抖动，在未产生输出时当场立即重试（严禁切号以防浪费配额，其他 404 严格按原样报错抛出）
+    max_retries = _effective_max_retries()
     if (
         is_transient_rpc_error(exc)
         and not has_yielded_data
-        and attempt < MAX_RETRIES - 1
+        and attempt < max_retries - 1
     ):
         logger.warning(
             "上游 404 路由抖动，立即重试 (%d/%d): %s",
             attempt + 1,
-            MAX_RETRIES,
+            max_retries,
             clean_upstream_error_message(str(exc)),
         )
         return True
     if is_transport_error(exc):
         # 传输失败只能使用普通预算，最后一次失败或已发出内容时不再切号。
-        if not has_yielded_data and attempt < MAX_RETRIES - 1:
+        if not has_yielded_data and attempt < max_retries - 1:
             logger.warning(
                 "传输或签名异常，切换账号重试 (%d/%d): %s",
                 attempt + 1,
-                MAX_RETRIES,
+                max_retries,
                 exc,
             )
             if await try_switch_account(
                 model=target_model, failed_account_id=failed_id
             ):
-                logger.info("已切换账号重试 (%d/%d)", attempt + 1, MAX_RETRIES)
+                logger.info("已切换账号重试 (%d/%d)", attempt + 1, max_retries)
                 return True
         runtime_state.record(target_model, "errors")
         _record_request_rotator_event(
@@ -785,22 +807,25 @@ async def _do_generate_content(
 ) -> GeminiGenerateContentResponse:
     last_error: Exception | None = None
     auth_manager = Auth403RetryManager()
-    total_attempts = MAX_RETRIES + AUTH_403_MAX_RETRIES
+    max_retries = _effective_max_retries()
+    total_attempts = max_retries + AUTH_403_MAX_RETRIES
     ordinary_attempt = 0
 
     for attempt in range(total_attempts):
-        if ordinary_attempt >= MAX_RETRIES:
+        if ordinary_attempt >= max_retries:
             break
-        ensured_ctx = await ensure_active_account(attempt, model=model_path)
-        effective_ctx = auth_manager.pinned_ctx or (
-            ensured_ctx
-            if isinstance(ensured_ctx, SessionContext)
-            else _request_context_snapshot(client)
-        )
         normalized = None
-        request_ctx: SessionContext = effective_ctx
+        request_ctx: SessionContext | None = None
         try:
             normalized = normalize_gemini_request(req, model_path)
+            ensured_ctx = await ensure_active_account(attempt, model=model_path)
+            effective_ctx = auth_manager.pinned_ctx or (
+                ensured_ctx
+                if isinstance(ensured_ctx, SessionContext)
+                else _request_context_snapshot(client)
+            )
+            request_ctx = effective_ctx
+            _request_account(request_ctx)
             logger.info(
                 "非流式请求: model=%s, 轮数=%d, 尝试=%d/%d",
                 normalized.model,
@@ -1195,10 +1220,11 @@ def _build_gemini_streaming_response(
             stream_completed = False
             last_stream_error: Exception | None = None
             auth_manager = Auth403RetryManager()
-            total_attempts = MAX_RETRIES + AUTH_403_MAX_RETRIES
+            max_retries = _effective_max_retries()
+            total_attempts = max_retries + AUTH_403_MAX_RETRIES
             ordinary_attempt = 0
             for stream_attempt in range(total_attempts):
-                if ordinary_attempt >= MAX_RETRIES:
+                if ordinary_attempt >= max_retries:
                     break
                 has_yielded_data = False
                 last_stream_error = None
@@ -1206,17 +1232,18 @@ def _build_gemini_streaming_response(
                 final_finish_reason = "STOP"
                 latest_response_id = None
                 buffered_thought_sig = None
-                ensured_ctx = await ensure_active_account(
-                    stream_attempt, model=model_path
-                )
-                effective_ctx = auth_manager.pinned_ctx or (
-                    ensured_ctx
-                    if isinstance(ensured_ctx, SessionContext)
-                    else _request_context_snapshot(client)
-                )
-                normalized = normalize_gemini_request(req, model_path)
-                request_ctx = effective_ctx
                 try:
+                    normalized = normalize_gemini_request(req, model_path)
+                    ensured_ctx = await ensure_active_account(
+                        stream_attempt, model=model_path
+                    )
+                    effective_ctx = auth_manager.pinned_ctx or (
+                        ensured_ctx
+                        if isinstance(ensured_ctx, SessionContext)
+                        else _request_context_snapshot(client)
+                    )
+                    request_ctx = effective_ctx
+                    _request_account(request_ctx)
                     force_recreate = auth_manager.force_recreate_signer
                     auth_manager.force_recreate_signer = False
                     prepared = await _prepare_content_request(
@@ -1387,7 +1414,8 @@ async def handle_gemini_decisions(
 ) -> GeminiCreateDecisionResponse:
     last_error: Exception | None = None
     auth_manager = Auth403RetryManager()
-    total_attempts = MAX_RETRIES + AUTH_403_MAX_RETRIES
+    max_retries = _effective_max_retries()
+    total_attempts = max_retries + AUTH_403_MAX_RETRIES
     ordinary_attempt = 0
     raw_model = req.model or "gemini-decision-1"
     norm_model = raw_model if raw_model.startswith("models/") else f"models/{raw_model}"
@@ -1397,7 +1425,7 @@ async def handle_gemini_decisions(
     }
 
     for attempt in range(total_attempts):
-        if ordinary_attempt >= MAX_RETRIES:
+        if ordinary_attempt >= max_retries:
             break
         ensured_ctx = await ensure_active_account(attempt, model=norm_model)
         effective_ctx = auth_manager.pinned_ctx or (
@@ -1565,9 +1593,9 @@ async def handle_gemini_count_tokens(
 
     normalized = normalize_gemini_request(effective_req, model_path)
     last_error: Exception | None = None
-    for attempt in range(MAX_RETRIES):
+    max_retries = _effective_max_retries()
+    for attempt in range(max_retries):
         ensured_ctx = await ensure_active_account(attempt, model=normalized.model)
-        # 在请求进入客户端前绑定实际账号，失败时不读取已切换的全局会话。
         request_ctx = (
             ensured_ctx
             if isinstance(ensured_ctx, SessionContext)

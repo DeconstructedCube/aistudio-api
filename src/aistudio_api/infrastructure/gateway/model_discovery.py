@@ -379,15 +379,11 @@ class ModelDiscoveryService:
         raw_modes = info.get("accessModes")
         if not isinstance(raw_modes, list) or not raw_modes:
             return True
-        norm_tier = (tier or "Free").strip().lower()
-        is_high_tier = (
-            norm_tier in ("plus", "pro", "ultra")
-            or "ultra" in norm_tier
-            or "pro" in norm_tier
-        )
-        is_ultra_tier = "ultra" in norm_tier
+        norm_tier = normalize_benefit_tier(tier).lower()
+        is_pro_or_ultra = norm_tier in ("pro", "ultra", "ultra_20x")
+        is_ultra_tier = norm_tier in ("ultra", "ultra_20x")
         for mode in raw_modes:
-            if mode == 3 and is_high_tier:
+            if mode == 3 and is_pro_or_ultra:
                 return True
             if mode == 4 and is_ultra_tier:
                 return True

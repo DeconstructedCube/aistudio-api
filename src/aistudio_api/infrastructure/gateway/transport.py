@@ -283,21 +283,53 @@ class HTTPStreamTransport:
         self.proxy_url = proxy_url or settings.proxy_url
         self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
+        self._inflight: dict[int, int] = {}
+        self._stale_clients: dict[int, httpx.AsyncClient] = {}
 
     async def close(self) -> None:
-        if self._client is not None and not self._client.is_closed:
-            await self._client.aclose()
-            self._client = None
+        client = self._client
+        self._client = None
+        stale = list(self._stale_clients.values())
+        self._stale_clients.clear()
+        self._inflight.clear()
+        if client is not None and not client.is_closed:
+            await client.aclose()
+        for old in stale:
+            if old is not client and not old.is_closed:
+                with contextlib.suppress(Exception):
+                    await old.aclose()
+
+    def _acquire_inflight(self, client: httpx.AsyncClient) -> None:
+        cid = id(client)
+        self._inflight[cid] = self._inflight.get(cid, 0) + 1
+
+    async def _release_inflight(self, client: httpx.AsyncClient) -> None:
+        cid = id(client)
+        remaining = self._inflight.get(cid, 1) - 1
+        if remaining <= 0:
+            self._inflight.pop(cid, None)
+            stale = self._stale_clients.pop(cid, None)
+            if stale is not None and not stale.is_closed:
+                with contextlib.suppress(Exception):
+                    await stale.aclose()
+        else:
+            self._inflight[cid] = remaining
 
     async def _reset_stale_client(self, client: httpx.AsyncClient) -> None:
-        """Close and drop a real pooled transport client after connection-level failure."""
+        """Detach a real pooled transport client after connection-level failure; close once in-flight requests drain."""
         transport = getattr(client, "_transport", None)
         if not isinstance(transport, httpx.AsyncHTTPTransport):
             return
         if self._client is client:
             self._client = None
-        with contextlib.suppress(Exception):
-            await client.aclose()
+        cid = id(client)
+        if self._inflight.get(cid, 0) > 1:
+            self._stale_clients[cid] = client
+            return
+        self._stale_clients.pop(cid, None)
+        if not client.is_closed:
+            with contextlib.suppress(Exception):
+                await client.aclose()
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -362,6 +394,7 @@ class HTTPStreamTransport:
         )
 
         client = await self._get_client()
+        self._acquire_inflight(client)
         try:
             resp = await client.post(
                 url,
@@ -403,6 +436,8 @@ class HTTPStreamTransport:
                 err_detail,
             )
             raise TransportError(f"HTTP request failed: {err_detail}") from exc
+        finally:
+            await self._release_inflight(client)
 
     async def send_streaming_request(
         self,
@@ -436,6 +471,7 @@ class HTTPStreamTransport:
         logger.debug("建立流式请求: url=%s, u/%s", url, auth_user)
 
         client = await self._get_client()
+        self._acquire_inflight(client)
 
         resp = None
         try:
@@ -484,5 +520,8 @@ class HTTPStreamTransport:
             )
             yield ("error", err_detail)
         finally:
-            if resp is not None:
-                await resp.aclose()
+            try:
+                if resp is not None:
+                    await resp.aclose()
+            finally:
+                await self._release_inflight(client)

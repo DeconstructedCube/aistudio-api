@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { useAccountsStore } from '@/stores/accounts.ts'
 import { useSystemStore } from '@/stores/system.ts'
 import { usePolling } from '@/composables/usePolling.ts'
@@ -37,7 +37,6 @@ async function loadData() {
   ])
 }
 
-onMounted(loadData)
 usePolling(loadData, 8000)
 
 const allGroups = computed(() => {

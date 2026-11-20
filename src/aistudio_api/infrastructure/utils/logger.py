@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import time
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -298,8 +299,23 @@ def get_logger(name: str = "aistudio") -> logging.Logger:
 
 dump_logger = get_logger("dump")
 
+_request_account_var: ContextVar[tuple[str | None, str | None]] = ContextVar(
+    "request_account", default=(None, None)
+)
+
+
+def set_current_request_account(
+    account_id: str | None, auth_user: str | None = None
+) -> None:
+    _request_account_var.set((account_id, auth_user))
+
+
+def get_current_request_account() -> tuple[str | None, str | None]:
+    return _request_account_var.get()
+
+
 _SENSITIVE_FIELD_RE = re.compile(
-    r"(?i)(authorization|api[_-]?key|cookie|set-cookie|token|secret|password|auth)"
+    r"(?i)(authorization|api[_-]?key|^key$|cookie|set-cookie|token|secret|password|auth)"
 )
 
 
@@ -324,6 +340,16 @@ def _mask_query_params(qp: dict[str, str] | None) -> dict[str, str]:
     if not qp:
         return {}
     return {k: _mask_sensitive_value(k, str(v)) for k, v in qp.items()}
+
+
+def _mask_url_query(url: str) -> str:
+    if "?" not in url:
+        return url
+    return re.sub(
+        r"(?i)([?&](?:key|api[_-]?key|token|secret|password)=)([^&#]*)",
+        lambda m: m.group(1) + _mask_sensitive_value("key", m.group(2)),
+        url,
+    )
 
 
 def dump_request_exchange(
@@ -351,10 +377,10 @@ def dump_request_exchange(
     """转储单次完整请求与响应详细信息。"""
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
 
+    safe_url = _mask_url_query(url)
     safe_headers = _mask_headers(headers)
     safe_query_params = _mask_query_params(query_params)
     header_lines = "\n".join(f"    {k}: {v}" for k, v in safe_headers.items())
-
     # 格式化请求体
     pretty_body = ""
     if body_text:
@@ -420,14 +446,14 @@ def dump_request_exchange(
                 "timestamp": timestamp,
                 "iso_timestamp": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "method": method,
-                "url": url,
+                "url": safe_url,
                 "client": client,
                 "model": model,
                 "account_id": account_id,
                 "auth_user": auth_user,
-                "headers": headers,
+                "headers": safe_headers,
                 "safe_headers": safe_headers,
-                "query_params": query_params,
+                "query_params": safe_query_params,
                 "safe_query_params": safe_query_params,
                 "body": parsed_body,
                 "raw_body": body_text,
@@ -466,7 +492,7 @@ def dump_request_exchange(
         f"\n==================== [请求报文转储: {req_id}] ====================\n"
         f"记录时间:     {timestamp}\n"
         f"客户端:       {client}\n"
-        f"请求接口:     {method} {url}\n"
+        f"请求接口:     {method} {safe_url}\n"
         f"{model_line}"
         f"{acc_line}"
         f"{file_line}"

@@ -684,7 +684,7 @@ class AccountRotator:
 
             candidates.append((account, stats))
 
-        # 5. 上游模型能力要求过滤 (如果未传 required_tiers，按模型自身 accessModes 过滤)
+        # 5. 上游模型能力要求过滤 (如果未传 required_tiers，按模型自身付费规则与 accessModes 过滤)
         if model and candidates and not required_tiers:
             try:
                 from aistudio_api.infrastructure.gateway.model_discovery import (
@@ -698,7 +698,7 @@ class AccountRotator:
                         model, getattr(acc, "tier", "Free")
                     )
                 ]
-                if tier_matched:
+                if tier_matched or model_discovery.is_paid_model(model):
                     return tier_matched
             except Exception:
                 pass

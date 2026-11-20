@@ -785,6 +785,7 @@ def normalize_gemini_request(
                         function_response=(fr.name, resp_payload, fr.id)
                         if fr.id
                         else (fr.name, resp_payload),
+                        thought_signature=part.thoughtSignature,
                     )
                 )
                 if fr.parts:
@@ -842,25 +843,26 @@ def normalize_gemini_request(
         contents.append(AistudioContent(role=role, parts=parts))
     system_instruction = None
     if req.systemInstruction is not None:
-        system_instruction = AistudioContent(
-            role=req.systemInstruction.role or "user",
-            parts=[
-                AistudioPart(
-                    text=part.text,
-                    thought_signature=part.thoughtSignature,
-                )
-                if part.text is not None
-                else AistudioPart(
-                    inline_data=(part.inlineData.mimeType, part.inlineData.data)
-                    if part.inlineData
-                    else ("", ""),
-                    thought_signature=part.thoughtSignature,
-                )
-                for part in req.systemInstruction.parts
-                if part.text is not None or part.inlineData is not None
-            ],
-        )
-
+        sys_parts = [
+            AistudioPart(
+                text=part.text,
+                thought_signature=part.thoughtSignature,
+            )
+            if part.text is not None
+            else AistudioPart(
+                inline_data=(part.inlineData.mimeType, part.inlineData.data)
+                if part.inlineData
+                else ("", ""),
+                thought_signature=part.thoughtSignature,
+            )
+            for part in req.systemInstruction.parts
+            if part.text is not None or part.inlineData is not None
+        ]
+        if sys_parts:
+            system_instruction = AistudioContent(
+                role=req.systemInstruction.role or "user",
+                parts=sys_parts,
+            )
     model_defaults = resolve_model_defaults(model)
     tools = None
     seen_builtin: set[str] = set()

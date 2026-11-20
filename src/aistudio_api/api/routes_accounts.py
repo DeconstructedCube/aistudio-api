@@ -217,10 +217,29 @@ async def activate_account(
     return to_account_response(account)
 
 
+def _sync_active_session_tier(
+    runtime_state: RuntimeState,
+    account_service: AccountService,
+    account_id: str,
+    tier: str,
+) -> None:
+    client_obj = getattr(runtime_state, "client", None)
+    gateway_session = client_obj.session if client_obj is not None else None
+    active = account_service.get_active_account()
+    if (
+        gateway_session is not None
+        and active is not None
+        and active.id == account_id
+        and gateway_session.active_context is not None
+    ):
+        gateway_session.active_context.tier = normalize_benefit_tier(tier)
+
+
 @router.post("/{account_id}/detect-email", response_model=AccountResponse)
 async def detect_account_email(
     account_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@]+$"),
     account_service: AccountService = Depends(get_account_service),
+    runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> AccountResponse:
     """自动获取并更新指定账号的真实邮箱与订阅等级。"""
     acc = account_service.get_account(account_id)
@@ -255,6 +274,9 @@ async def detect_account_email(
 
     if detected_tier:
         account_service.update_account_tier(account_id, detected_tier)
+        _sync_active_session_tier(
+            runtime_state, account_service, account_id, detected_tier
+        )
         model_discovery.invalidate_cache()
         log.info("更新账号订阅等级: id=%s, tier=%s", account_id, detected_tier)
     acc = account_service.get_account(account_id)
@@ -267,6 +289,7 @@ async def detect_account_email(
 async def detect_account_tier(
     account_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@]+$"),
     account_service: AccountService = Depends(get_account_service),
+    runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> AccountResponse:
     """探测并更新指定账号的订阅权益等级 (Free / Pro / Ultra / Plus)。"""
     acc = account_service.get_account(account_id)
@@ -293,6 +316,9 @@ async def detect_account_tier(
 
     if detected_tier:
         account_service.update_account_tier(account_id, detected_tier)
+        _sync_active_session_tier(
+            runtime_state, account_service, account_id, detected_tier
+        )
         model_discovery.invalidate_cache()
         log.info("更新账号订阅等级: id=%s, tier=%s", account_id, detected_tier)
     acc = account_service.get_account(account_id)
@@ -314,16 +340,7 @@ async def update_account_tier_manual(
         raise HTTPException(status_code=404, detail="账号不存在")
     clean_tier = normalize_benefit_tier(req.tier)
     account_service.update_account_tier(account_id, clean_tier)
-    client_obj = getattr(runtime_state, "client", None)
-    gateway_session = client_obj.session if client_obj is not None else None
-    active = account_service.get_active_account()
-    if (
-        gateway_session is not None
-        and active is not None
-        and active.id == account_id
-        and gateway_session.active_context is not None
-    ):
-        gateway_session.active_context.tier = clean_tier
+    _sync_active_session_tier(runtime_state, account_service, account_id, clean_tier)
     model_discovery.invalidate_cache()
     log.info("手动更新账号订阅等级: id=%s, tier=%s", account_id, clean_tier)
     updated = account_service.get_account(account_id)
@@ -375,7 +392,7 @@ async def delete_account(
         runtime_state.rotator.remove_account(account_id)
     if is_active:
         remaining_accounts = account_service.list_accounts()
-        new_active = remaining_accounts[0] if remaining_accounts else None
+        new_active = next((a for a in remaining_accounts if a.enabled), None)
         gateway_session = runtime_state.client.session if runtime_state.client else None
         if new_active is not None:
             account_service.set_active_account(new_active.id)
@@ -387,6 +404,7 @@ async def delete_account(
         else:
             if gateway_session is not None:
                 await gateway_session.switch_auth(None)
+    model_discovery.invalidate_cache()
 
     log.info("已删除账号: id=%s", account_id)
     return {"ok": True}
@@ -394,7 +412,7 @@ async def delete_account(
 
 @router.delete("/group/{cookie_id}")
 async def delete_cookie_group(
-    cookie_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@]+$"),
+    cookie_id: str = FastApiPath(..., pattern=r"^[a-zA-Z0-9_\-\.@:]+$"),
     account_service: AccountService = Depends(get_account_service),
     runtime_state: RuntimeState = Depends(get_runtime_state),
 ) -> dict[str, int]:
@@ -407,7 +425,11 @@ async def delete_cookie_group(
     deleted_count = 0
     rotator = runtime_state.rotator
     for a in accounts:
-        acc_cid = getattr(a, "cookie_id", None) or f"cookie_{a.created_at[:16]}"
+        acc_cid = getattr(a, "cookie_id", None) or (
+            f"cookie_{a.created_at[:16]}"
+            if getattr(a, "created_at", None)
+            else f"cookie_{a.id}"
+        )
         if acc_cid == cookie_id:
             if a.id == active_id:
                 active_deleted = True
@@ -419,7 +441,7 @@ async def delete_cookie_group(
 
     if active_deleted:
         remaining_accounts = account_service.list_accounts()
-        new_active = remaining_accounts[0] if remaining_accounts else None
+        new_active = next((a for a in remaining_accounts if a.enabled), None)
         gateway_session = runtime_state.client.session if runtime_state.client else None
         if new_active is not None:
             account_service.set_active_account(new_active.id)
@@ -431,6 +453,8 @@ async def delete_cookie_group(
         else:
             if gateway_session is not None:
                 await gateway_session.switch_auth(None)
+    if deleted_count > 0:
+        model_discovery.invalidate_cache()
 
     return {"deleted": deleted_count}
 
@@ -903,12 +927,23 @@ async def import_bundle(
             ) from e
         items_to_import.extend(_extract_bundle_items(raw_data, req.content))
     elif req.file_path:
-        fpath = Path(req.file_path).expanduser().resolve()
+        raw_fpath = req.file_path.strip()
+        fpath = Path(raw_fpath).expanduser().resolve()
+        if fpath.suffix.lower() != ".json":
+            raise HTTPException(
+                status_code=400, detail="仅支持导入 .json 格式的凭据文件"
+            )
         if not fpath.is_file():
-            raise HTTPException(status_code=404, detail=f"文件不存在: {fpath}")
+            raise HTTPException(status_code=404, detail="指定的凭据文件不存在")
         try:
+            if fpath.stat().st_size > 16 * 1024 * 1024:
+                raise HTTPException(
+                    status_code=400, detail="凭据文件大小超出 16MB 限制"
+                )
             raw_text = fpath.read_text(encoding="utf-8")
             raw_data = json.loads(raw_text)
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(
                 status_code=400, detail=f"读取或解析文件失败: {e}"

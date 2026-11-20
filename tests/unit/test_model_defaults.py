@@ -413,3 +413,43 @@ def test_validate_config_sections_rejects_invalid_quota_and_rotator():
 
     with pytest.raises(ValueError, match="stickiness_threshold"):
         validate_config_sections({"rotator": {"stickiness_threshold": 1.5}})
+
+
+def test_partial_rotator_config_deep_merges_defaults_without_key_error(
+    tmp_path, monkeypatch
+):
+    from unittest.mock import MagicMock
+
+    from aistudio_api.application.account_rotator import AccountRotator, AccountStats
+    from aistudio_api.infrastructure.account.account_store import (
+        AccountMeta,
+        AccountStore,
+    )
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        get_configured_rotator_settings,
+        invalidate_config_cache,
+    )
+
+    partial_cfg = tmp_path / "partial_rotator.yaml"
+    partial_cfg.write_text("rotator:\n  max_retries: 3\n", encoding="utf-8")
+    monkeypatch.setenv("AISTUDIO_CONFIG_FILE", str(partial_cfg))
+    invalidate_config_cache()
+
+    rot_cfg = get_configured_rotator_settings(partial_cfg)
+    assert rot_cfg["max_retries"] == 3
+    assert isinstance(rot_cfg["tier_weights"], dict)
+    assert isinstance(rot_cfg["cooldowns"], dict)
+
+    store = MagicMock(spec=AccountStore)
+    acc = AccountMeta(
+        id="acc_1", name="Test", email="t@example.com", created_at="2026-01-01"
+    )
+    store.list_accounts.return_value = [acc]
+    rotator = AccountRotator(store)
+    stats = AccountStats(account_id="acc_1")
+    score = rotator._score_candidate(
+        acc, stats, "gemini-3.8-flash", current_account_id="acc_1"
+    )
+    assert isinstance(score, float)
+    stats.record_rate_limited("gemini-3.8-flash")
+    assert stats.get_cooldown_remaining("gemini-3.8-flash") > 0

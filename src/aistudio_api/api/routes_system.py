@@ -339,9 +339,10 @@ async def update_config_yaml(req: ConfigYamlUpdateRequest) -> dict[str, object]:
             raise HTTPException(400, detail=f"配置校验失败: {e}") from e
     config_yaml_path = _resolve_config_path(None)
     try:
-        config_yaml_path.write_text(req.yaml_content, encoding="utf-8")
-        invalidate_config_cache()
+        from aistudio_api.infrastructure.utils.common import atomic_write_text
 
+        atomic_write_text(config_yaml_path, req.yaml_content)
+        invalidate_config_cache()
         if isinstance(parsed, dict):
             from aistudio_api.infrastructure.gateway.model_defaults import (
                 get_configured_logging_settings,
@@ -495,26 +496,34 @@ async def create_api_key(req: CreateApiKeyRequest) -> ApiKeyItemModel:
     if isinstance(raw_keys, list):
         for item in raw_keys:
             if isinstance(item, dict):
+                existing_key = str(item.get("key") or "").strip()
+                if existing_key == new_key:
+                    raise HTTPException(409, detail="该 API Key 已存在")
                 new_list.append(
                     {
                         "name": str(item.get("name") or "API Key"),
-                        "key": str(item.get("key") or ""),
+                        "key": existing_key,
                         "created_at": str(item.get("created_at") or ""),
                     }
                 )
             elif isinstance(item, str) and item.strip():
+                existing_key = item.strip()
+                if existing_key == new_key:
+                    raise HTTPException(409, detail="该 API Key 已存在")
                 new_list.append(
-                    {"name": "API Key", "key": item.strip(), "created_at": ""}
+                    {"name": "API Key", "key": existing_key, "created_at": ""}
                 )
 
     new_list.append({"name": name, "key": new_key, "created_at": created_at})
     parsed["api_keys"] = new_list
 
-    config_path.write_text(
-        yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    from aistudio_api.infrastructure.utils.common import atomic_write_text
+
+    atomic_write_text(
+        config_path,
+        yaml.dump(parsed, allow_unicode=True, sort_keys=False),
     )
     invalidate_config_cache()
-
     logger.info("创建 API Key: 备注=%s, 前缀=%s", name, new_key[:8] + "...")
     return ApiKeyItemModel(name=name, key=new_key, created_at=created_at)
 
@@ -553,11 +562,13 @@ async def delete_api_key(key_value: str) -> dict[str, bool]:
         raise HTTPException(404, detail="未找到该 API Key")
 
     parsed["api_keys"] = new_list
-    config_path.write_text(
-        yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    from aistudio_api.infrastructure.utils.common import atomic_write_text
+
+    atomic_write_text(
+        config_path,
+        yaml.dump(parsed, allow_unicode=True, sort_keys=False),
     )
     invalidate_config_cache()
-
     logger.info("删除 API Key: 前缀=%s", key_value[:8] + "...")
     return {"ok": True}
 
@@ -602,8 +613,11 @@ async def update_api_key_name(
         raise HTTPException(404, detail="未找到该 API Key")
 
     parsed["api_keys"] = new_list
-    config_path.write_text(
-        yaml.dump(parsed, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    from aistudio_api.infrastructure.utils.common import atomic_write_text
+
+    atomic_write_text(
+        config_path,
+        yaml.dump(parsed, allow_unicode=True, sort_keys=False),
     )
     invalidate_config_cache()
     logger.info("更新 API Key 备注: 前缀=%s, 备注=%s", key_value[:8] + "...", new_name)

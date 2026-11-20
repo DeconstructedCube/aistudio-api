@@ -22,10 +22,12 @@ from aistudio_api.infrastructure.gateway.model_defaults import (
 )
 from aistudio_api.infrastructure.utils.logger import (
     dump_request_exchange,
+    get_current_request_account,
     get_log_level,
     get_logger,
     is_dump_requests_enabled,
     is_dump_to_file_enabled,
+    set_current_request_account,
     setup_logging,
 )
 
@@ -156,9 +158,22 @@ async def lifespan(_app: FastAPI):
                         account_store.update_account_tier(
                             a.id, resolved_tier, checked_at=now_ts
                         )
+                        active_now = account_store.get_active_account()
+                        if (
+                            active_now is not None
+                            and active_now.id == a.id
+                            and client.session is not None
+                            and client.session.active_context is not None
+                        ):
+                            client.session.active_context.tier = resolved_tier
                         if resolved_tier != old_tier:
                             if old_tier == "Free" and resolved_tier != "Free":
                                 upgraded_count += 1
+                            from aistudio_api.infrastructure.gateway.model_discovery import (
+                                model_discovery,
+                            )
+
+                            model_discovery.invalidate_cache()
                             logger.info(
                                 "账号订阅等级更新: id=%s (u/%s) %s -> %s",
                                 a.id,
@@ -274,9 +289,23 @@ async def lifespan(_app: FastAPI):
 
     yield
     logger.info("正在关闭服务")
-    for bg_task in (tier_task, rotate_task):
-        if bg_task and not bg_task.done():
-            bg_task.cancel()
+    bg_tasks = [t for t in (tier_task, rotate_task) if t and not t.done()]
+    for bg_task in bg_tasks:
+        bg_task.cancel()
+    if bg_tasks:
+        await asyncio.gather(*bg_tasks, return_exceptions=True)
+    for pending_save in (
+        getattr(runtime_state, "_save_task", None),
+        getattr(rotator, "_save_task", None),
+    ):
+        done_fn = getattr(pending_save, "done", None)
+        cancel_fn = getattr(pending_save, "cancel", None)
+        if callable(done_fn) and callable(cancel_fn) and not done_fn():
+            cancel_fn()
+            await asyncio.gather(pending_save, return_exceptions=True)  # type: ignore[arg-type]
+    runtime_state.save_stats()
+    if rotator is not None and callable(getattr(rotator, "save_state", None)):
+        rotator.save_state()
     if client:
         try:
             await client.close()
@@ -354,13 +383,20 @@ async def validation_exception_handler(
     )
 
 
+def _safe_log_path(path: str) -> str:
+    if path.startswith("/api-keys/") and len(path) > len("/api-keys/") + 8:
+        raw_k = path[len("/api-keys/") :]
+        return f"/api-keys/{raw_k[:8]}..."
+    return path
+
+
 @app.middleware("http")
 async def logging_and_dump_middleware(request, call_next):
     """统一请求生命周期日志与请求转储 (DEBUG) 中间件。"""
 
     start_time = time.perf_counter()
     path = request.url.path
-
+    log_path = _safe_log_path(path)
     is_static = path.startswith(("/static", "/assets")) or path in ("/favicon.ico",)
     console_dump = is_dump_requests_enabled() and not is_static
     file_dump = is_dump_to_file_enabled() and not is_static
@@ -392,10 +428,12 @@ async def logging_and_dump_middleware(request, call_next):
         except Exception:
             body_text = "(failed to read request body)"
 
+    set_current_request_account(None, None)
     try:
         response = await call_next(request)
     except Exception as exc:
         elapsed_ms = (time.perf_counter() - start_time) * 1000
+        ctx_acc_id, ctx_auth_user = get_current_request_account()
         active_acc = (
             runtime_state.account_service.get_active_account()
             if runtime_state.account_service
@@ -414,8 +452,9 @@ async def logging_and_dump_middleware(request, call_next):
                 elapsed_ms=elapsed_ms,
                 response_text=f"Internal Server Error (Exception: {exc})",
                 model=req_model,
-                account_id=active_acc.id if active_acc else None,
-                auth_user=active_acc.auth_user if active_acc else None,
+                account_id=ctx_acc_id or (active_acc.id if active_acc else None),
+                auth_user=ctx_auth_user
+                or (active_acc.auth_user if active_acc else None),
                 error_detail=str(exc),
                 emit_console=console_dump,
             )
@@ -423,7 +462,7 @@ async def logging_and_dump_middleware(request, call_next):
             logger.error(
                 "HTTP %s %s -> 500 (%.1fms, %s)",
                 request.method,
-                path,
+                log_path,
                 elapsed_ms,
                 exc,
             )
@@ -437,14 +476,14 @@ async def logging_and_dump_middleware(request, call_next):
     )
 
     if dump_enabled:
+        ctx_acc_id, ctx_auth_user = get_current_request_account()
         active_acc = (
             runtime_state.account_service.get_active_account()
             if runtime_state.account_service
             else None
         )
-        req_acc_id = active_acc.id if active_acc else None
-        req_auth_user = active_acc.auth_user if active_acc else None
-
+        req_acc_id = ctx_acc_id or (active_acc.id if active_acc else None)
+        req_auth_user = ctx_auth_user or (active_acc.auth_user if active_acc else None)
         if is_streaming_resp:
             orig_iterator = response.body_iterator
             captured_chunks: list[bytes] = []
@@ -474,6 +513,7 @@ async def logging_and_dump_middleware(request, call_next):
                     resp_text = b"".join(captured_chunks).decode(
                         "utf-8", errors="replace"
                     )
+                    s_acc_id, s_auth_user = get_current_request_account()
                     dump_request_exchange(
                         req_id=req_id,
                         method=request.method,
@@ -488,8 +528,8 @@ async def logging_and_dump_middleware(request, call_next):
                         response_text=resp_text or "(empty stream)",
                         is_stream=is_event_stream,
                         model=req_model,
-                        account_id=req_acc_id,
-                        auth_user=req_auth_user,
+                        account_id=s_acc_id or req_acc_id,
+                        auth_user=s_auth_user or req_auth_user,
                         error_detail=stream_err,
                         emit_console=console_dump,
                     )
@@ -499,16 +539,28 @@ async def logging_and_dump_middleware(request, call_next):
                 logger.info(
                     "HTTP %s %s -> %d (%.1fms)",
                     request.method,
-                    path,
+                    log_path,
                     response.status_code,
                     elapsed_ms,
                 )
         else:
+            max_capture_bytes = 512 * 1024
             try:
-                # 读取非流式响应体并重构 iterator 以便正常返回给客户端
+                # 读取非流式响应体并重构 iterator 以便正常返回给客户端（转储截取上限 512KB）
                 chunks = [chunk async for chunk in response.body_iterator]
-                resp_bytes = b"".join(chunks)
-                resp_text = resp_bytes.decode("utf-8", errors="replace")
+                captured_parts: list[bytes] = []
+                captured_len = 0
+                total_len = 0
+                for c in chunks:
+                    raw_c = c if isinstance(c, bytes) else str(c).encode("utf-8")
+                    total_len += len(raw_c)
+                    if captured_len < max_capture_bytes:
+                        rem = max_capture_bytes - captured_len
+                        captured_parts.append(raw_c[:rem])
+                        captured_len += len(raw_c[:rem])
+                resp_text = b"".join(captured_parts).decode("utf-8", errors="replace")
+                if total_len > max_capture_bytes:
+                    resp_text += f"\n... [truncated dump at {max_capture_bytes} of {total_len} bytes]"
 
                 async def _replay_iterator():
                     for c in chunks:
@@ -540,7 +592,7 @@ async def logging_and_dump_middleware(request, call_next):
                 logger.info(
                     "HTTP %s %s -> %d (%.1fms)",
                     request.method,
-                    path,
+                    log_path,
                     response.status_code,
                     elapsed_ms,
                 )
@@ -548,7 +600,7 @@ async def logging_and_dump_middleware(request, call_next):
         logger.info(
             "HTTP %s %s -> %d (%.1fms)",
             request.method,
-            path,
+            log_path,
             response.status_code,
             elapsed_ms,
         )

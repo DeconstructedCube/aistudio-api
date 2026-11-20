@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import type { ModelOverrideMap, ModelOverrideItem, ThinkingConfig } from './types.ts'
 import {
   TOOL_SUGGESTIONS,
@@ -17,6 +17,7 @@ import { Plus, Trash2, ChevronDown, ChevronRight, Layers, Cpu, Wrench } from 'lu
 
 const props = defineProps<{
   models: ModelOverrideMap
+  filterKeyword?: string
 }>()
 
 const emit = defineEmits<{
@@ -25,6 +26,19 @@ const emit = defineEmits<{
 
 const newModelName = ref('')
 const expandedMap = ref<Record<string, boolean>>({})
+
+const visibleModels = computed<ModelOverrideMap>(() => {
+  const allModels = props.models || {}
+  const kw = (props.filterKeyword || '').trim().toLowerCase()
+  if (!kw) return allModels
+  const result: ModelOverrideMap = {}
+  for (const [key, val] of Object.entries(allModels)) {
+    if (key.toLowerCase().includes(kw)) {
+      result[key] = val
+    }
+  }
+  return result
+})
 
 function toggleExpand(modelKey: string) {
   expandedMap.value[modelKey] = !expandedMap.value[modelKey]
@@ -129,11 +143,11 @@ function updateModelThinkingConfig(modelKey: string, level: string | null) {
 
     <!-- Override List -->
     <div
-      v-if="Object.keys(models || {}).length"
+      v-if="Object.keys(visibleModels).length"
       class="space-y-3"
     >
       <div
-        v-for="(override, modelKey) in models"
+        v-for="(override, modelKey) in visibleModels"
         :key="modelKey"
         class="bg-white border border-gray-200/90 rounded-2xl shadow-xs overflow-hidden"
       >
@@ -335,6 +349,12 @@ function updateModelThinkingConfig(modelKey: string, level: string | null) {
       </div>
     </div>
 
+    <div
+      v-else-if="filterKeyword?.trim() && Object.keys(models || {}).length"
+      class="p-6 text-center text-gray-400 text-xs border border-dashed border-gray-200 rounded-2xl"
+    >
+      未找到匹配 "{{ filterKeyword }}" 的单模型覆盖规则
+    </div>
     <div
       v-else
       class="p-8 text-center text-gray-400 text-xs border border-dashed border-gray-200 rounded-2xl bg-gray-50/50"

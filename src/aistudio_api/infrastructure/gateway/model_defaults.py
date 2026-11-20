@@ -557,16 +557,30 @@ def _load_yaml_config(config_path: Path) -> dict[str, object]:
     loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     if not isinstance(loaded, dict):
         loaded = {}
-    merged: dict[str, object] = _default_config()
+    def_config = _default_config()
+    merged: dict[str, object] = dict(def_config)
     merged.update(loaded)
-    raw_merged_defaults = merged.get("model_defaults")
-    raw_loaded_defaults = loaded.get("model_defaults")
-    if isinstance(raw_merged_defaults, dict) and isinstance(raw_loaded_defaults, dict):
-        def_config = _default_config()
-        def_md = def_config.get("model_defaults")
-        merged_model_defaults = dict(def_md if isinstance(def_md, dict) else {})
-        merged_model_defaults.update(raw_loaded_defaults)
-        merged["model_defaults"] = merged_model_defaults
+    for section_key in ("model_defaults", "logging"):
+        def_sec = def_config.get(section_key)
+        load_sec = loaded.get(section_key)
+        if isinstance(def_sec, dict) and isinstance(load_sec, dict):
+            sec_merged = dict(def_sec)
+            sec_merged.update(load_sec)
+            merged[section_key] = sec_merged
+    def_rot = def_config.get("rotator")
+    load_rot = loaded.get("rotator")
+    if isinstance(def_rot, dict) and isinstance(load_rot, dict):
+        rot_merged = dict(def_rot)
+        rot_merged.update(load_rot)
+        for sub_key in ("tier_weights", "cooldowns"):
+            def_sub = def_rot.get(sub_key)
+            load_sub = load_rot.get(sub_key)
+            if isinstance(def_sub, dict):
+                sub_merged = dict(def_sub)
+                if isinstance(load_sub, dict):
+                    sub_merged.update(load_sub)
+                rot_merged[sub_key] = sub_merged
+        merged["rotator"] = rot_merged
     _CONFIG_CACHE[path_key] = (mtime, merged)
     return merged
 
@@ -744,9 +758,11 @@ def update_configured_logging_settings(
         logging_dict["dump_dir"] = dump_dir
 
     parsed["logging"] = logging_dict
-    resolved_path.write_text(
+    from aistudio_api.infrastructure.utils.common import atomic_write_text
+
+    atomic_write_text(
+        resolved_path,
         yaml.dump(parsed, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
     )
     invalidate_config_cache()
     return logging_dict

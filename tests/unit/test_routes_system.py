@@ -205,3 +205,24 @@ tier_quotas:
         acc_fresh, st2, "gemini-4-hydrogen", current_account_id="acc_1"
     )
     assert score2 < score1
+
+
+@pytest.mark.asyncio
+async def test_create_duplicate_api_key_returns_409(tmp_path, monkeypatch):
+    from unittest.mock import patch
+
+    test_yaml = tmp_path / "config.yaml"
+    test_yaml.write_text("api_keys: []\n", encoding="utf-8")
+    with patch(
+        "aistudio_api.api.routes_system._resolve_config_path",
+        return_value=test_yaml,
+    ):
+        async with _client() as client:
+            r1 = await client.post(
+                "/api-keys", json={"name": "k1", "key": "sk-dup-test-key"}
+            )
+            assert r1.status_code == 200
+            r2 = await client.post(
+                "/api-keys", json={"name": "k2", "key": "sk-dup-test-key"}
+            )
+            assert r2.status_code == 409

@@ -23,34 +23,34 @@ export const accountsApi = {
   },
 
   activate(id: string): Promise<Account> {
-    return request<Account>(`/api/accounts/${id}/activate`, {
+    return request<Account>(`/api/accounts/${encodeURIComponent(id)}/activate`, {
       method: 'POST',
     })
   },
   detectEmail(id: string): Promise<Account> {
-    return request<Account>(`/api/accounts/${id}/detect-email`, {
+    return request<Account>(`/api/accounts/${encodeURIComponent(id)}/detect-email`, {
       method: 'POST',
     })
   },
   detectTier(id: string): Promise<Account> {
-    return request<Account>(`/api/accounts/${id}/detect-tier`, {
+    return request<Account>(`/api/accounts/${encodeURIComponent(id)}/detect-tier`, {
       method: 'POST',
     })
   },
   updateTier(id: string, tier: string): Promise<Account> {
-    return request<Account>(`/api/accounts/${id}/tier`, {
+    return request<Account>(`/api/accounts/${encodeURIComponent(id)}/tier`, {
       method: 'PUT',
       body: JSON.stringify({ tier }),
     })
   },
   delete(id: string): Promise<{ ok: boolean }> {
-    return request<{ ok: boolean }>(`/api/accounts/${id}`, {
+    return request<{ ok: boolean }>(`/api/accounts/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     })
   },
 
   update(id: string, name: string): Promise<Account> {
-    return request<Account>(`/api/accounts/${id}`, {
+    return request<Account>(`/api/accounts/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: JSON.stringify({ name }),
     })
@@ -82,21 +82,21 @@ export const accountsApi = {
   },
 
   toggle(id: string, enabled?: boolean): Promise<Account> {
-    return request<Account>(`/api/accounts/${id}/toggle`, {
+    return request<Account>(`/api/accounts/${encodeURIComponent(id)}/toggle`, {
       method: 'POST',
       body: JSON.stringify({ enabled }),
     })
   },
 
   updateGroup(id: string, group: string): Promise<Account> {
-    return request<Account>(`/api/accounts/${id}/group`, {
+    return request<Account>(`/api/accounts/${encodeURIComponent(id)}/group`, {
       method: 'PUT',
       body: JSON.stringify({ group }),
     })
   },
 
   updateNotes(id: string, notes: string): Promise<Account> {
-    return request<Account>(`/api/accounts/${id}/notes`, {
+    return request<Account>(`/api/accounts/${encodeURIComponent(id)}/notes`, {
       method: 'PUT',
       body: JSON.stringify({ notes }),
     })

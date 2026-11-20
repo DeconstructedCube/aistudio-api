@@ -177,6 +177,12 @@ func newGoWAARuntime(ctx context.Context, options camoufoxnative.Options) (*goWA
 	if err != nil {
 		return nil, err
 	}
+	success := false
+	defer func() {
+		if !success && runtime.client != nil {
+			runtime.client.CloseIdleConnections()
+		}
+	}()
 	runtime.pageURL += "?model=" + url.QueryEscape(options.Model)
 	if options.TemporaryChat {
 		runtime.pageURL += "&temporary=true"
@@ -259,6 +265,7 @@ func newGoWAARuntime(ctx context.Context, options camoufoxnative.Options) (*goWA
 	}
 	runtime.vm = vm
 	runtime.scheduleRefresh()
+	success = true
 	return runtime, nil
 }
 
@@ -437,6 +444,9 @@ func CheckSession(ctx context.Context, options camoufoxnative.Options) error {
 	runtime, _, err := newGoPageRuntime(options)
 	if err != nil {
 		return err
+	}
+	if runtime.client != nil {
+		defer runtime.client.CloseIdleConnections()
 	}
 	_, err = runtime.loadPage(ctx)
 	return err
@@ -874,6 +884,9 @@ func (runtime *goWAARuntime) Close() error {
 	if runtime.vm != nil {
 		runtime.vm.Close()
 		runtime.vm = nil
+	}
+	if runtime.client != nil {
+		runtime.client.CloseIdleConnections()
 	}
 	return nil
 }

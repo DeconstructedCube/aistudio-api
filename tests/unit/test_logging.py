@@ -374,3 +374,45 @@ async def test_file_only_dump_without_console_dump_works_for_keepalive_stream(tm
         set_dump_to_file(None)
         set_dump_requests(None)
         set_dump_dir(None)
+
+
+def test_dump_request_exchange_masks_url_and_persisted_headers(tmp_path):
+    """Verify dump_request_exchange masks ?key= in URL and never writes raw secrets into dump JSON."""
+    import json
+
+    from aistudio_api.infrastructure.utils.logger import (
+        set_dump_dir,
+        set_dump_to_file,
+    )
+
+    dump_dir = tmp_path / "masked_dumps"
+    set_dump_dir(dump_dir)
+    set_dump_to_file(True)
+    try:
+        dump_request_exchange(
+            req_id="req_mask_check",
+            method="POST",
+            url="http://localhost:8080/v1beta/models/gemini-3.8-flash:generateContent?key=AIzaSecretKey123456&alt=sse",
+            client="127.0.0.1:12345",
+            headers={
+                "Authorization": "Bearer super_secret_bearer_token_999",
+                "Cookie": "SAPISID= top_secret_cookie_value",
+                "Content-Type": "application/json",
+            },
+            query_params={"key": "AIzaSecretKey123456", "alt": "sse"},
+            body_text="{}",
+            status_code=200,
+            elapsed_ms=10.0,
+            emit_console=False,
+        )
+        raw_json = (dump_dir / "req_mask_check.json").read_text(encoding="utf-8")
+        assert "AIzaSecretKey123456" not in raw_json
+        assert "super_secret_bearer_token_999" not in raw_json
+        assert "top_secret_cookie_value" not in raw_json
+        data = json.loads(raw_json)
+        assert "key=AIzaSe..." in data["url"]
+        assert data["query_params"]["alt"] == "sse"
+        assert data["headers"]["Content-Type"] == "application/json"
+    finally:
+        set_dump_to_file(None)
+        set_dump_dir(None)

@@ -618,3 +618,35 @@ func TestServeIPCHealthMintLargePayloadAndEOFShutdown(t *testing.T) {
 		t.Fatalf("expected clean worker shutdown after EOF, active=%d", pool.ActiveCount())
 	}
 }
+
+func TestWorkerPoolEvictsExpiredIdleEntries(t *testing.T) {
+	pool, factory := newOfflinePool()
+
+	// Acquire first worker
+	lease1, err := pool.AcquireWorker(context.Background(), offlineCookies, 0, "gemini-3.7-flash", "")
+	if err != nil {
+		t.Fatalf("acquire worker 0 failed: %v", err)
+	}
+	key1 := lease1.key
+	// Backdate entry1 beyond maxWorkerAge
+	lease1.entry.createdAt = time.Now().Add(-maxWorkerAge - time.Minute)
+	lease1.entry.lastUsed = lease1.entry.createdAt
+	lease1.Release()
+
+	// Acquiring a different worker triggers evictExpiredEntries(key2)
+	lease2, err := pool.AcquireWorker(context.Background(), offlineCookies, 1, "gemini-3.7-flash", "")
+	if err != nil {
+		t.Fatalf("acquire worker 1 failed: %v", err)
+	}
+	lease2.Release()
+
+	pool.mu.RLock()
+	_, stillPresent := pool.entries[key1]
+	pool.mu.RUnlock()
+	if stillPresent {
+		t.Fatalf("expected expired worker entry %s to be evicted from pool.entries", key1)
+	}
+	if factory.calls() != 2 || pool.ActiveCount() != 1 {
+		t.Fatalf("expected 1 active worker after eviction, got calls=%d active=%d", factory.calls(), pool.ActiveCount())
+	}
+}

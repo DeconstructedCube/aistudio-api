@@ -92,9 +92,10 @@ def require_api_key(request: Request) -> None:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if token in all_valid_keys:
+    if any(
+        secrets.compare_digest(token, valid_k) for valid_k in all_valid_keys if valid_k
+    ):
         return
-
     # 匹配管理密码（管理员具备超级 API 访问权限）
     if (
         token

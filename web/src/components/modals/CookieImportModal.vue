@@ -45,8 +45,15 @@ function onFileChange(event: Event) {
     try {
       const parsed = JSON.parse(text)
       if (Array.isArray(parsed)) {
-        detectedCount.value = parsed.length
-      } else if (Array.isArray(parsed.cookies)) {
+        const isCookieArray =
+          parsed.length > 0 &&
+          typeof parsed[0] === 'object' &&
+          parsed[0] !== null &&
+          'name' in parsed[0] &&
+          'value' in parsed[0] &&
+          !('cookies' in parsed[0])
+        detectedCount.value = isCookieArray ? 1 : parsed.length
+      } else if (Array.isArray(parsed.cookies) || typeof parsed.cookies === 'string') {
         detectedCount.value = 1
       } else {
         const list = parsed.accounts || parsed.profiles || []

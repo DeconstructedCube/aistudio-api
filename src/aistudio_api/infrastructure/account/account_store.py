@@ -235,7 +235,7 @@ class AccountStore:
         self._presets_path = self._accounts_dir / "presets.json"
         self._registry: Registry | None = None
         self._presets: dict[str, AccountPreset] | None = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._ensure_dirs()
         self._ensure_default_presets()
         self._initialized = True
@@ -279,7 +279,19 @@ class AccountStore:
                     reconciled = True
                 if reconciled:
                     _atomic_write_json(self._registry_path, self._registry.to_dict())
-            except Exception:
+            except Exception as exc:
+                from aistudio_api.infrastructure.utils.logger import get_logger
+
+                get_logger("account_store").error(
+                    "读取账号注册表失败 (%s): %s", self._registry_path, exc
+                )
+                if self._registry is not None:
+                    return self._registry
+                try:
+                    backup_path = self._registry_path.with_suffix(".json.corrupt")
+                    shutil.copy2(self._registry_path, backup_path)
+                except OSError:
+                    pass
                 self._registry = Registry(accounts={})
             return self._registry
 
@@ -291,8 +303,9 @@ class AccountStore:
 
     def list_accounts(self) -> list[AccountMeta]:
         """列出所有账号。"""
-        registry = self._load_registry()
-        return list(registry.accounts.values())
+        with self._lock:
+            registry = self._load_registry()
+            return list(registry.accounts.values())
 
     def _find_registered_account(
         self, registry: Registry, account_id: str
@@ -301,8 +314,9 @@ class AccountStore:
 
     def get_account(self, account_id: str) -> AccountMeta | None:
         """获取单个账号。"""
-        registry = self._load_registry()
-        return self._find_registered_account(registry, account_id)
+        with self._lock:
+            registry = self._load_registry()
+            return self._find_registered_account(registry, account_id)
 
     def is_cookie_generation_current(
         self, account_id: str, cookie_id: str | None
@@ -313,45 +327,48 @@ class AccountStore:
 
     def get_active_account(self) -> AccountMeta | None:
         """获取当前活跃账号，若未设置或已被禁用则回退到首个可用账号。"""
-        registry = self._load_registry()
-        if (
-            registry.active_account_id
-            and registry.active_account_id in registry.accounts
-        ):
-            active = registry.accounts[registry.active_account_id]
-            if active.enabled:
-                return active
-        if registry.accounts:
-            first_enabled = next(
-                (acc for acc in registry.accounts.values() if acc.enabled),
-                None,
-            )
-            if first_enabled is not None:
-                registry.active_account_id = first_enabled.id
-                self._save_registry(registry)
-                return first_enabled
-        return None
+        with self._lock:
+            registry = self._load_registry()
+            if (
+                registry.active_account_id
+                and registry.active_account_id in registry.accounts
+            ):
+                active = registry.accounts[registry.active_account_id]
+                if active.enabled:
+                    return active
+            if registry.accounts:
+                first_enabled = next(
+                    (acc for acc in registry.accounts.values() if acc.enabled),
+                    None,
+                )
+                if first_enabled is not None:
+                    registry.active_account_id = first_enabled.id
+                    self._save_registry(registry)
+                    return first_enabled
+            return None
 
     def get_active_auth_path(self) -> Path | None:
         """获取当前活跃账号的 auth.json 路径。"""
-        account = self.get_active_account()
-        if account is None:
-            return None
-        return self._accounts_dir / account.id / "auth.json"
+        with self._lock:
+            account = self.get_active_account()
+            if account is None:
+                return None
+            return self._accounts_dir / account.id / "auth.json"
 
     def set_active_account(self, account_id: str) -> AccountMeta | None:
         """设置活跃账号，返回账号元数据或 None（如果不存在）。"""
-        registry = self._load_registry()
-        acc = self._find_registered_account(registry, account_id)
-        if acc is None:
-            return None
-        changed = registry.active_account_id != acc.id
-        registry.active_account_id = acc.id
-        now = datetime.now(UTC).isoformat()
-        acc.last_used = now
-        if changed:
-            self._save_registry(registry)
-        return acc
+        with self._lock:
+            registry = self._load_registry()
+            acc = self._find_registered_account(registry, account_id)
+            if acc is None:
+                return None
+            changed = registry.active_account_id != acc.id
+            registry.active_account_id = acc.id
+            now = datetime.now(UTC).isoformat()
+            acc.last_used = now
+            if changed:
+                self._save_registry(registry)
+            return acc
 
     def save_account(
         self,
@@ -367,123 +384,136 @@ class AccountStore:
         notes: str = "",
     ) -> AccountMeta:
         """保存新账号。"""
-        registry = self._load_registry()
-        now = datetime.now(UTC).isoformat()
-        created_at = now
-        resolved_tier = tier or "Free"
-        resolved_enabled = enabled
-        resolved_group = group or "default"
-        resolved_notes = notes
+        with self._lock:
+            registry = self._load_registry()
+            now = datetime.now(UTC).isoformat()
+            created_at = now
+            resolved_tier = tier or "Free"
+            resolved_enabled = enabled
+            resolved_group = group or "default"
+            resolved_notes = notes
 
-        if account_id is None and email:
-            for acc in registry.accounts.values():
-                if acc.email == email and acc.auth_user == auth_user:
-                    account_id = acc.id
-                    created_at = acc.created_at
-                    if resolved_tier == "Free" and acc.tier and acc.tier != "Free":
-                        resolved_tier = acc.tier
-                    if resolved_group == "default" and acc.group:
-                        resolved_group = acc.group
-                    if not resolved_notes and acc.notes:
-                        resolved_notes = acc.notes
-                    if not acc.enabled and enabled is True:
-                        resolved_enabled = acc.enabled
-                    break
+            if account_id is None and email:
+                for acc in registry.accounts.values():
+                    if acc.email == email and acc.auth_user == auth_user:
+                        account_id = acc.id
+                        created_at = acc.created_at
+                        if resolved_tier == "Free" and acc.tier and acc.tier != "Free":
+                            resolved_tier = acc.tier
+                        if resolved_group == "default" and acc.group:
+                            resolved_group = acc.group
+                        if not resolved_notes and acc.notes:
+                            resolved_notes = acc.notes
+                        if not acc.enabled and enabled is True:
+                            resolved_enabled = acc.enabled
+                        break
 
-        if account_id is not None:
-            existing = self._find_registered_account(registry, account_id)
-            if existing is not None:
-                account_id = existing.id
-                created_at = existing.created_at
-                if (
-                    resolved_tier == "Free"
-                    and existing.tier
-                    and existing.tier != "Free"
-                ):
-                    resolved_tier = existing.tier
-                if resolved_group == "default" and existing.group:
-                    resolved_group = existing.group
-                if not resolved_notes and existing.notes:
-                    resolved_notes = existing.notes
-                if not existing.enabled and enabled is True:
-                    resolved_enabled = existing.enabled
-        else:
-            account_id = _generate_account_id()
+            if account_id is not None:
+                existing = self._find_registered_account(registry, account_id)
+                if existing is not None:
+                    account_id = existing.id
+                    created_at = existing.created_at
+                    if (
+                        resolved_tier == "Free"
+                        and existing.tier
+                        and existing.tier != "Free"
+                    ):
+                        resolved_tier = existing.tier
+                    if resolved_group == "default" and existing.group:
+                        resolved_group = existing.group
+                    if not resolved_notes and existing.notes:
+                        resolved_notes = existing.notes
+                    if not existing.enabled and enabled is True:
+                        resolved_enabled = existing.enabled
+            else:
+                account_id = _generate_account_id()
 
-        account_dir = _safe_account_dir(self._accounts_dir, account_id)
-        safe_id = account_dir.name
-        existing_meta = registry.accounts.get(safe_id)
-        meta = AccountMeta(
-            id=safe_id,
-            name=name,
-            email=email,
-            created_at=created_at,
-            last_used=now,
-            auth_user=auth_user,
-            cookie_id=cookie_id or (existing_meta.cookie_id if existing_meta else None),
-            tier=resolved_tier,
-            tier_checked_at=existing_meta.tier_checked_at if existing_meta else None,
-            last_rotated_at=existing_meta.last_rotated_at if existing_meta else None,
-            enabled=resolved_enabled,
-            group=resolved_group,
-            notes=resolved_notes,
-        )
-        account_dir.mkdir(parents=True, exist_ok=True)
-        _atomic_write_json(account_dir / "auth.json", storage_state)
-        _atomic_write_json(account_dir / "meta.json", meta.to_dict())
-        registry.accounts[safe_id] = meta
-        if registry.active_account_id is None:
-            registry.active_account_id = safe_id
-        self._sync_sibling_cookies_locked(registry, preferred_account_id=safe_id)
-        self._save_registry(registry)
-        return meta
+            account_dir = _safe_account_dir(self._accounts_dir, account_id)
+            safe_id = account_dir.name
+            existing_meta = registry.accounts.get(safe_id)
+            meta = AccountMeta(
+                id=safe_id,
+                name=name,
+                email=email,
+                created_at=created_at,
+                last_used=now,
+                auth_user=auth_user,
+                cookie_id=cookie_id
+                or (existing_meta.cookie_id if existing_meta else None),
+                tier=resolved_tier,
+                tier_checked_at=existing_meta.tier_checked_at
+                if existing_meta
+                else None,
+                last_rotated_at=existing_meta.last_rotated_at
+                if existing_meta
+                else None,
+                enabled=resolved_enabled,
+                group=resolved_group,
+                notes=resolved_notes,
+            )
+            account_dir.mkdir(parents=True, exist_ok=True)
+            _atomic_write_json(account_dir / "auth.json", storage_state)
+            _atomic_write_json(account_dir / "meta.json", meta.to_dict())
+            registry.accounts[safe_id] = meta
+            if registry.active_account_id is None:
+                registry.active_account_id = safe_id
+            self._sync_sibling_cookies_locked(registry, preferred_account_id=safe_id)
+            self._save_registry(registry)
+            return meta
 
     def delete_account(self, account_id: str) -> bool:
         """删除账号，返回是否成功。"""
-        registry = self._load_registry()
-        acc = self._find_registered_account(registry, account_id)
-        if acc is None:
-            return False
-        safe_id = acc.id
-        # 删除目录
-        account_dir = _safe_account_dir(self._accounts_dir, safe_id)
-        if account_dir.is_dir():
-            shutil.rmtree(account_dir, ignore_errors=True)
-        # 从注册表移除
-        del registry.accounts[safe_id]
-        if registry.active_account_id == safe_id:
-            registry.active_account_id = next(iter(registry.accounts), None)
-        self._save_registry(registry)
-        return True
+        with self._lock:
+            registry = self._load_registry()
+            acc = self._find_registered_account(registry, account_id)
+            if acc is None:
+                return False
+            safe_id = acc.id
+            # 删除目录
+            account_dir = _safe_account_dir(self._accounts_dir, safe_id)
+            if account_dir.is_dir():
+                shutil.rmtree(account_dir, ignore_errors=True)
+            # 从注册表移除
+            del registry.accounts[safe_id]
+            if registry.active_account_id == safe_id:
+                first_enabled = next(
+                    (a.id for a in registry.accounts.values() if a.enabled),
+                    None,
+                )
+                registry.active_account_id = first_enabled
+            self._save_registry(registry)
+            return True
 
     def update_account(self, account_id: str, name: str) -> AccountMeta | None:
         """更新账号名称。"""
-        registry = self._load_registry()
-        acc = self._find_registered_account(registry, account_id)
-        if acc is None:
-            return None
-        acc.name = name
-        # 同步更新 meta.json
-        account_dir = _safe_account_dir(self._accounts_dir, acc.id)
-        meta_path = account_dir / "meta.json"
-        if meta_path.exists():
-            _atomic_write_json(meta_path, acc.to_dict())
-        self._save_registry(registry)
-        return acc
+        with self._lock:
+            registry = self._load_registry()
+            acc = self._find_registered_account(registry, account_id)
+            if acc is None:
+                return None
+            acc.name = name
+            # 同步更新 meta.json
+            account_dir = _safe_account_dir(self._accounts_dir, acc.id)
+            meta_path = account_dir / "meta.json"
+            if meta_path.exists():
+                _atomic_write_json(meta_path, acc.to_dict())
+            self._save_registry(registry)
+            return acc
 
     def update_account_email(self, account_id: str, email: str) -> bool:
         """更新账号的登录邮箱，并持久化 meta.json 与 registry.json。"""
-        registry = self._load_registry()
-        acc = self._find_registered_account(registry, account_id)
-        if acc is None or acc.email == email:
-            return False
-        acc.email = email
-        account_dir = _safe_account_dir(self._accounts_dir, acc.id)
-        meta_path = account_dir / "meta.json"
-        if meta_path.exists():
-            _atomic_write_json(meta_path, acc.to_dict())
-        self._save_registry(registry)
-        return True
+        with self._lock:
+            registry = self._load_registry()
+            acc = self._find_registered_account(registry, account_id)
+            if acc is None or acc.email == email:
+                return False
+            acc.email = email
+            account_dir = _safe_account_dir(self._accounts_dir, acc.id)
+            meta_path = account_dir / "meta.json"
+            if meta_path.exists():
+                _atomic_write_json(meta_path, acc.to_dict())
+            self._save_registry(registry)
+            return True
 
     def update_account_tier(
         self, account_id: str, tier: str, checked_at: float | None = None
@@ -493,21 +523,22 @@ class AccountStore:
             normalize_benefit_tier,
         )
 
-        registry = self._load_registry()
-        acc = self._find_registered_account(registry, account_id)
-        if acc is None:
-            return False
-        clean_tier = normalize_benefit_tier(tier)
-        changed = acc.tier != clean_tier
-        acc.tier = clean_tier
-        if checked_at is not None:
-            acc.tier_checked_at = checked_at
-        account_dir = _safe_account_dir(self._accounts_dir, acc.id)
-        meta_path = account_dir / "meta.json"
-        if meta_path.exists():
-            _atomic_write_json(meta_path, acc.to_dict())
-        self._save_registry(registry)
-        return changed
+        with self._lock:
+            registry = self._load_registry()
+            acc = self._find_registered_account(registry, account_id)
+            if acc is None:
+                return False
+            clean_tier = normalize_benefit_tier(tier)
+            changed = acc.tier != clean_tier
+            acc.tier = clean_tier
+            if checked_at is not None:
+                acc.tier_checked_at = checked_at
+            account_dir = _safe_account_dir(self._accounts_dir, acc.id)
+            meta_path = account_dir / "meta.json"
+            if meta_path.exists():
+                _atomic_write_json(meta_path, acc.to_dict())
+            self._save_registry(registry)
+            return changed
 
     def _sync_sibling_cookies_locked(
         self, registry: Registry, preferred_account_id: str | None = None
@@ -610,13 +641,31 @@ class AccountStore:
         expected_cookie_id: str | None = None,
     ) -> list[str]:
         """将更新后的 Cookie 写回目标账号及其同源多登兄弟账号 (u/0..u/N) 的 auth.json。"""
+        if not new_cookies:
+            return []
+
+        with self._lock:
+            return self._update_account_cookies_locked(
+                account_id=account_id,
+                auth_file=auth_file,
+                new_cookies=new_cookies,
+                rotated_at=rotated_at,
+                expected_cookie_id=expected_cookie_id,
+            )
+
+    def _update_account_cookies_locked(
+        self,
+        account_id: str | None = None,
+        *,
+        auth_file: str | Path | None = None,
+        new_cookies: dict[str, str],
+        rotated_at: float | None = None,
+        expected_cookie_id: str | None = None,
+    ) -> list[str]:
         from aistudio_api.infrastructure.account.cookie_parser import (
             compute_session_anchor,
             load_cookies_from_auth_file,
         )
-
-        if not new_cookies:
-            return []
 
         registry = self._load_registry()
         target_id = account_id
@@ -725,83 +774,89 @@ class AccountStore:
         self, account_id: str, *, require_exists: bool = False
     ) -> Path | None:
         """获取指定账号的 auth.json 路径，可选是否要求文件已存在。"""
-        registry = self._load_registry()
-        acc = self._find_registered_account(registry, account_id)
-        if acc is None:
-            return None
-        path = _safe_account_dir(self._accounts_dir, acc.id) / "auth.json"
-        if require_exists and not path.exists():
-            return None
-        return path
+        with self._lock:
+            registry = self._load_registry()
+            acc = self._find_registered_account(registry, account_id)
+            if acc is None:
+                return None
+            path = _safe_account_dir(self._accounts_dir, acc.id) / "auth.json"
+            if require_exists and not path.exists():
+                return None
+            return path
 
     def toggle_account_enabled(
         self, account_id: str, enabled: bool | None = None
     ) -> AccountMeta | None:
         """切换账号的启用/禁用状态。若未指定 enabled 则取反。"""
-        registry = self._load_registry()
-        acc = self._find_registered_account(registry, account_id)
-        if acc is None:
-            return None
-        acc.enabled = not acc.enabled if enabled is None else bool(enabled)
-        account_dir = _safe_account_dir(self._accounts_dir, acc.id)
-        meta_path = account_dir / "meta.json"
-        if meta_path.exists():
-            _atomic_write_json(meta_path, acc.to_dict())
-        self._save_registry(registry)
-        return acc
+        with self._lock:
+            registry = self._load_registry()
+            acc = self._find_registered_account(registry, account_id)
+            if acc is None:
+                return None
+            acc.enabled = not acc.enabled if enabled is None else bool(enabled)
+            account_dir = _safe_account_dir(self._accounts_dir, acc.id)
+            meta_path = account_dir / "meta.json"
+            if meta_path.exists():
+                _atomic_write_json(meta_path, acc.to_dict())
+            self._save_registry(registry)
+            return acc
 
     def update_account_group(self, account_id: str, group: str) -> AccountMeta | None:
         """更新账号所属业务分组。"""
-        registry = self._load_registry()
-        acc = self._find_registered_account(registry, account_id)
-        if acc is None:
-            return None
-        clean_group = str(group or "default").strip() or "default"
-        acc.group = clean_group
-        account_dir = _safe_account_dir(self._accounts_dir, acc.id)
-        meta_path = account_dir / "meta.json"
-        if meta_path.exists():
-            _atomic_write_json(meta_path, acc.to_dict())
-        self._save_registry(registry)
-        return acc
+        with self._lock:
+            registry = self._load_registry()
+            acc = self._find_registered_account(registry, account_id)
+            if acc is None:
+                return None
+            clean_group = str(group or "default").strip() or "default"
+            acc.group = clean_group
+            account_dir = _safe_account_dir(self._accounts_dir, acc.id)
+            meta_path = account_dir / "meta.json"
+            if meta_path.exists():
+                _atomic_write_json(meta_path, acc.to_dict())
+            self._save_registry(registry)
+            return acc
 
     def update_account_notes(self, account_id: str, notes: str) -> AccountMeta | None:
         """更新账号运维备注信息。"""
-        registry = self._load_registry()
-        acc = self._find_registered_account(registry, account_id)
-        if acc is None:
-            return None
-        acc.notes = str(notes or "")
-        account_dir = _safe_account_dir(self._accounts_dir, acc.id)
-        meta_path = account_dir / "meta.json"
-        if meta_path.exists():
-            _atomic_write_json(meta_path, acc.to_dict())
-        self._save_registry(registry)
-        return acc
+        with self._lock:
+            registry = self._load_registry()
+            acc = self._find_registered_account(registry, account_id)
+            if acc is None:
+                return None
+            acc.notes = str(notes or "")
+            account_dir = _safe_account_dir(self._accounts_dir, acc.id)
+            meta_path = account_dir / "meta.json"
+            if meta_path.exists():
+                _atomic_write_json(meta_path, acc.to_dict())
+            self._save_registry(registry)
+            return acc
 
     def list_groups(self) -> list[str]:
         """获取当前所有账号中存在的不重复分组列表。"""
-        registry = self._load_registry()
-        groups = {acc.group for acc in registry.accounts.values() if acc.group}
-        if "default" not in groups:
-            groups.add("default")
-        return sorted(groups)
+        with self._lock:
+            registry = self._load_registry()
+            groups = {acc.group for acc in registry.accounts.values() if acc.group}
+            if "default" not in groups:
+                groups.add("default")
+            return sorted(groups)
 
     def batch_toggle_group(self, group: str, enabled: bool) -> list[AccountMeta]:
         """按分组批量启用或禁用账号。"""
-        registry = self._load_registry()
-        modified: list[AccountMeta] = []
-        for acc in registry.accounts.values():
-            if acc.group == group:
-                acc.enabled = enabled
-                account_dir = _safe_account_dir(self._accounts_dir, acc.id)
-                meta_path = account_dir / "meta.json"
-                if meta_path.exists():
-                    _atomic_write_json(meta_path, acc.to_dict())
-                modified.append(acc)
-        if modified:
-            self._save_registry(registry)
-        return modified
+        with self._lock:
+            registry = self._load_registry()
+            modified: list[AccountMeta] = []
+            for acc in registry.accounts.values():
+                if acc.group == group:
+                    acc.enabled = enabled
+                    account_dir = _safe_account_dir(self._accounts_dir, acc.id)
+                    meta_path = account_dir / "meta.json"
+                    if meta_path.exists():
+                        _atomic_write_json(meta_path, acc.to_dict())
+                    modified.append(acc)
+            if modified:
+                self._save_registry(registry)
+            return modified
 
     # ─── 预设方案 (Presets) 管理 ───
     def _ensure_default_presets(self) -> None:
@@ -813,9 +868,15 @@ class AccountStore:
 
     def _load_presets(self) -> dict[str, AccountPreset]:
         with self._lock:
-            if self._presets is not None:
-                return self._presets
             sys_presets = _load_system_presets_from_config()
+            if self._presets is not None:
+                for sys_p in sys_presets:
+                    if (
+                        sys_p.id not in self._presets
+                        or self._presets[sys_p.id].is_system
+                    ):
+                        self._presets[sys_p.id] = sys_p
+                return self._presets
             if not self._presets_path.exists():
                 defaults = {p.id: p for p in sys_presets}
                 if defaults:
@@ -845,97 +906,103 @@ class AccountStore:
 
     def list_presets(self) -> list[AccountPreset]:
         """列出所有预设方案。"""
-        presets = self._load_presets()
-        return list(presets.values())
+        with self._lock:
+            presets = self._load_presets()
+            return list(presets.values())
 
     def get_preset(self, preset_id: str) -> AccountPreset | None:
         """获取单个预设方案。"""
-        presets = self._load_presets()
-        return presets.get(preset_id)
+        with self._lock:
+            presets = self._load_presets()
+            return presets.get(preset_id)
 
     def save_preset(self, preset: AccountPreset) -> AccountPreset:
         """创建或更新预设方案。"""
-        presets = self._load_presets()
-        now = datetime.now(UTC).isoformat()
-        if not preset.created_at:
-            preset.created_at = now
-        preset.updated_at = now
-        presets[preset.id] = preset
-        self._save_presets(presets)
-        return preset
+        with self._lock:
+            presets = self._load_presets()
+            now = datetime.now(UTC).isoformat()
+            if not preset.created_at:
+                preset.created_at = now
+            preset.updated_at = now
+            presets[preset.id] = preset
+            self._save_presets(presets)
+            return preset
 
     def delete_preset(self, preset_id: str) -> bool:
         """删除自定义预设方案（内置方案不可删除）。"""
-        presets = self._load_presets()
-        if preset_id not in presets:
-            return False
-        if presets[preset_id].is_system:
-            raise ValueError("系统内置预设不允许删除")
-        del presets[preset_id]
-        self._save_presets(presets)
-        return True
+        with self._lock:
+            presets = self._load_presets()
+            if preset_id not in presets:
+                return False
+            if presets[preset_id].is_system:
+                raise ValueError("系统内置预设不允许删除")
+            del presets[preset_id]
+            self._save_presets(presets)
+            return True
 
     def create_snapshot_preset(self, name: str, description: str = "") -> AccountPreset:
         """保存当前所有已启用账号的 ID 列表为预设方案。"""
         import secrets
 
-        registry = self._load_registry()
-        active_ids = [acc.id for acc in registry.accounts.values() if acc.enabled]
-        now = datetime.now(UTC).isoformat()
-        pid = f"preset_{secrets.token_hex(4)}"
-        preset = AccountPreset(
-            id=pid,
-            name=name.strip() or "自定义快照方案",
-            description=description.strip(),
-            action="snapshot",
-            account_ids=active_ids,
-            is_system=False,
-            created_at=now,
-            updated_at=now,
-        )
-        return self.save_preset(preset)
+        with self._lock:
+            registry = self._load_registry()
+            active_ids = [acc.id for acc in registry.accounts.values() if acc.enabled]
+            now = datetime.now(UTC).isoformat()
+            pid = f"preset_{secrets.token_hex(4)}"
+            preset = AccountPreset(
+                id=pid,
+                name=name.strip() or "自定义快照方案",
+                description=description.strip(),
+                action="snapshot",
+                account_ids=active_ids,
+                is_system=False,
+                created_at=now,
+                updated_at=now,
+            )
+            return self.save_preset(preset)
 
     def apply_preset(
         self, preset_id: str
     ) -> tuple[AccountPreset, list[str], list[str]]:
         """应用预设：根据规则或快照批量更新账号 enabled 状态。"""
-        preset = self.get_preset(preset_id)
-        if preset is None:
-            raise ValueError(f"预设方案不存在: {preset_id}")
+        with self._lock:
+            preset = self.get_preset(preset_id)
+            if preset is None:
+                raise ValueError(f"预设方案不存在: {preset_id}")
 
-        registry = self._load_registry()
-        enabled_ids: list[str] = []
-        disabled_ids: list[str] = []
+            registry = self._load_registry()
+            enabled_ids: list[str] = []
+            disabled_ids: list[str] = []
 
-        for acc in registry.accounts.values():
-            should_enable = False
-            if preset.action == "enable_all":
-                should_enable = True
-            elif preset.action == "disable_all":
+            for acc in registry.accounts.values():
                 should_enable = False
-            elif preset.action == "snapshot":
-                should_enable = acc.id in preset.account_ids
-            elif preset.action == "filter_tier":
-                should_enable = acc.tier in preset.target_tiers
-            elif preset.action == "filter_group":
-                should_enable = acc.group in preset.target_groups
-            else:
-                should_enable = acc.id in preset.account_ids
+                if preset.action == "enable_all":
+                    should_enable = True
+                elif preset.action == "disable_all":
+                    should_enable = False
+                elif preset.action == "snapshot":
+                    should_enable = acc.id in preset.account_ids
+                elif preset.action == "filter_tier":
+                    should_enable = acc.tier in preset.target_tiers
+                elif preset.action == "filter_group":
+                    should_enable = acc.group in preset.target_groups
+                else:
+                    should_enable = acc.id in preset.account_ids
 
-            acc.enabled = should_enable
-            account_dir = _safe_account_dir(self._accounts_dir, acc.id)
-            meta_path = account_dir / "meta.json"
-            if meta_path.exists():
-                _atomic_write_json(meta_path, acc.to_dict())
+                acc.enabled = should_enable
+                account_dir = _safe_account_dir(self._accounts_dir, acc.id)
+                meta_path = account_dir / "meta.json"
+                if meta_path.exists():
+                    _atomic_write_json(meta_path, acc.to_dict())
 
-            if should_enable:
-                enabled_ids.append(acc.id)
-            else:
-                disabled_ids.append(acc.id)
+                if should_enable:
+                    enabled_ids.append(acc.id)
+                else:
+                    disabled_ids.append(acc.id)
 
-        # 如果当前活跃账号被禁用了，清除活跃标记以便重新择优激活
-        if registry.active_account_id in disabled_ids:
-            registry.active_account_id = None
+            # 如果当前活跃账号被禁用了，清除活跃标记以便重新择优激活
+            if registry.active_account_id in disabled_ids:
+                registry.active_account_id = None
 
-        self._save_registry(registry)
-        return preset, enabled_ids, disabled_ids
+            self._save_registry(registry)
+            return preset, enabled_ids, disabled_ids
