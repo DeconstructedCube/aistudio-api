@@ -12,7 +12,12 @@ import re
 import struct
 
 from aistudio_api.domain.errors import TransportError
-from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
+from aistudio_api.domain.models import (
+    Candidate,
+    CandidatePart,
+    GeneratedImage,
+    ModelOutput,
+)
 from aistudio_api.infrastructure.gateway.wire_spec import (
     DECISION_USAGE_MODALITY_NAMES,
     WIRE_FINISH_REASON_CONTINUING,
@@ -54,6 +59,7 @@ WIRE_PART_THOUGHT_ALT_FLAG_INDEX = (
     12  # Field 13 integer 1 thought flag (AI Studio variant)
 )
 WIRE_PART_THOUGHT_SIGNATURE_INDEX = 14  # Field 15 thought cryptographic signature token
+WIRE_PART_VIDEO_METADATA_INDEX = 40  # Field 41 video metadata struct
 
 # UsageMetadata indexes inside chunk[2] (WIRE_SPECIFICATION.md §7.3)
 WIRE_USAGE_PROMPT_TOKENS = 0  # Field 1 prompt token count
@@ -102,83 +108,6 @@ _STRING_FINISH_REASON_TO_CODE: dict[str, int] = {
     "MISSING_THOUGHT_SIGNATURE": 18,
 }
 
-_INLINE_THOUGHT_PAIRS: tuple[tuple[str, str], ...] = (
-    ("[:thought", ":]"),
-    ("[_thought", "]_"),
-    ("⌊thought", "⌋"),
-    ("<thought>", "</thought>"),
-    ("【_thought", "_】"),
-    ("【thought", "】"),
-)
-_INLINE_THOUGHT_OPEN_RE = re.compile(
-    r"^\s*(?:\[:thought\b|\[_thought\b|⌊thought\b|<thought>|【_?thought\b)",
-    re.IGNORECASE,
-)
-
-
-def may_start_inline_thought(text: str) -> bool:
-    """Return True if leading text is or could become an inline thought opening tag."""
-    if not text:
-        return False
-    stripped = text.lstrip()
-    if not stripped:
-        return True
-    lowered = stripped.lower()
-    for open_tag, _ in _INLINE_THOUGHT_PAIRS:
-        if lowered.startswith(open_tag) or open_tag.startswith(lowered):
-            return True
-    return False
-
-
-def is_inline_thought_leak(text: str) -> bool:
-    """Return True if text begins with a recognized inline thought leak tag."""
-    return bool(text and _INLINE_THOUGHT_OPEN_RE.match(text))
-
-
-def split_closed_inline_thought(text: str) -> tuple[str, str] | None:
-    """Split a strictly closed inline thought block at the start of text.
-
-    Returns (thought_body, remaining_text) if both open and close markers are present,
-    or None if no closed inline thought block is found.
-    """
-    if not text:
-        return None
-    stripped = text.lstrip()
-    if not stripped:
-        return None
-    lowered = stripped.lower()
-    for open_tag, close_tag in _INLINE_THOUGHT_PAIRS:
-        if not lowered.startswith(open_tag):
-            continue
-        body_start = len(open_tag)
-        # Avoid splitting mid-word if open tag has no trailing delimiter (e.g. [:thoughts)
-        if open_tag != "<thought>" and body_start < len(stripped):
-            next_ch = stripped[body_start]
-            if next_ch.isalnum():
-                continue
-        close_idx = stripped.find(close_tag, body_start)
-        if close_idx == -1:
-            return None
-        thought_body = stripped[body_start:close_idx].strip()
-        remainder = stripped[close_idx + len(close_tag) :].lstrip("\r\n ")
-        return thought_body, remainder
-    return None
-
-
-def split_inline_thought_tag(text: str) -> tuple[str, str]:
-    """Split inline thought tag from text (handles unclosed tags at EOF as fallback)."""
-    if not is_inline_thought_leak(text):
-        return "", text
-    closed = split_closed_inline_thought(text)
-    if closed is not None:
-        return closed
-    stripped = text.lstrip()
-    lowered = stripped.lower()
-    for open_tag, _ in _INLINE_THOUGHT_PAIRS:
-        if lowered.startswith(open_tag):
-            return stripped[len(open_tag) :].strip(), ""
-    return "", text
-
 
 def _parse_finish_reason_value(raw_val: object) -> int | None:
     coerced = _coerce_int(raw_val)
@@ -189,6 +118,48 @@ def _parse_finish_reason_value(raw_val: object) -> int | None:
         if key in _STRING_FINISH_REASON_TO_CODE:
             return _STRING_FINISH_REASON_TO_CODE[key]
     return None
+
+
+_KNOWN_TERMINAL_FINISH_REASON_CODES: frozenset[int] = frozenset(
+    code for code in _STRING_FINISH_REASON_TO_CODE.values() if code != 0
+)
+
+
+def is_terminal_wire_finish_reason(raw_val: object) -> bool:
+    """Return True only for defined positive terminal finish_reason enum codes (1..18)."""
+    if isinstance(raw_val, bool):
+        return False
+    if isinstance(raw_val, int):
+        return raw_val in _KNOWN_TERMINAL_FINISH_REASON_CODES
+    if isinstance(raw_val, str):
+        stripped = raw_val.strip()
+        if not stripped:
+            return False
+        if stripped.isdigit() or (stripped[0] in "+-" and stripped[1:].isdigit()):
+            return int(stripped) in _KNOWN_TERMINAL_FINISH_REASON_CODES
+        mapped = _STRING_FINISH_REASON_TO_CODE.get(stripped.upper())
+        return mapped is not None and mapped in _KNOWN_TERMINAL_FINISH_REASON_CODES
+    return False
+
+
+_UPSTREAM_POLICY_BLOCK_RE = re.compile(
+    r"(?:"
+    r"the\s+prompt\s+could\s+not\s+be\s+submitted[\s\S]{0,300}?"
+    r"(?:prohibited\s+use\s+policy|violate\s+google|sensitive\s+words)"
+    r"|^\W*the\s+prompt\s+could\s+not\s+be\s+submitted\."
+    r")",
+    re.IGNORECASE,
+)
+
+
+def is_upstream_policy_block_text(text: str | None) -> bool:
+    """Return True when upstream returned a pseudo-200 policy rejection message."""
+    if not text:
+        return False
+    candidate = text.strip()
+    if not candidate:
+        return False
+    return _UPSTREAM_POLICY_BLOCK_RE.match(candidate) is not None
 
 
 def pcm_to_wav(
@@ -266,6 +237,76 @@ def merge_audio_images(images: list[GeneratedImage]) -> list[GeneratedImage]:
     return result
 
 
+def _merge_audio_candidate_parts(parts: list[CandidatePart]) -> list[CandidatePart]:
+    if not parts:
+        return []
+    result: list[CandidatePart] = []
+    pending_pcm: list[bytes] = []
+    pending_kind = ""
+    pending_thought = False
+    pending_sig = ""
+    pending_payload: dict[str, object] | None = None
+
+    def _flush() -> None:
+        nonlocal \
+            pending_pcm, \
+            pending_kind, \
+            pending_thought, \
+            pending_sig, \
+            pending_payload
+        if not pending_pcm:
+            return
+        merged_wav = pcm_to_wav(b"".join(pending_pcm), sample_rate=24000)
+        img = GeneratedImage(
+            mime="audio/wav",
+            data=merged_wav,
+            size=len(merged_wav),
+            thought_signature=pending_sig,
+        )
+        result.append(
+            CandidatePart(
+                kind=pending_kind,
+                thought=pending_thought,
+                thought_signature=pending_sig,
+                image=img,
+                payload=pending_payload,
+            )
+        )
+        pending_pcm = []
+        pending_kind = ""
+        pending_thought = False
+        pending_sig = ""
+        pending_payload = None
+
+    for part in parts:
+        if (
+            part.kind in ("image", "reasoning_image")
+            and part.image is not None
+            and _is_pcm_or_wav_audio(part.image.mime)
+        ):
+            if pending_pcm and pending_kind != part.kind:
+                _flush()
+            pcm = (
+                part.image.data[44:]
+                if part.image.data.startswith(b"RIFF")
+                else part.image.data
+            )
+            pending_kind = part.kind
+            pending_thought = part.thought
+            pending_pcm.append(pcm)
+            if part.thought_signature:
+                pending_sig = part.thought_signature
+            elif part.image.thought_signature:
+                pending_sig = part.image.thought_signature
+            if part.payload is not None:
+                pending_payload = part.payload
+            continue
+        _flush()
+        result.append(part)
+    _flush()
+    return result
+
+
 def _looks_like_response_chunk(value: object) -> bool:
     return isinstance(value, list) and (
         (len(value) > 0 and isinstance(value[0], list))
@@ -320,7 +361,10 @@ class ResponsePart:
     def __init__(
         self,
         text: str = "",
+        has_text: bool = False,
         inline_data: tuple[str, str] | None = None,
+        file_data: dict[str, object] | None = None,
+        video_metadata: dict[str, object] | None = None,
         thought: bool = False,
         function_call: dict[str, object] | None = None,
         function_response: dict[str, object] | None = None,
@@ -329,13 +373,120 @@ class ResponsePart:
         code_execution_result: object | None = None,
     ):
         self.text = text
+        self.has_text = has_text
         self.inline_data = inline_data
+        self.file_data = file_data
+        self.video_metadata = video_metadata
         self.thought = thought
         self.function_call = function_call
         self.function_response = function_response
         self.thought_signature = thought_signature
         self.executable_code = executable_code
         self.code_execution_result = code_execution_result
+
+
+def _parse_file_data_slot(raw_val: object) -> dict[str, object] | None:
+    if isinstance(raw_val, dict):
+        uri = raw_val.get("fileUri") or raw_val.get("file_uri")
+        if isinstance(uri, str) and uri:
+            out: dict[str, object] = {"fileUri": uri}
+            mime = raw_val.get("mimeType") or raw_val.get("mime_type")
+            if isinstance(mime, str) and mime:
+                out["mimeType"] = mime
+            return out
+        return None
+    if (
+        isinstance(raw_val, list)
+        and raw_val
+        and isinstance(raw_val[0], str)
+        and raw_val[0]
+    ):
+        out = {"fileUri": raw_val[0]}
+        if len(raw_val) > 1 and isinstance(raw_val[1], str) and raw_val[1]:
+            out["mimeType"] = raw_val[1]
+        return out
+    return None
+
+
+def _parse_video_metadata_slot(raw_val: object) -> dict[str, object] | None:
+    if not isinstance(raw_val, dict):
+        return None
+    out: dict[str, object] = {}
+    start = raw_val.get("startOffset") or raw_val.get("start_offset")
+    end = raw_val.get("endOffset") or raw_val.get("end_offset")
+    fps = raw_val.get("fps")
+    if isinstance(start, str) and start:
+        out["startOffset"] = start
+    if isinstance(end, str) and end:
+        out["endOffset"] = end
+    if isinstance(fps, (int, float)) and not isinstance(fps, bool):
+        out["fps"] = float(fps)
+    return out or None
+
+
+def _coerce_executable_code_payload(raw_val: object) -> dict[str, object] | None:
+    if raw_val is None:
+        return None
+    if isinstance(raw_val, dict):
+        code = str(raw_val.get("code") or "")
+        if not code:
+            return None
+        lang = str(raw_val.get("language") or "PYTHON")
+        payload: dict[str, object] = {"language": lang, "code": code}
+        if raw_val.get("id"):
+            payload["id"] = str(raw_val["id"])
+        return payload
+    if isinstance(raw_val, list) and len(raw_val) > 1 and isinstance(raw_val[1], str):
+        raw_lang = raw_val[0]
+        if raw_lang in (1, "1", "PYTHON", "python"):
+            lang = "PYTHON"
+        elif isinstance(raw_lang, str) and raw_lang.strip():
+            lang = raw_lang.strip()
+        else:
+            lang = "PYTHON"
+        payload = {"language": lang, "code": raw_val[1]}
+        if len(raw_val) > 2 and isinstance(raw_val[2], str) and raw_val[2]:
+            payload["id"] = raw_val[2]
+        return payload
+    if isinstance(raw_val, str) and raw_val:
+        return {"language": "PYTHON", "code": raw_val}
+    return None
+
+
+def _coerce_code_execution_result_payload(raw_val: object) -> dict[str, object] | None:
+    if raw_val is None:
+        return None
+    outcomes = {
+        1: "OUTCOME_OK",
+        2: "OUTCOME_FAILED",
+        3: "OUTCOME_DEADLINE_EXCEEDED",
+    }
+    if isinstance(raw_val, dict):
+        output = str(raw_val.get("output") or "")
+        raw_outcome = raw_val.get("outcome", "OUTCOME_OK")
+        outcome = (
+            outcomes.get(raw_outcome, str(raw_outcome))
+            if isinstance(raw_outcome, int)
+            else str(raw_outcome or "OUTCOME_OK")
+        )
+        payload: dict[str, object] = {"outcome": outcome, "output": output}
+        if raw_val.get("id"):
+            payload["id"] = str(raw_val["id"])
+        return payload
+    if isinstance(raw_val, list) and len(raw_val) > 1 and isinstance(raw_val[1], str):
+        raw_outcome = raw_val[0]
+        outcome = (
+            outcomes.get(raw_outcome, str(raw_outcome))
+            if isinstance(raw_outcome, int)
+            else str(raw_outcome or "OUTCOME_OK")
+        )
+        payload = {"outcome": outcome, "output": raw_val[1]}
+        if len(raw_val) > 2 and isinstance(raw_val[2], str) and raw_val[2]:
+            payload["id"] = raw_val[2]
+        return payload
+    if isinstance(raw_val, str) and raw_val:
+        return {"outcome": "OUTCOME_OK", "output": raw_val}
+    return None
 
 
 def parse_response_part(raw_part: object) -> ResponsePart:
@@ -381,6 +532,17 @@ def parse_response_part(raw_part: object) -> ResponsePart:
     ):
         raw_inline = raw_part[WIRE_PART_INLINE_DATA_INDEX]
         inline_data = (str(raw_inline[0]), str(raw_inline[1]))
+
+    file_data = (
+        _parse_file_data_slot(raw_part[WIRE_PART_FILE_DATA_INDEX])
+        if len(raw_part) > WIRE_PART_FILE_DATA_INDEX
+        else None
+    )
+    video_metadata = (
+        _parse_video_metadata_slot(raw_part[WIRE_PART_VIDEO_METADATA_INDEX])
+        if len(raw_part) > WIRE_PART_VIDEO_METADATA_INDEX
+        else None
+    )
 
     function_call = _coerce_structural_payload(
         raw_part[WIRE_PART_FUNCTION_CALL_INDEX]
@@ -429,13 +591,16 @@ def parse_response_part(raw_part: object) -> ResponsePart:
         if len(raw_part) > WIRE_PART_CODE_EXECUTION_RESULT_INDEX
         else None
     )
+    has_text = len(raw_part) > WIRE_PART_TEXT_INDEX and isinstance(
+        raw_part[WIRE_PART_TEXT_INDEX], str
+    )
 
     return ResponsePart(
-        text=raw_part[WIRE_PART_TEXT_INDEX]
-        if len(raw_part) > WIRE_PART_TEXT_INDEX
-        and isinstance(raw_part[WIRE_PART_TEXT_INDEX], str)
-        else "",
+        text=raw_part[WIRE_PART_TEXT_INDEX] if has_text else "",
+        has_text=has_text,
         inline_data=inline_data,
+        file_data=file_data,
+        video_metadata=video_metadata,
         thought=thought,
         function_call=function_call,
         function_response=function_response,
@@ -679,11 +844,23 @@ def parse_response_chunk(chunk: object) -> Candidate:
         thinking_signature = ""
         text_signature = ""
         standalone_signature = ""
+        standalone_signatures: list[str] = []
+        ordered_parts: list[CandidatePart] = []
         code_outputs: list[str] = []
 
         for raw_part in raw_parts if isinstance(raw_parts, list) else []:
             part = parse_response_part(raw_part)
             part_emitted_standalone_target = False
+            if part.file_data is not None:
+                ordered_parts.append(
+                    CandidatePart(
+                        kind="file_data",
+                        thought=part.thought,
+                        thought_signature=part.thought_signature,
+                        payload=part.file_data,
+                    )
+                )
+                part_emitted_standalone_target = True
             if part.inline_data:
                 mime = part.inline_data[0]
                 raw_b64 = part.inline_data[1]
@@ -692,6 +869,11 @@ def parse_response_chunk(chunk: object) -> Candidate:
                 except Exception:
                     raw_bytes = b""
                 mime_lower = mime.lower()
+                vm_payload: dict[str, object] | None = (
+                    {"video_metadata": part.video_metadata}
+                    if part.video_metadata is not None
+                    else None
+                )
                 if mime_lower.startswith("audio/"):
                     if (
                         mime_lower in ("audio/l16", "audio/pcm")
@@ -711,10 +893,17 @@ def parse_response_chunk(chunk: object) -> Candidate:
                             size=len(raw_bytes),
                             thought_signature=part.thought_signature or "",
                         )
-                    if part.thought:
-                        reasoning_images.append(media)
-                    else:
-                        images.append(media)
+                    target_list = reasoning_images if part.thought else images
+                    target_list.append(media)
+                    ordered_parts.append(
+                        CandidatePart(
+                            kind="reasoning_image" if part.thought else "image",
+                            thought=part.thought,
+                            thought_signature=part.thought_signature,
+                            image=media,
+                            payload=vm_payload,
+                        )
+                    )
                 elif mime.startswith("video/"):
                     media = GeneratedImage(
                         mime=mime,
@@ -722,10 +911,17 @@ def parse_response_chunk(chunk: object) -> Candidate:
                         size=len(raw_bytes),
                         thought_signature=part.thought_signature or "",
                     )
-                    if part.thought:
-                        reasoning_images.append(media)
-                    else:
-                        images.append(media)
+                    target_list = reasoning_images if part.thought else images
+                    target_list.append(media)
+                    ordered_parts.append(
+                        CandidatePart(
+                            kind="reasoning_image" if part.thought else "image",
+                            thought=part.thought,
+                            thought_signature=part.thought_signature,
+                            image=media,
+                            payload=vm_payload,
+                        )
+                    )
                 else:
                     decoded = decode_base64_images([{"mime": mime, "data": raw_b64}])
                     decoded_images: list[GeneratedImage] = []
@@ -744,55 +940,125 @@ def parse_response_chunk(chunk: object) -> Candidate:
                                 thought_signature=part.thought_signature or "",
                             )
                         )
-                    if part.thought:
-                        reasoning_images.extend(decoded_images)
-                    else:
-                        images.extend(decoded_images)
+                    target_list = reasoning_images if part.thought else images
+                    target_list.extend(decoded_images)
+                    for media in decoded_images:
+                        ordered_parts.append(
+                            CandidatePart(
+                                kind="reasoning_image" if part.thought else "image",
+                                thought=part.thought,
+                                thought_signature=part.thought_signature,
+                                image=media,
+                                payload=vm_payload,
+                            )
+                        )
                 part_emitted_standalone_target = True
-            for code in (part.executable_code, part.code_execution_result):
-                if (
-                    isinstance(code, list)
-                    and len(code) > 1
-                    and isinstance(code[1], str)
-                ):
-                    code_outputs.append(code[1])
-                    part_emitted_standalone_target = True
-                elif isinstance(code, str) and code:
-                    code_outputs.append(code)
-                    part_emitted_standalone_target = True
+            elif part.video_metadata is not None:
+                ordered_parts.append(
+                    CandidatePart(
+                        kind="video_metadata",
+                        thought=part.thought,
+                        thought_signature=part.thought_signature,
+                        payload=part.video_metadata,
+                    )
+                )
+                part_emitted_standalone_target = True
+            exec_payload = _coerce_executable_code_payload(part.executable_code)
+            if exec_payload is not None:
+                code_outputs.append(str(exec_payload["code"]))
+                ordered_parts.append(
+                    CandidatePart(
+                        kind="executable_code",
+                        thought=part.thought,
+                        thought_signature=part.thought_signature,
+                        payload=exec_payload,
+                    )
+                )
+                part_emitted_standalone_target = True
+            res_payload = _coerce_code_execution_result_payload(
+                part.code_execution_result
+            )
+            if res_payload is not None:
+                code_outputs.append(str(res_payload["output"]))
+                ordered_parts.append(
+                    CandidatePart(
+                        kind="code_execution_result",
+                        thought=part.thought,
+                        thought_signature=part.thought_signature,
+                        payload=res_payload,
+                    )
+                )
+                part_emitted_standalone_target = True
             if part.function_call:
                 function_calls.append(part.function_call)
+                ordered_parts.append(
+                    CandidatePart(
+                        kind="function_call",
+                        thought=part.thought,
+                        thought_signature=part.thought_signature,
+                        payload=part.function_call,
+                    )
+                )
                 part_emitted_standalone_target = True
             if part.function_response:
                 function_responses.append(part.function_response)
+                ordered_parts.append(
+                    CandidatePart(
+                        kind="function_response",
+                        thought=part.thought,
+                        thought_signature=part.thought_signature,
+                        payload=part.function_response,
+                    )
+                )
                 part_emitted_standalone_target = True
             if part.text:
                 if part.thought:
                     thinking_parts.append(part.text)
                     if part.thought_signature:
                         thinking_signature = part.thought_signature
+                    ordered_parts.append(
+                        CandidatePart(
+                            kind="thinking",
+                            text=part.text,
+                            has_text=True,
+                            thought=True,
+                            thought_signature=part.thought_signature,
+                        )
+                    )
                 else:
                     text_parts.append(part.text)
                     if part.thought_signature:
                         text_signature = part.thought_signature
+                    ordered_parts.append(
+                        CandidatePart(
+                            kind="text",
+                            text=part.text,
+                            has_text=True,
+                            thought_signature=part.thought_signature,
+                        )
+                    )
                 part_emitted_standalone_target = True
             if part.thought_signature:
                 thought_signature = part.thought_signature
                 if not part_emitted_standalone_target:
                     standalone_signature = part.thought_signature
+                    standalone_signatures.append(part.thought_signature)
+                    ordered_parts.append(
+                        CandidatePart(
+                            kind="standalone_signature",
+                            has_text=part.has_text,
+                            thought=part.thought,
+                            thought_signature=part.thought_signature,
+                        )
+                    )
+
+        if ordered_parts:
+            ordered_parts[0].chunk_start = True
+            for idx, item in enumerate(ordered_parts):
+                item.end_of_chunk = idx == len(ordered_parts) - 1
 
         candidate.text = "".join(text_parts)
         candidate.thinking = "".join(thinking_parts)
-        closed_inline = split_closed_inline_thought(candidate.text)
-        if closed_inline is not None:
-            inline_thinking, cleaned_text = closed_inline
-            if inline_thinking:
-                candidate.thinking = (
-                    f"{candidate.thinking}\n{inline_thinking}".strip()
-                    if candidate.thinking
-                    else inline_thinking
-                )
-            candidate.text = cleaned_text
         candidate.images = images
         candidate.reasoning_images = reasoning_images
         candidate.function_calls = function_calls
@@ -801,6 +1067,8 @@ def parse_response_chunk(chunk: object) -> Candidate:
         candidate.thinking_signature = thinking_signature
         candidate.text_signature = text_signature
         candidate.standalone_signature = standalone_signature
+        candidate.standalone_signatures = standalone_signatures
+        candidate.parts = ordered_parts
         candidate.code_output = "\n".join(code_outputs)
         candidate.finish_reason = (
             _parse_finish_reason_value(raw_candidate[WIRE_CANDIDATE_FINISH_REASON])
@@ -863,6 +1131,20 @@ def parse_text_output(raw: str) -> ModelOutput:
             if isinstance(raw_rid, str) and raw_rid:
                 output.response_id = raw_rid
         parsed = parse_response_chunk(chunk)
+        if parsed.parts:
+            for part in parsed.parts:
+                if (
+                    merged.parts
+                    and part.kind in ("text", "thinking")
+                    and merged.parts[-1].kind == part.kind
+                    and not merged.parts[-1].thought_signature
+                ):
+                    merged.parts[-1].text += part.text
+                    if part.thought_signature:
+                        merged.parts[-1].thought_signature = part.thought_signature
+                    merged.parts[-1].end_of_chunk = part.end_of_chunk
+                else:
+                    merged.parts.append(part)
         if parsed.text:
             merged.text += parsed.text
         if parsed.thinking:
@@ -881,6 +1163,8 @@ def parse_text_output(raw: str) -> ModelOutput:
             merged.text_signature = parsed.text_signature
         if parsed.standalone_signature:
             merged.standalone_signature = parsed.standalone_signature
+        if parsed.standalone_signatures:
+            merged.standalone_signatures.extend(parsed.standalone_signatures)
         if parsed.thought_signature:
             merged.thought_signature = parsed.thought_signature
         if parsed.code_output:
@@ -896,15 +1180,7 @@ def parse_text_output(raw: str) -> ModelOutput:
             merged.finish_message = parsed.finish_message
         if parsed.safety_ratings:
             merged.safety_ratings = parsed.safety_ratings
-    if merged.text:
-        inline_thinking, cleaned_text = split_inline_thought_tag(merged.text)
-        if inline_thinking:
-            merged.thinking = (
-                f"{merged.thinking}\n{inline_thinking}".strip()
-                if merged.thinking
-                else inline_thinking
-            )
-            merged.text = cleaned_text
+    merged.parts = _merge_audio_candidate_parts(merged.parts)
     merged.images = merge_audio_images(merged.images)
     merged.reasoning_images = merge_audio_images(merged.reasoning_images)
     output.candidates = [merged]
@@ -1109,6 +1385,7 @@ __all__ = [
     "WIRE_PART_THOUGHT_FLAG_INDEX",
     "WIRE_PART_THOUGHT_LEAD_INDEX",
     "WIRE_PART_THOUGHT_SIGNATURE_INDEX",
+    "WIRE_PART_VIDEO_METADATA_INDEX",
     "WIRE_RESPONSE_ID_INDEX",
     "WIRE_USAGE_CACHED_TOKENS",
     "WIRE_USAGE_PROMPT_DETAILS",
@@ -1117,8 +1394,8 @@ __all__ = [
     "WIRE_USAGE_TOTAL_TOKENS",
     "WIRE_USAGE_VISIBLE_COMPLETION",
     "ResponsePart",
-    "is_inline_thought_leak",
-    "may_start_inline_thought",
+    "is_terminal_wire_finish_reason",
+    "is_upstream_policy_block_text",
     "parse_chunk_usage",
     "parse_count_tokens_response",
     "parse_decision_response",
@@ -1126,6 +1403,4 @@ __all__ = [
     "parse_response_part",
     "parse_text_output",
     "parse_usage_metadata",
-    "split_closed_inline_thought",
-    "split_inline_thought_tag",
 ]

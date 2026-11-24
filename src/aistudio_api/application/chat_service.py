@@ -7,9 +7,15 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from aistudio_api.api.schemas import GeminiGenerateContentRequest, GeminiTool
 
+import logging
 from dataclasses import dataclass
 
-from aistudio_api.infrastructure.gateway.model_defaults import resolve_model_defaults
+from aistudio_api.infrastructure.gateway.model_defaults import (
+    is_gemini4_model,
+    is_hydrogen_model,
+    is_neon_model,
+    resolve_model_defaults,
+)
 from aistudio_api.infrastructure.gateway.wire_codec import build_tools_from_names
 from aistudio_api.infrastructure.gateway.wire_spec import JspbArray, SchemaIndex
 from aistudio_api.infrastructure.gateway.wire_types import (
@@ -18,7 +24,10 @@ from aistudio_api.infrastructure.gateway.wire_types import (
     AistudioPart,
     AistudioThinkingConfig,
     ThinkingLevel,
+    encode_wire_base64_str,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -446,16 +455,43 @@ _REASONING_EFFORT_TO_LEVEL: dict[str, ThinkingLevel] = {
 }
 
 
-def _parse_thinking_level(raw_level: object) -> ThinkingLevel | None:
+def _parse_thinking_level(
+    raw_level: object, *, model: str | None = None
+) -> ThinkingLevel | None:
     if raw_level is None:
         return None
     if isinstance(raw_level, ThinkingLevel):
+        if raw_level is ThinkingLevel.MINIMAL and is_gemini4_model(model):
+            raise ValueError(
+                "minimal thinkingLevel is not supported by gemini-4 models"
+            )
         return raw_level
     if isinstance(raw_level, int) and not isinstance(raw_level, bool):
-        return ThinkingLevel(raw_level)
+        if raw_level == 0:
+            if is_gemini4_model(model):
+                raise ValueError(
+                    f"Thinking cannot be disabled ({raw_level!r}) on gemini-4 models"
+                )
+            return None
+        level = ThinkingLevel(raw_level)
+        if level is ThinkingLevel.MINIMAL and is_gemini4_model(model):
+            raise ValueError(
+                "minimal thinkingLevel is not supported by gemini-4 models"
+            )
+        return level
+    if isinstance(raw_level, bool):
+        raise ValueError(f"Unsupported thinkingLevel: {raw_level!r}")
     label = str(raw_level).strip().upper()
-    if not label or label in ("NONE", "OFF", "DISABLE", "DISABLED", "0"):
+    if not label:
         return None
+    if label in ("NONE", "OFF", "DISABLE", "DISABLED", "0"):
+        if is_gemini4_model(model):
+            raise ValueError(
+                f"Thinking cannot be disabled ({raw_level!r}) on gemini-4 models"
+            )
+        return None
+    if label == "MINIMAL" and is_gemini4_model(model):
+        raise ValueError("minimal thinkingLevel is not supported by gemini-4 models")
     if label in _REASONING_EFFORT_TO_LEVEL:
         return _REASONING_EFFORT_TO_LEVEL[label]
     if label in ThinkingLevel.__members__:
@@ -464,7 +500,7 @@ def _parse_thinking_level(raw_level: object) -> ThinkingLevel | None:
 
 
 def _normalize_gemini_thinking_config(
-    value: object,
+    value: object, *, model: str | None = None
 ) -> list[object] | None:
     if value is None or isinstance(value, list):
         return value
@@ -481,38 +517,53 @@ def _normalize_gemini_thinking_config(
     )
     raw_mode = value.get("mode")
     raw_include = value.get("includeThoughts", value.get("include_thoughts"))
+    gemini4 = is_gemini4_model(model)
 
     if isinstance(raw_level, str) and raw_level.strip().upper() in (
         "NONE",
         "OFF",
         "DISABLE",
         "DISABLED",
+        "0",
     ):
+        if gemini4:
+            raise ValueError(
+                f"Thinking cannot be disabled ({raw_level!r}) on gemini-4 models"
+            )
         return None
-    if (
-        raw_include is False
-        and raw_level is None
-        and raw_budget is None
-        and raw_mode is None
-    ):
-        return None
+    if raw_include is False:
+        if gemini4:
+            raise ValueError(
+                "Thinking cannot be disabled (includeThoughts=false) on gemini-4 models"
+            )
+        if raw_level is None and raw_budget is None and raw_mode is None:
+            return None
 
-    level = _parse_thinking_level(raw_level)
+    level = _parse_thinking_level(raw_level, model=model)
     budget: int | None = None
     if raw_budget is not None and not isinstance(raw_budget, bool):
         budget = int(str(raw_budget))
+        if gemini4 and budget <= 0:
+            raise ValueError(
+                f"Thinking cannot be disabled (thinkingBudget={budget}) on gemini-4 models"
+            )
         if budget == 0 and level is None and raw_mode is None:
             return None
+
+    mode: int | None = None
+    if raw_mode is not None and not isinstance(raw_mode, bool):
+        mode = int(str(raw_mode))
+        if gemini4 and mode <= 0:
+            raise ValueError(
+                f"Thinking cannot be disabled (mode={mode}) on gemini-4 models"
+            )
 
     if level is None and budget is None and raw_mode is None:
         return None
 
-    mode = (
-        int(str(raw_mode))
-        if raw_mode is not None and not isinstance(raw_mode, bool)
-        else 1
-    )
-    return AistudioThinkingConfig(level=level, mode=mode, budget=budget).to_wire()
+    return AistudioThinkingConfig(
+        level=level, mode=mode if mode is not None else 1, budget=budget
+    ).to_wire()
 
 
 def _normalize_gemini_image_config(
@@ -756,7 +807,10 @@ def normalize_gemini_request(
                     or (vm.get("fps") if isinstance(vm, dict) else None),
                 }
             if part.inlineData is not None:
-                img_data = (part.inlineData.mimeType, part.inlineData.data)
+                img_data = (
+                    part.inlineData.mimeType,
+                    encode_wire_base64_str(part.inlineData.data),
+                )
                 parts.append(
                     AistudioPart(
                         inline_data=img_data,
@@ -793,7 +847,7 @@ def normalize_gemini_request(
                         if subpart.inlineData is not None:
                             img_data = (
                                 subpart.inlineData.mimeType,
-                                subpart.inlineData.data,
+                                encode_wire_base64_str(subpart.inlineData.data),
                             )
                             parts.append(
                                 AistudioPart(
@@ -850,7 +904,10 @@ def normalize_gemini_request(
             )
             if part.text is not None
             else AistudioPart(
-                inline_data=(part.inlineData.mimeType, part.inlineData.data)
+                inline_data=(
+                    part.inlineData.mimeType,
+                    encode_wire_base64_str(part.inlineData.data),
+                )
                 if part.inlineData
                 else ("", ""),
                 thought_signature=part.thoughtSignature,
@@ -864,6 +921,21 @@ def normalize_gemini_request(
                 parts=sys_parts,
             )
     model_defaults = resolve_model_defaults(model)
+    cached_content = getattr(req, "cachedContent", None)
+    has_explicit_cached_content = (
+        cached_content is not None
+        or "cachedContent" in getattr(req, "model_fields_set", set())
+    )
+    if has_explicit_cached_content and (
+        is_hydrogen_model(model) or is_neon_model(model)
+    ):
+        model_label = "gemini-4-neon" if is_neon_model(model) else "gemini-4-hydrogen"
+        if not model_defaults.drop_unsupported_params:
+            raise ValueError(f"{model_label} does not support explicit cached content")
+        logger.warning(
+            "%s does not support explicit cached content; dropping cachedContent",
+            model_label,
+        )
     tools = None
     seen_builtin: set[str] = set()
     if req.tools is not None:
@@ -1004,7 +1076,7 @@ def normalize_gemini_request(
             )
         if generation_config.thinkingConfig is not None:
             normalized_thinking = _normalize_gemini_thinking_config(
-                generation_config.thinkingConfig
+                generation_config.thinkingConfig, model=model
             )
             if normalized_thinking is not None:
                 generation_config_overrides["thinking_config"] = normalized_thinking
@@ -1059,7 +1131,7 @@ def normalize_gemini_request(
     if effective_effort is not None and (
         generation_config is None or generation_config.thinkingConfig is None
     ):
-        level = _parse_thinking_level(effective_effort)
+        level = _parse_thinking_level(effective_effort, model=model)
         if level is not None:
             if generation_config_overrides is None:
                 generation_config_overrides = {}

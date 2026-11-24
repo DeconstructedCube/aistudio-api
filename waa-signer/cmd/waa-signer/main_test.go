@@ -287,6 +287,31 @@ func TestWorkerPoolForceRecreateKeepsCurrentRotation(t *testing.T) {
 	}
 }
 
+func TestWorkerPoolForceRecreateReplacesExpiredCookiesFromInput(t *testing.T) {
+	pool, factory := newOfflinePool()
+	first := acquireOffline(t, pool, offlineCookies)
+	worker := first.worker.(*fakePoolWorker)
+	first.Release()
+
+	expiredState := offlineState(t, offlineCookies)
+	for i := range expiredState.Cookies {
+		if expiredState.Cookies[i].Name == "__Secure-1PSIDTS" {
+			expiredState.Cookies[i].Value = "fixture-expired-ts"
+			expiredState.Cookies[i].Expires = float64(time.Now().Add(-time.Hour).Unix())
+		}
+	}
+	worker.setStorage(expiredState)
+
+	freshCookies := strings.Replace(offlineCookies, "fixture-old-ts", "fixture-fresh-ts", 1)
+	lease := acquireOffline(t, pool, freshCookies)
+	if err := lease.Recreate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := cookieFixtureValue(t, factory.input(1), "__Secure-1PSIDTS"); got != "fixture-fresh-ts" {
+		t.Fatalf("expected fresh input cookie after expired worker cookie eviction, got %q", got)
+	}
+}
+
 func TestWorkerPoolInitializationFailureDoesNotPublish(t *testing.T) {
 	pool, factory := newOfflinePool()
 	first := acquireOffline(t, pool, offlineCookies)

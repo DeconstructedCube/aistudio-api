@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,6 +30,11 @@ class AccountService:
         account_store: AccountStore,
     ) -> None:
         self._store = account_store
+        self._rotate_429_until: dict[str, float] = {}
+        self._rotate_recent_ok_until: dict[str, float] = {}
+        self._rotate_locks: dict[
+            str, tuple[asyncio.AbstractEventLoop, asyncio.Lock]
+        ] = {}
 
     def list_accounts(self) -> list[AccountMeta]:
         """列出所有账号。"""
@@ -110,10 +117,9 @@ class AccountService:
         session: GatewaySession | None = None,
         *,
         client: httpx.AsyncClient | None = None,
+        respect_backoff: bool = False,
     ) -> dict[str, object]:
         """调用 Google RotateCookies 刷新指定账号的滚动 Cookie，并同步更新同源子账号与内存会话。"""
-        import time
-
         from aistudio_api.infrastructure.account.cookie_parser import (
             compute_session_anchor,
             load_cookies_from_auth_file,
@@ -128,68 +134,141 @@ class AccountService:
         if account is None:
             return {"ok": False, "status": 0, "updated": []}
         expected_cookie_id = account.cookie_id or ""
-        cookies = load_cookies_from_auth_file(auth_path)
-        if not cookies:
-            return {"ok": False, "status": 0, "updated": []}
+        backoff_key = expected_cookie_id or account_id
+        loop = asyncio.get_running_loop()
+        cached_lock = self._rotate_locks.get(backoff_key)
+        if cached_lock is None or cached_lock[0] is not loop:
+            lock = asyncio.Lock()
+            self._rotate_locks[backoff_key] = (loop, lock)
+        else:
+            lock = cached_lock[1]
 
-        result = await rotate_google_cookies(cookies, client=client)
-        if not self.is_cookie_generation_current(account_id, expected_cookie_id):
-            return {**result, "ok": False, "stale": True, "updated": []}
-        if not result.get("ok"):
-            # 若当前子账号缺少最新滚动种子，尝试合并同会话兄弟账号的 Cookie 重试
-            anchor = compute_session_anchor(cookies)
-            target_acc = self._store.get_account(account_id)
-            target_cid = target_acc.cookie_id if target_acc else None
-            for sib in self._store.list_accounts():
-                if sib.id == account_id or (sib.cookie_id or "") != expected_cookie_id:
-                    continue
-                sib_path = self._store.get_auth_path(sib.id)
-                if not sib_path:
-                    continue
-                sib_cookies = load_cookies_from_auth_file(sib_path)
-                if not sib_cookies:
-                    continue
-                same_anchor = bool(
-                    anchor and compute_session_anchor(sib_cookies) == anchor
-                )
-                same_cid = bool(target_cid and sib.cookie_id == target_cid)
-                if not (same_anchor or same_cid):
-                    continue
-                merged_sib = {**cookies, **sib_cookies}
-                sib_res = await rotate_google_cookies(merged_sib, client=client)
-                if not self.is_cookie_generation_current(
-                    account_id, expected_cookie_id
-                ):
-                    return {**sib_res, "ok": False, "stale": True, "updated": []}
-                if sib_res.get("ok"):
-                    cookies = merged_sib
-                    result = sib_res
-                    break
+        async with lock:
+            if not self.is_cookie_generation_current(account_id, expected_cookie_id):
+                return {"ok": False, "status": 0, "stale": True, "updated": []}
+            now_mono = time.monotonic()
+            if respect_backoff:
+                if now_mono < self._rotate_429_until.get(backoff_key, 0.0):
+                    return {
+                        "ok": False,
+                        "status": 429,
+                        "updated": [],
+                        "skipped": "rate_limit_backoff",
+                    }
+                if now_mono < self._rotate_recent_ok_until.get(backoff_key, 0.0):
+                    fresh_cookies = load_cookies_from_auth_file(auth_path)
+                    if (
+                        session is not None
+                        and session.active_context is not None
+                        and fresh_cookies
+                    ):
+                        active_ctx = session.active_context
+                        active_file = active_ctx.auth_file
+                        is_current_ctx = (
+                            session.is_context_current(active_ctx)
+                            if hasattr(session, "is_context_current")
+                            else True
+                        )
+                        if (
+                            active_file
+                            and str(auth_path) == str(active_file)
+                            and is_current_ctx
+                        ):
+                            active_ctx.cookies.update(fresh_cookies)
+                    return {
+                        "ok": True,
+                        "status": 200,
+                        "updated": [],
+                        "skipped": "recent_rotation_reused",
+                        "cookies": fresh_cookies,
+                    }
 
-        if result.get("ok"):
-            now_ts = time.time()
-            updated_ids = self._store.update_account_cookies(
-                account_id=account_id,
-                new_cookies=cookies,
-                rotated_at=now_ts,
-                expected_cookie_id=expected_cookie_id,
-            )
-            if session is not None and session.active_context is not None:
-                active_file = session.active_context.auth_file
-                if active_file and (
-                    str(auth_path) == str(active_file)
-                    or any(uid in str(active_file) for uid in updated_ids)
-                ):
-                    session.active_context.cookies.update(cookies)
-            updated_names = result.get("updated")
-            if isinstance(updated_names, list) and updated_names:
-                logger.debug(
-                    "Cookie 轮换成功: account=%s, 更新项=%s, 同步账号数=%d",
-                    account_id,
-                    updated_names,
-                    len(updated_ids),
+            cookies = load_cookies_from_auth_file(auth_path)
+            if not cookies:
+                return {"ok": False, "status": 0, "updated": []}
+
+            result = await rotate_google_cookies(cookies, client=client)
+            if not self.is_cookie_generation_current(account_id, expected_cookie_id):
+                return {**result, "ok": False, "stale": True, "updated": []}
+            hit_rate_limit = result.get("status") == 429
+
+            if not result.get("ok") and not hit_rate_limit:
+                # 若当前子账号缺少最新滚动种子，尝试合并同会话兄弟账号的 Cookie 重试
+                anchor = compute_session_anchor(cookies)
+                target_acc = self._store.get_account(account_id)
+                target_cid = target_acc.cookie_id if target_acc else None
+                for sib in self._store.list_accounts():
+                    if (
+                        sib.id == account_id
+                        or (sib.cookie_id or "") != expected_cookie_id
+                    ):
+                        continue
+                    sib_path = self._store.get_auth_path(sib.id)
+                    if not sib_path:
+                        continue
+                    sib_cookies = load_cookies_from_auth_file(sib_path)
+                    if not sib_cookies:
+                        continue
+                    same_anchor = bool(
+                        anchor and compute_session_anchor(sib_cookies) == anchor
+                    )
+                    same_cid = bool(target_cid and sib.cookie_id == target_cid)
+                    if not (same_anchor or same_cid):
+                        continue
+                    merged_sib = {**cookies, **sib_cookies}
+                    sib_res = await rotate_google_cookies(merged_sib, client=client)
+                    if not self.is_cookie_generation_current(
+                        account_id, expected_cookie_id
+                    ):
+                        return {**sib_res, "ok": False, "stale": True, "updated": []}
+                    if sib_res.get("status") == 429:
+                        hit_rate_limit = True
+                        result = sib_res
+                        break
+                    if sib_res.get("ok"):
+                        cookies = merged_sib
+                        result = sib_res
+                        break
+
+            if hit_rate_limit:
+                self._rotate_429_until[backoff_key] = time.monotonic() + 120.0
+
+            if result.get("ok"):
+                self._rotate_429_until.pop(backoff_key, None)
+                self._rotate_recent_ok_until[backoff_key] = time.monotonic() + 15.0
+                now_ts = time.time()
+                updated_ids = self._store.update_account_cookies(
+                    account_id=account_id,
+                    new_cookies=cookies,
+                    rotated_at=now_ts,
+                    expected_cookie_id=expected_cookie_id,
                 )
-        return {**result, "cookies": cookies}
+                if session is not None and session.active_context is not None:
+                    active_ctx = session.active_context
+                    active_file = active_ctx.auth_file
+                    is_current_ctx = (
+                        session.is_context_current(active_ctx)
+                        if hasattr(session, "is_context_current")
+                        else True
+                    )
+                    if (
+                        active_file
+                        and is_current_ctx
+                        and (
+                            str(auth_path) == str(active_file)
+                            or any(uid in str(active_file) for uid in updated_ids)
+                        )
+                    ):
+                        active_ctx.cookies.update(cookies)
+                updated_names = result.get("updated")
+                if isinstance(updated_names, list) and updated_names:
+                    logger.debug(
+                        "Cookie 轮换成功: account=%s, 更新项=%s, 同步账号数=%d",
+                        account_id,
+                        updated_names,
+                        len(updated_ids),
+                    )
+            return {**result, "cookies": cookies}
 
     def save_account_from_cookies(
         self,

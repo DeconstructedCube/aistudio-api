@@ -22,7 +22,7 @@ from aistudio_api.infrastructure.account.cookie_parser import (
 )
 from aistudio_api.infrastructure.gateway.wire_types import (
     AistudioContent,
-    _normalize_standard_base64,
+    encode_wire_base64_str,
 )
 from aistudio_api.infrastructure.utils.logger import get_logger
 from aistudio_api.infrastructure.waa.daemon import (
@@ -48,7 +48,7 @@ def extract_content_digest(contents: list[AistudioContent]) -> tuple[str, str]:
             if part.file_id is not None:
                 hash_parts.append(str(part.file_id))
             elif part.inline_data is not None:
-                hash_parts.append(_normalize_standard_base64(str(part.inline_data[1])))
+                hash_parts.append(encode_wire_base64_str(str(part.inline_data[1])))
             elif (
                 part.function_call is not None
                 or part.function_response is not None

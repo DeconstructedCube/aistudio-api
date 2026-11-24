@@ -58,12 +58,21 @@ from aistudio_api.domain.errors import (
     is_transport_error,
     parse_upstream_grpc_error,
 )
+from aistudio_api.domain.models import (
+    CandidatePart,
+    GeneratedImage,
+    ThoughtSignatureEvent,
+)
 from aistudio_api.infrastructure.account.account_store import AccountMeta
 from aistudio_api.infrastructure.gateway.client import (
     AIStudioClient,
     PreparedRequest,
 )
+from aistudio_api.infrastructure.gateway.model_defaults import is_gemini4_model
 from aistudio_api.infrastructure.gateway.session import SessionContext
+from aistudio_api.infrastructure.gateway.wire_parser import (
+    is_terminal_wire_finish_reason,
+)
 from aistudio_api.infrastructure.utils.logger import (
     get_logger,
     set_current_request_account,
@@ -323,7 +332,7 @@ class Auth403RetryManager:
                     try:
                         session = getattr(client, "session", None)
                         result = await account_svc.rotate_account_cookies(
-                            active_acc.id, session
+                            active_acc.id, session, respect_backoff=True
                         )
                         if result.get(
                             "stale"
@@ -574,7 +583,7 @@ async def handle_attempt_exception(
                             else None
                         )
                         rot_res = await account_svc.rotate_account_cookies(
-                            active_acc.id, session
+                            active_acc.id, session, respect_backoff=True
                         )
                         if rot_res.get(
                             "stale"
@@ -849,9 +858,14 @@ async def _do_generate_content(
             )
             auth_manager.current_prepared = None
 
-            final_fr = to_gemini_finish_reason(
-                output.candidates[0].finish_reason if output.candidates else None
-            )
+            raw_fr = output.candidates[0].finish_reason if output.candidates else None
+            if is_gemini4_model(
+                normalized.model
+            ) and not is_terminal_wire_finish_reason(raw_fr):
+                raise TransportError(
+                    f"Gemini 4 non-streaming response ended without a terminal finish_reason (got {raw_fr!r})"
+                )
+            final_fr = to_gemini_finish_reason(raw_fr)
             _record_request_rotator_event(
                 "success",
                 model=normalized.model,
@@ -878,21 +892,7 @@ async def _do_generate_content(
                 candidates=[
                     GeminiCandidateResponse(
                         content=GeminiContentResponse(
-                            parts=to_gemini_parts(
-                                output.text,
-                                function_calls=output.function_calls,
-                                function_responses=output.function_responses,
-                                thinking=output.thinking,
-                                images=output.images,
-                                reasoning_images=output.reasoning_images,
-                                thinking_signature=cand.thinking_signature
-                                if cand
-                                else "",
-                                text_signature=cand.text_signature if cand else "",
-                                standalone_signature=(
-                                    cand.standalone_signature if cand else ""
-                                ),
-                            ),
+                            parts=to_gemini_parts(cand.parts if cand else []),
                         ),
                         finishReason=final_fr,
                         index=0,
@@ -1049,44 +1049,70 @@ def format_sse_event(
     if not text:
         return None
 
-    parts: list[dict[str, object]] = []
+    candidate_parts: list[CandidatePart] = []
     if event_type == "body":
-        p: dict[str, object] = {"text": str(text)}
-        if thought_signature:
-            p["thoughtSignature"] = thought_signature
-        parts.append(p)
+        candidate_parts.append(
+            CandidatePart(
+                kind="text",
+                text=str(text),
+                has_text=True,
+                thought_signature=thought_signature or "",
+            )
+        )
     elif event_type == "thinking":
-        p = {"text": str(text), "thought": True}
-        if thought_signature:
-            p["thoughtSignature"] = thought_signature
-        parts.append(p)
+        candidate_parts.append(
+            CandidatePart(
+                kind="thinking",
+                text=str(text),
+                has_text=True,
+                thought=True,
+                thought_signature=thought_signature or "",
+            )
+        )
     elif event_type == "tool_calls":
         fc_list = text if isinstance(text, list) else []
-        parts = [
-            part.model_dump(mode="json", exclude_none=True)
-            for part in to_gemini_parts("", function_calls=fc_list)
-        ]
+        for fc in fc_list:
+            if isinstance(fc, dict):
+                candidate_parts.append(CandidatePart(kind="function_call", payload=fc))
     elif event_type == "images":
         img_list = text if isinstance(text, list) else []
-        parts = [
-            part.model_dump(mode="json", exclude_none=True)
-            for part in to_gemini_parts("", images=img_list)
-        ]
+        for img in img_list:
+            if isinstance(img, GeneratedImage):
+                candidate_parts.append(CandidatePart(kind="image", image=img))
     elif event_type == "reasoning_images":
         r_img_list = text if isinstance(text, list) else []
-        parts = [
-            part.model_dump(mode="json", exclude_none=True)
-            for part in to_gemini_parts("", reasoning_images=r_img_list)
-        ]
+        for img in r_img_list:
+            if isinstance(img, GeneratedImage):
+                candidate_parts.append(
+                    CandidatePart(kind="reasoning_image", thought=True, image=img)
+                )
+    elif event_type == "candidate_part" and isinstance(text, CandidatePart):
+        candidate_parts.append(text)
     elif event_type == "thought_signature":
-        parts = [{"thoughtSignature": str(text)}]
+        sig_thought = bool(getattr(text, "thought", False))
+        sig_empty_text = bool(getattr(text, "empty_text_carrier", False))
+        candidate_parts.append(
+            CandidatePart(
+                kind="standalone_signature",
+                has_text=sig_empty_text,
+                thought=sig_thought,
+                thought_signature=str(text),
+            )
+        )
     else:
         return None
 
-    if (
-        thought_signature
-        and parts
-        and event_type in ("tool_calls", "images", "reasoning_images")
+    parts = [
+        part.model_dump(mode="json", exclude_none=True)
+        for part in to_gemini_parts(candidate_parts, allow_empty_fallback=False)
+    ]
+    if not parts:
+        return None
+    if thought_signature and event_type in (
+        "tool_calls",
+        "images",
+        "reasoning_images",
+        "candidate_part",
     ):
         existing_signature = parts[0].get("thoughtSignature")
         if not existing_signature:
@@ -1216,7 +1242,8 @@ def _build_gemini_streaming_response(
             final_usage: dict[str, object] | None = None
             final_finish_reason: str = "STOP"
             latest_response_id: str | None = None
-            buffered_thought_sig: str | None = None
+            buffered_thought_sig: ThoughtSignatureEvent | str | None = None
+            saw_terminal_finish_reason = False
             stream_completed = False
             last_stream_error: Exception | None = None
             auth_manager = Auth403RetryManager()
@@ -1232,6 +1259,7 @@ def _build_gemini_streaming_response(
                 final_finish_reason = "STOP"
                 latest_response_id = None
                 buffered_thought_sig = None
+                saw_terminal_finish_reason = False
                 try:
                     normalized = normalize_gemini_request(req, model_path)
                     ensured_ctx = await ensure_active_account(
@@ -1269,7 +1297,8 @@ def _build_gemini_streaming_response(
                             if event_type == "usage":
                                 final_usage = text if isinstance(text, dict) else None
                             elif event_type == "finish_reason":
-                                if text not in (None, 0, 22):
+                                if is_terminal_wire_finish_reason(text):
+                                    saw_terminal_finish_reason = True
                                     final_finish_reason = (
                                         to_gemini_finish_reason(text)
                                         if isinstance(text, int)
@@ -1289,16 +1318,56 @@ def _build_gemini_streaming_response(
                                     if chunk:
                                         has_yielded_data = True
                                         yield chunk
-                                buffered_thought_sig = str(text)
+                                buffered_thought_sig = (
+                                    text
+                                    if isinstance(text, ThoughtSignatureEvent)
+                                    else str(text)
+                                )
                             elif event_type == "done":
                                 continue
                             else:
+                                attach_sig: str | None = (
+                                    str(buffered_thought_sig)
+                                    if buffered_thought_sig
+                                    else None
+                                )
+                                if (
+                                    isinstance(
+                                        buffered_thought_sig, ThoughtSignatureEvent
+                                    )
+                                    and buffered_thought_sig.standalone
+                                ):
+                                    is_thinking_target = event_type in (
+                                        "thinking",
+                                        "reasoning_images",
+                                    )
+                                    incompatible_affinity = (
+                                        buffered_thought_sig.thought
+                                        != is_thinking_target
+                                        or (
+                                            buffered_thought_sig.empty_text_carrier
+                                            and event_type
+                                            in ("tool_calls", "candidate_part")
+                                        )
+                                    )
+                                    if incompatible_affinity:
+                                        sig_chunk = format_sse_event(
+                                            "thought_signature",
+                                            buffered_thought_sig,
+                                            model_version=normalized.model,
+                                            response_id=latest_response_id,
+                                        )
+                                        buffered_thought_sig = None
+                                        attach_sig = None
+                                        if sig_chunk:
+                                            has_yielded_data = True
+                                            yield sig_chunk
                                 chunk = format_sse_event(
                                     event_type,
                                     text,
                                     model_version=normalized.model,
                                     response_id=latest_response_id,
-                                    thought_signature=buffered_thought_sig,
+                                    thought_signature=attach_sig,
                                 )
                                 if chunk:
                                     buffered_thought_sig = None
@@ -1324,6 +1393,13 @@ def _build_gemini_streaming_response(
                         if chunk:
                             has_yielded_data = True
                             yield chunk
+                    if (
+                        is_gemini4_model(normalized.model)
+                        and not saw_terminal_finish_reason
+                    ):
+                        raise TransportError(
+                            "Gemini 4 stream ended without a terminal finish_reason (incomplete response)"
+                        )
                     auth_manager.current_prepared = None
                     stream_completed = True
                     break

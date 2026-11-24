@@ -7,11 +7,14 @@ from aistudio_api.infrastructure.account.cookie_parser import (
 )
 
 
-def test_parse_cookie_string_skips_host_only_cookies():
-    state = parse_cookie_string("__Host-GAPS=abc; SID=sid123")
+def test_parse_cookie_string_keeps_allowed_and_skips_unknown_host_only_cookies():
+    state = parse_cookie_string("__Host-GAPS=abc; __Host-OTHER=xyz; SID=sid123")
     cookies = state.get("cookies")
     assert isinstance(cookies, list)
-    assert cookies == [{"name": "SID", "value": "sid123"}]
+    assert cookies == [
+        {"name": "__Host-GAPS", "value": "abc"},
+        {"name": "SID", "value": "sid123"},
+    ]
 
 
 def test_filter_minimal_cookies_and_makersuite_headers():
@@ -87,7 +90,7 @@ def test_parse_cookie_string_discards_transient_and_telemetry_cookies():
     raw = (
         "SID=sid_val; SAPISID=sapisid_val; __Secure-1PSID=psid_val; "
         "_ga=GA1.2.123; NID=511=nid_val; SIDCC=sidcc_val; LSID=lsid_val; "
-        "__Host-1PLSID=host_lsid; __Host-GAPS=host_gaps; "
+        "__Host-1PLSID=host_lsid; __Host-GAPS=host_gaps; __Host-EXTRA=drop_me; "
         "OSID=stale_osid; __Secure-OSID=stale_sec_osid"
     )
     state = parse_cookie_string(raw, discard_transient=True)
@@ -101,11 +104,12 @@ def test_parse_cookie_string_discards_transient_and_telemetry_cookies():
     assert "SIDCC" in names
     assert "LSID" in names
     assert "__Host-1PLSID" in names
+    assert "__Host-GAPS" in names
 
     # Stale/transient/tracking cookies must be discarded
     assert "_ga" not in names
     assert "NID" not in names
-    assert "__Host-GAPS" not in names
+    assert "__Host-EXTRA" not in names
     assert "OSID" not in names
     assert "__Secure-OSID" not in names
 
@@ -542,6 +546,7 @@ async def test_rotate_google_cookies_and_sibling_sync(tmp_path):
                 auth_user="1",
                 auth_file=str(u1_auth_path),
                 cookies=load_cookies_from_auth_file(u1_auth_path),
+                cookie_id="cid_shared",
             )
         )
 

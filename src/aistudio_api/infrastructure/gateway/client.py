@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL
 from aistudio_api.domain.errors import (
+    RequestError,
     SessionExpiredError,
     TransportError,
     classify_error,
@@ -33,6 +34,7 @@ from aistudio_api.infrastructure.gateway.wire_codec import (
     extract_decision_digest_contents,
 )
 from aistudio_api.infrastructure.gateway.wire_parser import (
+    is_upstream_policy_block_text,
     parse_count_tokens_response,
     parse_decision_response,
     parse_text_output,
@@ -246,6 +248,8 @@ class AIStudioClient:
         if is_html_payload(raw_text):
             raise TransportError("upstream returned HTML error page on HTTP 200")
         output = parse_text_output(raw_text)
+        if is_upstream_policy_block_text(output.text):
+            raise RequestError(400, "Upstream prompt blocked by Google policy")
         output.model = model
         return output
 

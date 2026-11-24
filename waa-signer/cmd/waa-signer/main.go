@@ -393,6 +393,52 @@ func (lease *workerLease) Release() {
 	lease.releaseOnce.Do(func() { lease.entry.mu.Unlock() })
 }
 
+// mergeRecreatedState 保留当前 Worker 未过期的内部轮换凭据，同时用调用方有效输入补齐已过期或缺失的项。
+func mergeRecreatedState(current, fallback aistudio.StorageState, now time.Time) aistudio.StorageState {
+	nowSec := float64(now.UnixNano()) / 1e9
+	isValid := func(c aistudio.StateCookie) bool {
+		return c.Value != "" && (c.Expires < 0 || c.Expires > nowSec)
+	}
+	merged := aistudio.StorageState{
+		Cookies: make([]aistudio.StateCookie, 0, len(current.Cookies)+len(fallback.Cookies)),
+		Origins: append([]aistudio.StorageOrigin(nil), current.Origins...),
+	}
+	if len(merged.Origins) == 0 && len(fallback.Origins) > 0 {
+		merged.Origins = append([]aistudio.StorageOrigin(nil), fallback.Origins...)
+	}
+	indexByKey := make(map[cookieIdentity]int, len(current.Cookies))
+	for _, c := range current.Cookies {
+		if !isValid(c) {
+			continue
+		}
+		key := cookieIdentity{
+			Domain: strings.ToLower(strings.TrimPrefix(c.Domain, ".")),
+			Path:   c.Path,
+			Name:   c.Name,
+		}
+		indexByKey[key] = len(merged.Cookies)
+		merged.Cookies = append(merged.Cookies, c)
+	}
+	for _, c := range fallback.Cookies {
+		if !isValid(c) {
+			continue
+		}
+		key := cookieIdentity{
+			Domain: strings.ToLower(strings.TrimPrefix(c.Domain, ".")),
+			Path:   c.Path,
+			Name:   c.Name,
+		}
+		if _, exists := indexByKey[key]; !exists {
+			indexByKey[key] = len(merged.Cookies)
+			merged.Cookies = append(merged.Cookies, c)
+		}
+	}
+	if len(merged.Cookies) == 0 {
+		return fallback
+	}
+	return merged
+}
+
 // Recreate 只能在持有租约时调用；当前 Worker 状态优先，保留其已轮换的凭据。
 func (lease *workerLease) Recreate(ctx context.Context) error {
 	if lease.entry.workerSnapshot() != lease.worker {
@@ -400,7 +446,7 @@ func (lease *workerLease) Recreate(ctx context.Context) error {
 	}
 	state := lease.inputState
 	if current, err := lease.worker.BrowserStorageState(ctx); err == nil {
-		state = current
+		state = mergeRecreatedState(current, lease.inputState, time.Now())
 	}
 	previousInputCookies := lease.entry.inputCookies
 	worker, err := lease.pool.initializeWorker(ctx, lease.entry, lease.key, lease.options, state, lease.inputFingerprint)

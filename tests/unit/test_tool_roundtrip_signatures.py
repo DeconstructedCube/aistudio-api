@@ -15,6 +15,7 @@ from aistudio_api.api.responses import to_gemini_parts
 from aistudio_api.api.schemas import GeminiGenerateContentRequest
 from aistudio_api.application import api_service_gemini as gemini_service
 from aistudio_api.application.chat_service import normalize_gemini_request
+from aistudio_api.domain.models import CandidatePart
 from aistudio_api.infrastructure.gateway.client import AIStudioClient, PreparedRequest
 from aistudio_api.infrastructure.gateway.session import GatewaySession
 from aistudio_api.infrastructure.gateway.streaming import StreamingGateway
@@ -70,23 +71,30 @@ def _replay_model_turn(
 def test_generated_standalone_signature_survives_next_turn(
     with_function_call: bool,
 ) -> None:
-    calls: list[dict[str, object]] = (
+    candidate_parts: list[CandidatePart] = (
         [
-            {
-                "name": "getWeather",
-                "args": {"city": "Shanghai"},
-                "call_id": "call_weather",
-                "thought_signature": CALL_SIGNATURE,
-            }
+            CandidatePart(
+                kind="function_call",
+                payload={
+                    "name": "getWeather",
+                    "args": {"city": "Shanghai"},
+                    "call_id": "call_weather",
+                    "thought_signature": CALL_SIGNATURE,
+                },
+            )
         ]
         if with_function_call
         else []
     )
+    candidate_parts.append(
+        CandidatePart(
+            kind="standalone_signature",
+            thought_signature=TRAILING_SIGNATURE,
+        )
+    )
     returned_parts = [
         part.model_dump(mode="json", exclude_none=True)
-        for part in to_gemini_parts(
-            "", function_calls=calls, standalone_signature=TRAILING_SIGNATURE
-        )
+        for part in to_gemini_parts(candidate_parts)
     ]
     wire_contents = _replay_model_turn(returned_parts)
     model_wire, role = wire_contents[1]
@@ -121,7 +129,9 @@ def test_parallel_function_calls_keep_ids_signatures_and_matching_results() -> N
     ]
     returned_parts = [
         part.model_dump(mode="json", exclude_none=True)
-        for part in to_gemini_parts("", function_calls=calls)
+        for part in to_gemini_parts(
+            [CandidatePart(kind="function_call", payload=call) for call in calls]
+        )
     ]
     results: list[dict[str, object]] = [
         {

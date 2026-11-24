@@ -9,22 +9,46 @@ from enum import IntEnum
 from .wire_spec import GenerationConfigIndex, JspbArray, PartIndex
 
 
-def _normalize_standard_base64(value: str, *, pad_standard: bool = False) -> str:
-    """Normalize URL-safe (and optionally unpadded standard) Base64 strings for JSPB wire."""
+def decode_wire_base64_bytes(value: object) -> bytes:
+    """Strictly decode standard or URL-safe (padded or unpadded) Base64 media bytes."""
+    if not isinstance(value, str):
+        raise ValueError("Invalid Base64 payload: expected string.")
     cleaned = "".join(value.split())
-    if len(cleaned) < 16:
-        return value
+    if not cleaned:
+        raise ValueError("Invalid Base64 payload: empty media data.")
+    has_std = "+" in cleaned or "/" in cleaned
     has_urlsafe = "-" in cleaned or "_" in cleaned
-    if not has_urlsafe and (not pad_standard or len(cleaned) % 4 == 0):
-        return cleaned
-    standard = cleaned.replace("-", "+").replace("_", "/")
-    pad_len = (-len(standard)) % 4
-    if pad_len:
-        standard += "=" * pad_len
+    if has_std and has_urlsafe:
+        raise ValueError(
+            "Invalid Base64 payload: mixed standard and URL-safe alphabets."
+        )
+    raw_body = cleaned.rstrip("=")
+    pad_chars = len(cleaned) - len(raw_body)
+    if "=" in raw_body or pad_chars > 2 or (pad_chars > 0 and len(cleaned) % 4 != 0):
+        raise ValueError("Invalid Base64 payload: malformed padding.")
+    if len(raw_body) % 4 == 1:
+        raise ValueError("Invalid Base64 payload: invalid unpadded length.")
+    standard = raw_body.replace("-", "+").replace("_", "/")
+    standard_padded = standard + ("=" * ((-len(standard)) % 4))
     try:
-        base64.b64decode(standard, validate=True)
-        return standard
-    except Exception:
+        decoded = base64.b64decode(standard_padded, validate=True)
+    except Exception as exc:
+        raise ValueError("Invalid Base64 payload.") from exc
+    if base64.b64encode(decoded).decode("ascii") != standard_padded:
+        raise ValueError("Invalid Base64 payload: non-canonical trailing bits.")
+    return decoded
+
+
+def encode_wire_base64_str(value: object) -> str:
+    """Validate Base64 media data and return canonical padded standard Base64."""
+    return base64.b64encode(decode_wire_base64_bytes(value)).decode("ascii")
+
+
+def normalize_thought_signature(value: str) -> str:
+    """Normalize valid Base64 thoughtSignature (any length) to canonical padded standard Base64."""
+    try:
+        return encode_wire_base64_str(value)
+    except ValueError:
         return value
 
 
@@ -294,15 +318,15 @@ class AistudioPart:
         if self.thought:
             wire[PartIndex.THOUGHT_ALT_FLAG] = 1
         if self.thought_signature:
-            wire[PartIndex.THOUGHT_SIGNATURE] = _normalize_standard_base64(
-                self.thought_signature, pad_standard=True
+            wire[PartIndex.THOUGHT_SIGNATURE] = normalize_thought_signature(
+                self.thought_signature
             )
         if self.file_id:
             wire[PartIndex.FILE_DATA] = [self.file_id]
             return wire.compact()
         if self.inline_data:
             mime, b64 = self.inline_data
-            wire[PartIndex.INLINE_DATA] = [mime, _normalize_standard_base64(b64)]
+            wire[PartIndex.INLINE_DATA] = [mime, encode_wire_base64_str(b64)]
             if self.video_metadata:
                 wire[40] = self.video_metadata
             return wire.compact()

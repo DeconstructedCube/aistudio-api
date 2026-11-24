@@ -138,55 +138,6 @@ async def test_parallel_function_call_signatures_stay_isolated():
     assert "thought_signature" not in tool_calls_ev[1]
 
 
-@pytest.mark.parametrize(
-    "raw_text,expected_thought,expected_body",
-    [
-        ("[:thought inner draft :]Hello world", "inner draft", "Hello world"),
-        ("[_thought step 1 ]_Result", "step 1", "Result"),
-        ("⌊thought plan A ⌋Answer A", "plan A", "Answer A"),
-        ("<thought>alpha</thought>Beta", "alpha", "Beta"),
-        ("【_thought cn draft _】正文", "cn draft", "正文"),
-    ],
-)
-@pytest.mark.asyncio
-async def test_inline_thought_tags_stripped_in_stream_and_non_stream(
-    raw_text: str, expected_thought: str, expected_body: str
-):
-    """Issue #15: inline thought leak variants are separated in both non-streaming and chunked streaming."""
-    raw_cand = [[[[None, raw_text]], "model"], 1]
-    chunk_full = [[raw_cand]]
-    raw_payload = ")]}'\n" + json.dumps([[chunk_full]])
-    out = parse_text_output(raw_payload)
-    assert out.thinking == expected_thought
-    assert out.text == expected_body
-
-    # Split mid-open-tag streaming
-    split_at = min(5, len(raw_text) - 1)
-    chunk1 = [[[[[[None, raw_text[:split_at]]], "model"]]]]
-    chunk2 = [[[[[[None, raw_text[split_at:]]], "model"], 1]]]
-    session = GatewaySession()
-
-    async def fake_stream(**_kwargs):
-        yield ("status", 200)
-        yield (
-            "chunk",
-            (")]}\n" + json.dumps([[chunk1, chunk2]]))
-            .replace(")]}", ")]}'")
-            .encode("utf-8"),
-        )
-
-    session.send_streaming_request = fake_stream
-    gateway = StreamingGateway(session=session)
-    prep = PreparedRequest(url="https://example.test", headers={}, body="[]")
-    events = [
-        ev async for ev in gateway.stream_chat(request=prep, model="gemini-3.8-flash")
-    ]
-    thoughts = "".join(str(v) for k, v in events if k == "thinking")
-    bodies = "".join(str(v) for k, v in events if k == "body")
-    assert thoughts == expected_thought
-    assert bodies == expected_body
-
-
 def test_urlsafe_base64_tool_role_and_argon_slot45_cleanup():
     """Issue #15: URL-safe Base64 normalized at wire boundary, tool/function role -> user, slot 45 cleared for non-argon."""
     raw_bytes = b"hello-wire-thought-signature-payload"

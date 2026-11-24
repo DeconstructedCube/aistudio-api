@@ -74,7 +74,7 @@ def test_chat_service_does_not_guess_thought_for_multi_parts():
 def test_multimodal_function_response_unpacks_inline_data():
     """Verify that functionResponse parts containing inlineData (from tools like read)
     are unpacked into sibling parts for MakerSuite Wire encoding."""
-    fake_base64 = "UklGRvaTAgBXRUJQVlA4IOqTAgDwgAmdASogBnIDPm0ylEckIy"
+    fake_base64 = "UklGRvaTAgBXRUJQVlA4IOqTAgDwgAmdASogBnIDPm0ylEckIw=="
     req = GeminiGenerateContentRequest.model_validate(
         {
             "contents": [

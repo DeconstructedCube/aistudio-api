@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL, settings
@@ -28,8 +29,27 @@ from .wire_types import (
     AistudioGenerationConfig,
     AistudioPart,
     AistudioRequest,
-    _normalize_standard_base64,
+    encode_wire_base64_str,
 )
+
+_LONG_OUTPUT_CAPABILITY_MODEL_RE = re.compile(
+    r"^(?:models/)?gemini-4(?:-(?:argon|carbon|hydrogen|neon))?(?:-google)?$",
+    re.IGNORECASE,
+)
+
+
+def _supports_long_output_capability(model: str | None) -> bool:
+    """Return True if model belongs to Gemini 4 series supporting gc[45] long-output flag."""
+    if not model:
+        return False
+    lowered = model.strip().lower()
+    if _LONG_OUTPUT_CAPABILITY_MODEL_RE.match(lowered):
+        return True
+    return any(
+        token in lowered
+        for token in ("argon", "carbon", "hydrogen", "neon", "gemini-4")
+    )
+
 
 TOOLS_TEMPLATES: dict[str, list[object]] = {
     "code_execution": [[]],
@@ -218,7 +238,7 @@ class AistudioWireCodec:
         body[self.CONTENTS_INDEX] = [content.to_wire() for content in request.contents]
         body[self.SAFETY_INDEX] = request.safety_settings
         body[self.GENERATION_CONFIG_INDEX] = request.generation_config.values
-        if "argon" not in model.lower() and isinstance(
+        if not _supports_long_output_capability(model) and isinstance(
             body[self.GENERATION_CONFIG_INDEX], list
         ):
             gc_vals = body[self.GENERATION_CONFIG_INDEX]
@@ -325,7 +345,7 @@ class AistudioWireCodec:
             if not hasattr(gc, attr):
                 continue
             setattr(gc, attr, value)
-        if "argon" not in model.lower():
+        if not _supports_long_output_capability(model):
             gc._set_slot(GenerationConfigIndex.ARGON_CAPABILITY_FLAG, None)
         effective_tools: list[list] | None = tools if tools else None
         if tool_config is not None:
@@ -560,7 +580,7 @@ def _encode_interactions_block(block: dict[str, object]) -> list[object]:
     )
     raw_data = block.get("data")
     data = (
-        _normalize_standard_base64(raw_data)
+        encode_wire_base64_str(raw_data)
         if isinstance(raw_data, str) and raw_data
         else None
     )

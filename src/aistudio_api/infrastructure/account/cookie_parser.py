@@ -156,6 +156,7 @@ _ALLOWED_HOST_COOKIES: frozenset[str] = frozenset(
     {
         "__Host-1PLSID",
         "__Host-3PLSID",
+        "__Host-GAPS",
     }
 )
 

@@ -369,3 +369,103 @@ def test_parse_response_chunk_with_ask_tool_payload():
             }
         ]
     }
+
+
+def test_parse_text_output_preserves_interleaved_parts_and_structured_slots():
+    import json
+
+    from aistudio_api.api.responses import to_gemini_parts
+
+    part_think1 = [None, "step 1", None, None, None, None, None, None, None, None, True]
+    part_exec = [None, None, None, None, None, None, None, None, [1, "print(6*7)"]]
+    part_res = [None, None, None, None, None, None, None, None, None, [1, "42\n"]]
+    part_think2 = [None, "step 2", None, None, None, None, None, None, None, None, True]
+    part_file = [None, None, None, None, None, ["files/abc123", "video/mp4"]]
+    part_vm: list[object] = [None] * 41
+    part_vm[40] = {"startOffset": "0s", "endOffset": "5s", "fps": 2.0}
+    part_text = [None, "42"]
+    raw_cand = [
+        [
+            [
+                part_think1,
+                part_exec,
+                part_res,
+                part_think2,
+                part_file,
+                part_vm,
+                part_text,
+            ],
+            "model",
+        ],
+        1,
+    ]
+    payload = ")]}'\n" + json.dumps([[[[raw_cand]]]])
+    out = parse_text_output(payload)
+    dumped = [
+        p.model_dump(mode="json", exclude_none=True)
+        for p in to_gemini_parts(out.candidates[0].parts)
+    ]
+    assert [next(iter(item.keys())) for item in dumped] == [
+        "text",
+        "executableCode",
+        "codeExecutionResult",
+        "text",
+        "fileData",
+        "videoMetadata",
+        "text",
+    ]
+    assert dumped[0] == {"text": "step 1", "thought": True}
+    assert dumped[1] == {"executableCode": {"language": "PYTHON", "code": "print(6*7)"}}
+    assert dumped[2] == {
+        "codeExecutionResult": {"outcome": "OUTCOME_OK", "output": "42\n"}
+    }
+    assert dumped[3] == {"text": "step 2", "thought": True}
+    assert dumped[4] == {
+        "fileData": {"mimeType": "video/mp4", "fileUri": "files/abc123"}
+    }
+    assert dumped[5] == {
+        "videoMetadata": {"startOffset": "0s", "endOffset": "5s", "fps": 2.0}
+    }
+    assert dumped[6] == {"text": "42"}
+
+
+def test_short_base64_canonical_normalization_and_validation():
+    import pytest
+
+    from aistudio_api.infrastructure.gateway.wire_types import (
+        AistudioContent,
+        AistudioPart,
+        encode_wire_base64_str,
+    )
+    from aistudio_api.infrastructure.waa.signer import extract_content_digest
+
+    # <16 chars unpadded standard & URL-safe Base64 must normalize with '=' padding
+    assert encode_wire_base64_str("iVBORw0KGgo") == "iVBORw0KGgo="
+    assert encode_wire_base64_str("AQIDBA") == "AQIDBA=="
+    assert encode_wire_base64_str("-_8") == "+/8="
+    part = AistudioPart(inline_data=("image/png", "iVBORw0KGgo"))
+    assert part.to_wire()[2] == ["image/png", "iVBORw0KGgo="]
+    prompt, _ = extract_content_digest([AistudioContent(role="user", parts=[part])])
+    assert prompt == "iVBORw0KGgo="
+
+    with pytest.raises(ValueError, match="Invalid Base64"):
+        encode_wire_base64_str("not!valid!b64")
+    with pytest.raises(ValueError, match="trailing bits"):
+        encode_wire_base64_str("UklGRvaTAgBXRUJQVlA4IOqTAgDwgAmdASogBnIDPm0ylEckIy")
+
+
+def test_upstream_policy_block_and_terminal_finish_reason():
+    from aistudio_api.infrastructure.gateway.wire_parser import (
+        is_terminal_wire_finish_reason,
+        is_upstream_policy_block_text,
+    )
+
+    assert is_upstream_policy_block_text(
+        "The prompt could not be submitted. This prompt may violate Google's Prohibited Use Policy."
+    )
+    assert not is_upstream_policy_block_text("Here is a normal response.")
+    assert is_terminal_wire_finish_reason(1) is True
+    assert is_terminal_wire_finish_reason("STOP") is True
+    assert is_terminal_wire_finish_reason(None) is False
+    assert is_terminal_wire_finish_reason(0) is False
+    assert is_terminal_wire_finish_reason(22) is False

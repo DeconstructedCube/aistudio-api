@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, StrictInt, field_validator
 
 
 class GeminiInlineData(BaseModel):
@@ -206,8 +206,10 @@ class GeminiGenerationConfig(BaseModel):
     topK: int | None = Field(
         default=None, validation_alias=AliasChoices("topK", "top_k")
     )
-    maxOutputTokens: int | None = Field(
+    maxOutputTokens: StrictInt | None = Field(
         default=None,
+        ge=1,
+        le=65536,
         validation_alias=AliasChoices("maxOutputTokens", "max_output_tokens"),
     )
     responseModalities: list[str] | None = Field(
@@ -282,6 +284,10 @@ class GeminiGenerateContentRequest(BaseModel):
     reasoningEffort: str | None = Field(
         default=None,
         validation_alias=AliasChoices("reasoningEffort", "reasoning_effort"),
+    )
+    cachedContent: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("cachedContent", "cached_content"),
     )
 
 

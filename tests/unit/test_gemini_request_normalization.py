@@ -87,7 +87,7 @@ def test_normalize_gemini_request_maps_official_image_generation_fields():
                         {
                             "inlineData": {
                                 "mimeType": "image/jpeg",
-                                "data": "/9j/4AAQSkZJRgABAQAA....",
+                                "data": "/9j/4AAQSkZJRgABAQAA",
                             }
                         },
                         {"text": "INSERT_INPUT_HERE"},
@@ -126,7 +126,7 @@ def test_normalize_gemini_request_maps_official_image_generation_fields():
     }
     assert normalized.contents[0].parts[0].inline_data == (
         "image/jpeg",
-        "/9j/4AAQSkZJRgABAQAA....",
+        "/9j/4AAQSkZJRgABAQAA",
     )
 
 
@@ -912,3 +912,71 @@ def test_normalize_gemini_request_rejects_unsupported_thinking_level():
     )
     with pytest.raises(ValueError, match="Unsupported thinkingLevel"):
         normalize_gemini_request(req_max, "gemini-4-hydrogen")
+
+
+def test_normalize_gemini_request_enforces_gemini4_thinking_and_cached_content_and_max_tokens(
+    monkeypatch, tmp_path
+):
+    from pydantic import ValidationError
+
+    from aistudio_api.infrastructure.gateway.model_defaults import (
+        invalidate_config_cache,
+    )
+
+    for bad_tc in (
+        {"thinkingLevel": "MINIMAL"},
+        {"thinkingLevel": 4},
+        {"thinkingLevel": "NONE"},
+        {"includeThoughts": False},
+        {"thinkingBudget": 0},
+        {"thinkingBudget": -1},
+        {"mode": 0},
+    ):
+        req = GeminiGenerateContentRequest.model_validate(
+            {
+                "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+                "generationConfig": {"thinkingConfig": bad_tc},
+            }
+        )
+        with pytest.raises(ValueError, match="gemini-4"):
+            normalize_gemini_request(req, "gemini-4-hydrogen")
+
+    # maxOutputTokens strictly 1..65536 and rejects bool
+    for bad_max in (0, -5, 65537, True):
+        with pytest.raises(ValidationError):
+            GeminiGenerateContentRequest.model_validate(
+                {
+                    "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+                    "generationConfig": {"maxOutputTokens": bad_max},
+                }
+            )
+
+    # cachedContent rejected on hydrogen/neon when drop_unsupported_params=false
+    strict_cfg = tmp_path / "strict_cached.yaml"
+    strict_cfg.write_text(
+        """
+model_defaults:
+  drop_unsupported_params: false
+  profiles:
+    - name: gemini_models
+      match:
+        prefixes: [gemini-]
+      drop_unsupported_params: false
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AISTUDIO_CONFIG_FILE", str(strict_cfg))
+    invalidate_config_cache()
+    try:
+        req_cached = GeminiGenerateContentRequest.model_validate(
+            {
+                "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+                "cachedContent": "cachedContents/abc",
+            }
+        )
+        with pytest.raises(
+            ValueError, match="does not support explicit cached content"
+        ):
+            normalize_gemini_request(req_cached, "gemini-4-neon")
+    finally:
+        invalidate_config_cache()

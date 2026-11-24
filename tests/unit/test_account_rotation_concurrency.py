@@ -463,3 +463,85 @@ async def test_try_switch_account_concurrent_403_avalanche_and_in_place_recovery
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_rotate_account_cookies_single_flight_reuse_and_429_backoff(
+    tmp_path, monkeypatch
+):
+    """Concurrent 403 cookie rotations share single-flight lock, reuse 15s ok, and short-circuit on 429."""
+    store = AccountStore(accounts_dir=tmp_path / "accounts_rotate_backoff")
+    svc = AccountService(store)
+    acc0 = svc.save_account_from_cookies(
+        name="u/0",
+        email="u0@example.test",
+        storage_state={
+            "cookies": [
+                {"name": "SAPISID", "value": "anchor"},
+                {"name": "SID", "value": "sid0"},
+                {"name": "__Secure-1PSIDTS", "value": "ts0"},
+            ]
+        },
+        auth_user="0",
+        cookie_id="shared_cid",
+    )
+    svc.save_account_from_cookies(
+        name="u/1",
+        email="u1@example.test",
+        storage_state={
+            "cookies": [
+                {"name": "SAPISID", "value": "anchor"},
+                {"name": "SID", "value": "sid1"},
+                {"name": "__Secure-1PSIDTS", "value": "ts0"},
+            ]
+        },
+        auth_user="1",
+        cookie_id="shared_cid",
+    )
+
+    calls = 0
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_rotate_ok(cookies, **_kwargs):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        cookies["__Secure-1PSIDTS"] = "ts_refreshed"
+        return {"ok": True, "status": 200, "updated": ["__Secure-1PSIDTS"]}
+
+    monkeypatch.setattr(
+        "aistudio_api.infrastructure.account.cookie_parser.rotate_google_cookies",
+        fake_rotate_ok,
+    )
+    t1 = asyncio.create_task(svc.rotate_account_cookies(acc0.id, respect_backoff=True))
+    await started.wait()
+    t2 = asyncio.create_task(svc.rotate_account_cookies(acc0.id, respect_backoff=True))
+    await asyncio.sleep(0)
+    release.set()
+    r1, r2 = await asyncio.gather(t1, t2)
+    assert calls == 1
+    assert r1["ok"] is True
+    assert r2["ok"] is True
+    assert r2.get("skipped") == "recent_rotation_reused"
+
+    svc._rotate_recent_ok_until.clear()
+    calls_429 = 0
+
+    async def fake_rotate_429(_cookies, **_kwargs):
+        nonlocal calls_429
+        calls_429 += 1
+        return {"ok": False, "status": 429, "updated": []}
+
+    monkeypatch.setattr(
+        "aistudio_api.infrastructure.account.cookie_parser.rotate_google_cookies",
+        fake_rotate_429,
+    )
+    res_429 = await svc.rotate_account_cookies(acc0.id, respect_backoff=True)
+    assert res_429["status"] == 429
+    assert calls_429 == 1
+    res_backoff = await svc.rotate_account_cookies(acc0.id, respect_backoff=True)
+    assert res_backoff["status"] == 429
+    assert res_backoff.get("skipped") == "rate_limit_backoff"
+    assert calls_429 == 1

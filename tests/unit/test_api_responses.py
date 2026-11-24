@@ -78,10 +78,19 @@ def test_to_gemini_usage_metadata_uses_visible_and_reasoning_tokens():
 
 
 def test_to_gemini_parts_keeps_function_call_and_response_parts():
+    from aistudio_api.domain.models import CandidatePart
+
     parts = to_gemini_parts(
-        "",
-        function_calls=[{"name": "getWeather", "args": {"city": "Shanghai"}}],
-        function_responses=[{"name": "getWeather", "args": {"temperature": "24C"}}],
+        [
+            CandidatePart(
+                kind="function_call",
+                payload={"name": "getWeather", "args": {"city": "Shanghai"}},
+            ),
+            CandidatePart(
+                kind="function_response",
+                payload={"name": "getWeather", "args": {"temperature": "24C"}},
+            ),
+        ]
     )
 
     assert [part.model_dump(mode="json", exclude_none=True) for part in parts] == [
@@ -96,9 +105,18 @@ def test_to_gemini_parts_keeps_function_call_and_response_parts():
 
 
 def test_to_gemini_parts_can_emit_thought_part():
+    from aistudio_api.domain.models import CandidatePart
+
     assert [
         part.model_dump(mode="json", exclude_none=True)
-        for part in to_gemini_parts("答案", thinking="思考")
+        for part in to_gemini_parts(
+            [
+                CandidatePart(
+                    kind="thinking", text="思考", has_text=True, thought=True
+                ),
+                CandidatePart(kind="text", text="答案", has_text=True),
+            ]
+        )
     ] == [
         {"text": "思考", "thought": True},
         {"text": "答案"},
@@ -106,11 +124,16 @@ def test_to_gemini_parts_can_emit_thought_part():
 
 
 def test_to_gemini_parts_can_emit_inline_image_data():
-    from aistudio_api.domain.models import GeneratedImage
+    from aistudio_api.domain.models import CandidatePart, GeneratedImage
 
     parts = to_gemini_parts(
-        "说明",
-        images=[GeneratedImage(mime="image/png", data=b"png-bytes", size=9)],
+        [
+            CandidatePart(kind="text", text="说明", has_text=True),
+            CandidatePart(
+                kind="image",
+                image=GeneratedImage(mime="image/png", data=b"png-bytes", size=9),
+            ),
+        ]
     )
 
     assert [part.model_dump(mode="json", exclude_none=True) for part in parts] == [
@@ -317,3 +340,153 @@ async def test_streaming_metadata_event_does_not_block_failover(ready_stream_cli
     # 验证重试成功完成
     assert attempt_count == 2
     assert any("Hello world after retry" in str(c) for c in chunks)
+
+
+@pytest.mark.asyncio
+async def test_gemini4_missing_terminal_finish_reason_raises_transport_error(
+    ready_stream_client,
+):
+    import json
+
+    from aistudio_api.api.schemas import (
+        GeminiContent,
+        GeminiGenerateContentRequest,
+        GeminiPart,
+    )
+    from aistudio_api.application import api_service_gemini as gemini
+    from aistudio_api.domain.models import Candidate, ModelOutput
+    from aistudio_api.infrastructure.gateway.client import (
+        AIStudioClient,
+        PreparedRequest,
+    )
+    from aistudio_api.infrastructure.gateway.session import GatewaySession
+    from aistudio_api.infrastructure.gateway.streaming import StreamingGateway
+
+    # 1. Non-streaming Gemini 4 without terminal finish_reason -> 502 TransportError
+    ready_stream_client.generate_content = AsyncMock(
+        return_value=ModelOutput(
+            candidates=[Candidate(text="partial text", finish_reason=None)]
+        )
+    )
+    req = GeminiGenerateContentRequest(
+        contents=[GeminiContent(role="user", parts=[GeminiPart(text="hi")])]
+    )
+    with pytest.raises(gemini.HTTPException) as exc_info:
+        await gemini._do_generate_content("gemini-4-argon", req, ready_stream_client)
+    assert exc_info.value.status_code == 502
+
+    # 2. StreamingGateway Gemini 4 with finish_reason=22 (CONTINUING) -> TransportError
+    session = GatewaySession()
+
+    async def fake_incomplete_stream(**_kwargs):
+        yield ("status", 200)
+        chunk = [[[[[[None, "partial"]], "model"], 22]]]
+        yield (
+            "chunk",
+            (")]}\n" + json.dumps([[chunk]])).replace(")]}", ")]}'").encode("utf-8"),
+        )
+
+    session.send_streaming_request = fake_incomplete_stream
+    gateway = StreamingGateway(session=session)
+    prep = PreparedRequest(url="https://example.test", headers={}, body="[]")
+    with pytest.raises(TransportError, match="terminal finish_reason"):
+        async for _ in gateway.stream_chat(request=prep, model="gemini-4-neon"):
+            pass
+
+    # 3. StreamingGateway HTTP 200 policy block -> RequestError(400)
+    async def fake_policy_stream(**_kwargs):
+        yield ("status", 200)
+        chunk = [
+            [
+                [
+                    [
+                        [
+                            [
+                                None,
+                                "The prompt could not be submitted. This prompt may violate Google's Prohibited Use Policy.",
+                            ]
+                        ],
+                        "model",
+                    ],
+                    1,
+                ]
+            ]
+        ]
+        yield (
+            "chunk",
+            (")]}\n" + json.dumps([[chunk]])).replace(")]}", ")]}'").encode("utf-8"),
+        )
+
+    session.send_streaming_request = fake_policy_stream
+    with pytest.raises(RequestError) as req_exc:
+        async for _ in gateway.stream_chat(request=prep, model="gemini-3.8-flash"):
+            pass
+    assert req_exc.value.status == 400
+
+    # 4. Non-streaming AIStudioClient HTTP 200 policy block -> RequestError(400)
+    client = AIStudioClient()
+    client._session = MagicMock(spec=GatewaySession)
+    policy_chunk = [[[[[[None, "The prompt could not be submitted."]], "model"], 1]]]
+    client._session.send_request = AsyncMock(
+        return_value=(
+            200,
+            (")]}'\n" + json.dumps([[policy_chunk]])).encode("utf-8"),
+        )
+    )
+    with pytest.raises(RequestError) as client_exc:
+        await client.generate_content(model="gemini-3.8-flash", prepared=prep)
+    assert client_exc.value.status == 400
+
+
+@pytest.mark.asyncio
+async def test_streaming_thought_signature_carrier_affinity_preserved(
+    ready_stream_client,
+):
+    import json
+
+    from aistudio_api.api.schemas import (
+        GeminiContent,
+        GeminiGenerateContentRequest,
+        GeminiPart,
+    )
+    from aistudio_api.application import api_service_gemini as gemini
+    from aistudio_api.domain.models import ThoughtSignatureEvent
+
+    async def fake_stream(**_kwargs):
+        yield (
+            "thought_signature",
+            ThoughtSignatureEvent(
+                "sig_thought_only",
+                standalone=True,
+                thought=True,
+                empty_text_carrier=True,
+                end_of_chunk=True,
+            ),
+        )
+        yield (
+            "tool_calls",
+            [{"name": "getWeather", "args": {"city": "SH"}, "call_id": "c1"}],
+        )
+        yield ("finish_reason", 1)
+
+    ready_stream_client.stream_generate_content = MagicMock(side_effect=fake_stream)
+    req = GeminiGenerateContentRequest(
+        contents=[GeminiContent(role="user", parts=[GeminiPart(text="hi")])]
+    )
+    resp = gemini._build_gemini_streaming_response(
+        client=ready_stream_client, req=req, model_path="gemini-4-argon"
+    )
+    parts = []
+    async for raw in resp.body_iterator:
+        text = raw if isinstance(raw, str) else bytes(raw).decode("utf-8")
+        if text.startswith("data: "):
+            data = json.loads(text[6:])
+            for cand in data.get("candidates", []):
+                parts.extend(cand.get("content", {}).get("parts", []))
+    assert parts[0] == {
+        "text": "",
+        "thought": True,
+        "thoughtSignature": "sig_thought_only",
+    }
+    assert "thoughtSignature" not in parts[1]
+    assert parts[1]["functionCall"]["name"] == "getWeather"

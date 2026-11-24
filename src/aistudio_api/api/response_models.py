@@ -32,13 +32,40 @@ class GeminiInlineDataResponse(BaseModel):
     data: str
 
 
+class GeminiExecutableCodeResponse(BaseModel):
+    language: str = "PYTHON"
+    code: str
+    id: str | None = None
+
+
+class GeminiCodeExecutionResultResponse(BaseModel):
+    outcome: str = "OUTCOME_OK"
+    output: str
+    id: str | None = None
+
+
+class GeminiFileDataResponse(BaseModel):
+    mimeType: str | None = None
+    fileUri: str
+
+
+class GeminiVideoMetadataResponse(BaseModel):
+    startOffset: str | None = None
+    endOffset: str | None = None
+    fps: float | None = None
+
+
 class GeminiPartResponse(BaseModel):
     text: str | None = None
     thought: bool | None = None
     inlineData: GeminiInlineDataResponse | None = None
+    fileData: GeminiFileDataResponse | None = None
+    videoMetadata: GeminiVideoMetadataResponse | None = None
     thoughtSignature: str | None = None
     functionCall: GeminiFunctionCallPayload | None = None
     functionResponse: GeminiFunctionResponsePayload | None = None
+    executableCode: GeminiExecutableCodeResponse | None = None
+    codeExecutionResult: GeminiCodeExecutionResultResponse | None = None
 
 
 class GeminiContentResponse(BaseModel):

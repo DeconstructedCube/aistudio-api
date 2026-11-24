@@ -140,7 +140,7 @@ def discover_auth_file() -> str | None:
         registry_path = root / "accounts" / "registry.json"
         if registry_path.exists():
             try:
-                registry = json.loads(registry_path.read_text())
+                registry = json.loads(registry_path.read_text(encoding="utf-8"))
                 active_id = registry.get("active_account_id")
                 if active_id:
                     auth_path = root / "accounts" / active_id / "auth.json"

@@ -7,6 +7,7 @@ from aistudio_api.infrastructure.gateway.wire_codec import (
     build_tools_from_names,
     encode_request_body,
 )
+from aistudio_api.infrastructure.gateway.wire_spec import GenerationConfigIndex
 from aistudio_api.infrastructure.gateway.wire_types import (
     AistudioGenerationConfig,
     AistudioImageOutputMode,
@@ -358,3 +359,27 @@ def test_encode_request_body_handles_tool_config_semantically_and_preserves_ever
     body_none = json.loads(rewritten_none)
     assert len(body_none) <= 6 or body_none[6] is None
     assert len(body_none) <= 7 or body_none[7] is None
+
+
+def test_wire_codec_preserves_gc45_for_all_gemini4_models_and_clears_others():
+    for model_name in (
+        "models/gemini-4-argon",
+        "models/gemini-4-carbon",
+        "models/gemini-4-hydrogen",
+        "models/gemini-4-neon",
+    ):
+        req = AistudioWireCodec().build_request(
+            model=model_name,
+            prompt="hi",
+        )
+        req.generation_config._set_slot(GenerationConfigIndex.ARGON_CAPABILITY_FLAG, 1)
+        encoded = json.loads(AistudioWireCodec().encode(req))
+        assert encoded[3][GenerationConfigIndex.ARGON_CAPABILITY_FLAG] == 1
+
+    req_g3 = AistudioWireCodec().build_request(
+        model="models/gemini-3.8-flash",
+        prompt="hi",
+    )
+    req_g3.generation_config._set_slot(GenerationConfigIndex.ARGON_CAPABILITY_FLAG, 1)
+    encoded_g3 = json.loads(AistudioWireCodec().encode(req_g3))
+    assert len(encoded_g3[3]) <= GenerationConfigIndex.ARGON_CAPABILITY_FLAG

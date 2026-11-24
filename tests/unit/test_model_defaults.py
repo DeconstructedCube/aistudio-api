@@ -453,3 +453,38 @@ def test_partial_rotator_config_deep_merges_defaults_without_key_error(
     assert isinstance(score, float)
     stats.record_rate_limited("gemini-3.8-flash")
     assert stats.get_cooldown_remaining("gemini-3.8-flash") > 0
+
+
+def test_resolve_model_defaults_invalidates_compiled_cache_on_mtime_ns_change(
+    tmp_path,
+):
+    import os
+
+    config_path = tmp_path / "hot_reload.yaml"
+    config_path.write_text(
+        """
+model_defaults:
+  models:
+    gemini-3.7-flash:
+      generation_config_defaults:
+        temperature: 0.2
+""",
+        encoding="utf-8",
+    )
+    first = resolve_model_defaults("gemini-3.7-flash", config_path=config_path)
+    assert first.generation_config_defaults["temperature"] == 0.2
+
+    old_ns = config_path.stat().st_mtime_ns
+    config_path.write_text(
+        """
+model_defaults:
+  models:
+    gemini-3.7-flash:
+      generation_config_defaults:
+        temperature: 0.9
+""",
+        encoding="utf-8",
+    )
+    os.utime(config_path, ns=(old_ns + 1_000_000, old_ns + 1_000_000))
+    second = resolve_model_defaults("gemini-3.7-flash", config_path=config_path)
+    assert second.generation_config_defaults["temperature"] == 0.9

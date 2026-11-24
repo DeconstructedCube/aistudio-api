@@ -108,6 +108,7 @@ def test_parse_response_chunk_extracts_real_aistudio_function_call_shape():
 
 def test_to_gemini_parts_preserves_thought_signature_and_id():
     from aistudio_api.api.responses import to_gemini_parts
+    from aistudio_api.domain.models import CandidatePart
 
     fcs = [
         {
@@ -125,9 +126,13 @@ def test_to_gemini_parts_preserves_thought_signature_and_id():
         }
     ]
 
-    parts = to_gemini_parts("", function_calls=fcs, function_responses=frs)
+    parts = to_gemini_parts(
+        [
+            CandidatePart(kind="function_call", payload=fcs[0]),
+            CandidatePart(kind="function_response", payload=frs[0]),
+        ]
+    )
     assert len(parts) == 2
-
     # FunctionCall part
     fc_part = parts[0]
     assert fc_part.functionCall is not None
